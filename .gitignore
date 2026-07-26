@@ -1,0 +1,4 @@
+backend/target/
+frontend/dist/
+node_modules/
+*.tsbuildinfo

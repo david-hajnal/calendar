@@ -1,0 +1,30 @@
+[package]
+name = "commoncal-backend"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+axum = "0.7.9"
+base64 = "0.22"
+chrono = "0.4"
+chrono-tz = "0.10"
+flate2 = "1.1"
+futures-util = "0.3"
+getrandom = "0.4"
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["macros", "migrate", "runtime-tokio", "sqlite"] }
+tokio = { version = "1.49", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tower-http = { version = "0.6", features = ["request-id", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2.5"
+uuid = { version = "1.20", features = ["v4"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

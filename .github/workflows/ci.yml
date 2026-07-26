@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject Yarn lockfiles
+        run: sh scripts/check-no-yarn-lock.sh
+
+      - name: Test Yarn lockfile guard
+        run: sh scripts/test-check-no-yarn-lock.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path backend/Cargo.toml --check
+
+      - name: Check Rust
+        run: cargo check --manifest-path backend/Cargo.toml --locked
+
+      - name: Lint Rust
+        run: cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --manifest-path backend/Cargo.toml --locked
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test frontend
+        run: pnpm --dir frontend test
+
+      - name: Lint and typecheck frontend
+        run: pnpm --dir frontend lint && pnpm --dir frontend typecheck
+
+      - name: Build frontend
+        run: pnpm --dir frontend build

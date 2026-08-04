@@ -31,6 +31,51 @@ impl SecretKey {
         Self(digest.finalize().into())
     }
 
+    /// Authenticated encryption for small internal secrets.  The nonce and tag are
+    /// included in the returned blob; callers must never expose it.
+    pub fn encrypt_secret(&self, plaintext: &[u8]) -> Vec<u8> {
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce).expect("operating system random source unavailable");
+        let mut ciphertext = plaintext.to_vec();
+        self.apply_secret_stream(&nonce, &mut ciphertext);
+        let tag = self.secret_tag(&nonce, &ciphertext);
+        [nonce.as_slice(), tag.as_slice(), ciphertext.as_slice()].concat()
+    }
+
+    pub fn decrypt_secret(&self, encoded: &[u8]) -> Option<Vec<u8>> {
+        if encoded.len() < 48 {
+            return None;
+        }
+        let (nonce, rest) = encoded.split_at(16);
+        let (tag, ciphertext) = rest.split_at(32);
+        if !constant_time_eq(tag, &self.secret_tag(nonce, ciphertext)) {
+            return None;
+        }
+        let mut plaintext = ciphertext.to_vec();
+        self.apply_secret_stream(nonce, &mut plaintext);
+        Some(plaintext)
+    }
+
+    fn apply_secret_stream(&self, nonce: &[u8], bytes: &mut [u8]) {
+        for (counter, chunk) in bytes.chunks_mut(32).enumerate() {
+            let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+            mac.update(b"commoncal/secret-encryption/v1\0");
+            mac.update(nonce);
+            mac.update(&(counter as u64).to_be_bytes());
+            for (value, mask) in chunk.iter_mut().zip(mac.finalize().into_bytes()) {
+                *value ^= mask;
+            }
+        }
+    }
+
+    fn secret_tag(&self, nonce: &[u8], ciphertext: &[u8]) -> [u8; 32] {
+        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        mac.update(b"commoncal/secret-encryption-tag/v1\0");
+        mac.update(nonce);
+        mac.update(ciphertext);
+        mac.finalize().into_bytes().into()
+    }
+
     pub fn generate_token(&self) -> SecretToken {
         let mut bytes = [0_u8; TOKEN_BYTES];
         getrandom::fill(&mut bytes).expect("operating system random source unavailable");
@@ -109,6 +154,15 @@ impl SecretKey {
         mac.update(nonce.as_bytes());
         mac
     }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

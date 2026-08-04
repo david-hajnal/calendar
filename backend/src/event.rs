@@ -233,6 +233,22 @@ impl EventService {
         }
     }
 
+    pub fn new_with_notification_replanner(
+        pool: SqlitePool,
+        notification_replanner: Arc<dyn Fn(i64) + Send + Sync>,
+    ) -> Self {
+        Self {
+            pool,
+            clock: Arc::new(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock is before Unix epoch")
+                    .as_secs() as i64
+            }),
+            notification_replanner,
+        }
+    }
+
     pub fn new_at_with_notification_replanner(
         pool: SqlitePool,
         now: i64,
@@ -304,6 +320,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
+        (self.notification_replanner)(event_id);
         self.get(actor_user_id, is_superadmin, calendar_id, event_id)
             .await
     }
@@ -396,6 +413,7 @@ impl EventService {
                     .await?
                     .flatten();
         }
+        mark_external_projections(&self.pool, std::slice::from_mut(&mut projection)).await?;
         Ok(projection)
     }
 
@@ -423,6 +441,7 @@ impl EventService {
             .expanded_all_day_events(calendar_id, &range, access)
             .await?;
         projected.append(&mut all_day_recurring);
+        mark_external_projections(&self.pool, &mut projected).await?;
         projected.sort_by_key(|event| (event.start_utc.unwrap_or(i64::MIN), event.id));
         Ok(projected)
     }
@@ -640,6 +659,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_all_day_series_occurrence(
             &mut transaction,
             calendar_id,
@@ -720,6 +740,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_all_day_series_occurrence(&mut transaction, calendar_id, series_id, recurrence_date)
             .await?;
         bump_series_version(
@@ -804,6 +825,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_series_occurrence(&mut transaction, calendar_id, series_id, recurrence_id).await?;
         bump_series_version(
             &mut transaction,
@@ -876,6 +898,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_series_occurrence(&mut transaction, calendar_id, series_id, recurrence_id).await?;
         bump_series_version(
             &mut transaction,
@@ -937,6 +960,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_series_occurrence(&mut transaction, calendar_id, series_id, recurrence_id).await?;
         transaction.rollback().await?;
         Err(EventServiceError::NotSupported)
@@ -959,6 +983,7 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
         ensure_all_day_series_occurrence(&mut transaction, calendar_id, series_id, recurrence_date)
             .await?;
         transaction.rollback().await?;
@@ -1000,6 +1025,7 @@ impl EventService {
             )
             .await?;
         }
+        ensure_not_imported(&mut transaction, event_id).await?;
         let is_recurring: bool = sqlx::query_scalar(
             "SELECT EXISTS(
                 SELECT 1 FROM events
@@ -1064,9 +1090,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        if is_recurring {
-            (self.notification_replanner)(event_id);
-        }
+        (self.notification_replanner)(event_id);
         self.get(actor_user_id, is_superadmin, target_calendar_id, event_id)
             .await
     }
@@ -1088,15 +1112,14 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
-        let is_recurring: bool = sqlx::query_scalar(
-            "SELECT EXISTS(
-                SELECT 1 FROM events
-                WHERE calendar_id = ? AND id = ? AND recurrence_rule IS NOT NULL
-             )",
+        ensure_not_imported(&mut transaction, event_id).await?;
+        sqlx::query(
+            "UPDATE notification_jobs SET state = 'cancelled', updated_at = ?
+             WHERE event_id = ? AND state = 'pending'",
         )
-        .bind(calendar_id)
+        .bind(now)
         .bind(event_id)
-        .fetch_one(&mut *transaction)
+        .execute(&mut *transaction)
         .await?;
         let deleted = sqlx::query("DELETE FROM events WHERE calendar_id = ? AND id = ?")
             .bind(calendar_id)
@@ -1116,9 +1139,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        if is_recurring {
-            (self.notification_replanner)(event_id);
-        }
+        (self.notification_replanner)(event_id);
         Ok(())
     }
 
@@ -1163,6 +1184,23 @@ impl EventService {
         } else {
             Err(EventServiceError::NotFound)
         }
+    }
+}
+
+async fn ensure_not_imported(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    event_id: i64,
+) -> Result<(), EventServiceError> {
+    let imported: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM external_event_mapping WHERE event_id = ?)",
+    )
+    .bind(event_id)
+    .fetch_one(&mut **transaction)
+    .await?;
+    if imported {
+        Err(EventServiceError::ReadOnly)
+    } else {
+        Ok(())
     }
 }
 
@@ -1441,6 +1479,29 @@ pub struct EventProjection {
     pub recurrence_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recurrence_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_external: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+}
+
+async fn mark_external_projections(
+    pool: &SqlitePool,
+    projections: &mut [EventProjection],
+) -> Result<(), EventServiceError> {
+    for projection in projections {
+        let is_external = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM external_event_mapping WHERE event_id = ?)",
+        )
+        .bind(projection.id)
+        .fetch_one(pool)
+        .await?;
+        if is_external {
+            projection.is_external = Some(true);
+            projection.read_only = Some(true);
+        }
+    }
+    Ok(())
 }
 
 fn project_event(event: Event, access: EventAccess) -> EventProjection {
@@ -1493,6 +1554,8 @@ fn project_event(event: Event, access: EventAccess) -> EventProjection {
         series_id: None,
         recurrence_id: None,
         recurrence_date: None,
+        is_external: None,
+        read_only: None,
     }
 }
 
@@ -1624,6 +1687,8 @@ fn project_occurrence(
         series_id: Some(series.id),
         recurrence_id: Some(occurrence.recurrence_id.timestamp()),
         recurrence_date: None,
+        is_external: None,
+        read_only: None,
     })
 }
 
@@ -1679,6 +1744,8 @@ fn project_all_day_occurrence(
         series_id: Some(series.id),
         recurrence_id: None,
         recurrence_date: Some(recurrence_date),
+        is_external: None,
+        read_only: None,
     })
 }
 
@@ -1698,6 +1765,7 @@ pub enum EventServiceError {
     InvalidInput,
     NotFound,
     NotSupported,
+    ReadOnly,
 }
 
 impl From<sqlx::Error> for EventServiceError {

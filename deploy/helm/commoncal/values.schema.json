@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": {
+      "description": "SQLite-backed CommonCal is a single-replica deployment.",
+      "type": "integer",
+      "const": 1
+    },
+    "existingSecret": {
+      "type": "object",
+      "required": ["name", "sessionSecretKey"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "sessionSecretKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "required": ["size"],
+      "properties": {
+        "size": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

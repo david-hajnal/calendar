@@ -1,0 +1,9 @@
+.event-ui { inline-size: min(100%, 72rem); min-inline-size: 0; }
+.event-ui__header, .event-ui__controls, .event-ui__calendars, .event-ui__editor { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-block: 1rem; }
+.event-ui__calendars label, .event-ui__editor label { display: grid; gap: .25rem; min-inline-size: 12rem; }
+.event-ui__month, .event-ui__week, .event-ui__day, .event-ui__agenda { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.event-ui__month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.event-ui__event { display: flex; flex-wrap: wrap; gap: .25rem; min-inline-size: 0; }
+.event-ui__event > button:first-child { background: var(--calendar-color, Canvas); min-inline-size: 0; overflow-wrap: anywhere; }
+.event-ui__detail, .event-ui__editor { border: 1px solid currentColor; padding: 1rem; }
+@media (max-width: 40rem) { .event-ui__header, .event-ui__controls, .event-ui__calendars, .event-ui__editor { align-items: stretch; flex-direction: column; } .event-ui button, .event-ui input, .event-ui select { min-block-size: 2.75rem; } .event-ui__month { grid-template-columns: 1fr; } }

@@ -1,11 +1,16 @@
+use serde::Serialize;
 use std::{
     fmt::{self, Debug, Display, Formatter},
+    fs::OpenOptions,
     future::Future,
+    io::Write,
+    path::PathBuf,
     sync::Mutex,
 };
 
 const INVITATION_SUBJECT: &str = "You are invited to CommonCal";
 const LOGIN_LINK_SUBJECT: &str = "Your CommonCal login link";
+const NOTIFICATION_SUBJECT: &str = "CommonCal reminder";
 
 pub trait EmailSender {
     fn send_invitation(
@@ -17,6 +22,14 @@ pub trait EmailSender {
         &self,
         command: LoginLinkEmail,
     ) -> impl Future<Output = Result<(), EmailError>> + Send;
+
+    fn send_notification(
+        &self,
+        command: NotificationEmail,
+    ) -> impl Future<Output = Result<(), EmailError>> + Send {
+        let _ = command;
+        async { Err(EmailError::provider_failure()) }
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -59,6 +72,25 @@ pub struct LoginLinkEmail {
     authentication_link: AuthenticationLink,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NotificationEmail {
+    recipient: String,
+    event_title: String,
+}
+
+impl NotificationEmail {
+    pub fn new(recipient: impl Into<String>, event_title: impl Into<String>) -> Self {
+        Self {
+            recipient: recipient.into(),
+            event_title: event_title.into(),
+        }
+    }
+
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+}
+
 impl LoginLinkEmail {
     pub fn new(recipient: impl Into<String>, authentication_link: AuthenticationLink) -> Self {
         Self {
@@ -80,6 +112,7 @@ impl LoginLinkEmail {
 pub enum EmailMessageType {
     Invitation,
     LoginLink,
+    Notification,
 }
 
 impl EmailMessageType {
@@ -87,6 +120,7 @@ impl EmailMessageType {
         match self {
             Self::Invitation => "invitation",
             Self::LoginLink => "login_link",
+            Self::Notification => "notification",
         }
     }
 }
@@ -153,17 +187,38 @@ impl EmailSender for InMemoryEmailSender {
         );
         Ok(())
     }
+
+    async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
+        self.capture(
+            command.recipient,
+            EmailMessageType::Notification,
+            NOTIFICATION_SUBJECT,
+        );
+        Ok(())
+    }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DevelopmentEmailSender;
+#[derive(Clone, Debug, Default)]
+pub struct DevelopmentEmailSender {
+    e2e_outbox: Option<PathBuf>,
+}
 
 impl DevelopmentEmailSender {
     pub fn new() -> Self {
-        Self
+        Self {
+            e2e_outbox: (std::env::var("APP_ENV").ok().as_deref() == Some("development"))
+                .then(|| std::env::var_os("E2E_EMAIL_OUTBOX").map(PathBuf::from))
+                .flatten(),
+        }
     }
 
-    fn log(message_type: EmailMessageType, subject: &str) {
+    fn log(
+        &self,
+        message_type: EmailMessageType,
+        subject: &str,
+        recipient: &str,
+        link: Option<&str>,
+    ) -> Result<(), EmailError> {
         tracing::info!(
             target: "commoncal::email",
             message_type = message_type.as_str(),
@@ -171,18 +226,59 @@ impl DevelopmentEmailSender {
             authentication_link = "[REDACTED]",
             "development email"
         );
+        if let Some(path) = &self.e2e_outbox {
+            let message = E2eEmail {
+                recipient,
+                message_type: message_type.as_str(),
+                authentication_link: link,
+            };
+            let line =
+                serde_json::to_string(&message).map_err(|_| EmailError::provider_failure())?;
+            let mut outbox = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|_| EmailError::provider_failure())?;
+            writeln!(outbox, "{line}").map_err(|_| EmailError::provider_failure())?;
+        }
+        Ok(())
     }
 }
 
+#[derive(Serialize)]
+struct E2eEmail<'a> {
+    recipient: &'a str,
+    message_type: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authentication_link: Option<&'a str>,
+}
+
 impl EmailSender for DevelopmentEmailSender {
-    async fn send_invitation(&self, _command: InvitationEmail) -> Result<(), EmailError> {
-        Self::log(EmailMessageType::Invitation, INVITATION_SUBJECT);
-        Ok(())
+    async fn send_invitation(&self, command: InvitationEmail) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::Invitation,
+            INVITATION_SUBJECT,
+            &command.recipient,
+            Some(command.authentication_link.expose()),
+        )
     }
 
-    async fn send_login_link(&self, _command: LoginLinkEmail) -> Result<(), EmailError> {
-        Self::log(EmailMessageType::LoginLink, LOGIN_LINK_SUBJECT);
-        Ok(())
+    async fn send_login_link(&self, command: LoginLinkEmail) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::LoginLink,
+            LOGIN_LINK_SUBJECT,
+            &command.recipient,
+            Some(command.authentication_link.expose()),
+        )
+    }
+
+    async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::Notification,
+            NOTIFICATION_SUBJECT,
+            &command.recipient,
+            None,
+        )
     }
 }
 
@@ -229,6 +325,14 @@ impl ProviderEmail {
                 "Log in to CommonCal: {}",
                 command.authentication_link.expose()
             ),
+        }
+    }
+
+    fn notification(command: NotificationEmail) -> Self {
+        Self {
+            recipient: command.recipient,
+            subject: NOTIFICATION_SUBJECT,
+            body: format!("Reminder: {}", command.event_title),
         }
     }
 }
@@ -281,17 +385,26 @@ where
             .await
             .map_err(|_| EmailError::provider_failure())
     }
+
+    async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
+        self.provider
+            .send(ProviderEmail::notification(command))
+            .await
+            .map_err(|_| EmailError::provider_failure())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EmailErrorCode {
     ProviderFailure,
+    PermanentFailure,
 }
 
 impl EmailErrorCode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ProviderFailure => "email_provider_failure",
+            Self::PermanentFailure => "email_permanent_failure",
         }
     }
 }
@@ -308,8 +421,22 @@ impl EmailError {
         }
     }
 
+    pub fn transient() -> Self {
+        Self::provider_failure()
+    }
+
+    pub fn permanent() -> Self {
+        Self {
+            code: EmailErrorCode::PermanentFailure,
+        }
+    }
+
     pub fn code(&self) -> EmailErrorCode {
         self.code
+    }
+
+    pub fn is_transient(&self) -> bool {
+        matches!(self.code, EmailErrorCode::ProviderFailure)
     }
 }
 

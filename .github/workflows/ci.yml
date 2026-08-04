@@ -32,6 +32,12 @@ jobs:
       - name: Test Rust
         run: cargo test --manifest-path backend/Cargo.toml --locked
 
+      - name: Validate authorization coverage report
+        run: sh scripts/validate-authorization-coverage-report.sh
+
+      - name: Run authorization regression suite
+        run: cargo test --manifest-path backend/Cargo.toml --locked --test authorization_regression
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9.12.3

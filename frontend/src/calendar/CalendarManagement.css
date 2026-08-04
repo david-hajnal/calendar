@@ -1,0 +1,76 @@
+.calendar-management,
+.calendar-management * {
+  box-sizing: border-box;
+}
+
+.calendar-management {
+  inline-size: min(100%, 72rem);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.calendar-management header,
+.calendar-management article,
+.calendar-form,
+.calendar-dialog,
+.calendar-dialog ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-inline-size: 0;
+}
+
+.calendar-form,
+.calendar-dialog {
+  inline-size: min(100%, 42rem);
+  padding: 1rem;
+  border: 1px solid currentColor;
+}
+
+.calendar-form label,
+.calendar-dialog label {
+  display: grid;
+  flex: 1 1 14rem;
+  gap: 0.25rem;
+  min-inline-size: 0;
+}
+
+.calendar-form input,
+.calendar-form textarea,
+.calendar-form select,
+.calendar-dialog input,
+.calendar-dialog select {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.calendar-dialog {
+  position: fixed;
+  inset: 1rem;
+  margin: auto;
+  block-size: fit-content;
+  max-block-size: calc(100dvh - 2rem);
+  overflow: auto;
+  background: Canvas;
+  z-index: 1;
+}
+
+.calendar-dialog--nested {
+  position: static;
+  inline-size: 100%;
+}
+
+@media (max-width: 40rem) {
+  .calendar-management header,
+  .calendar-management article,
+  .calendar-form,
+  .calendar-dialog,
+  .calendar-dialog ul {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .calendar-management button {
+    min-block-size: 2.75rem;
+  }
+}

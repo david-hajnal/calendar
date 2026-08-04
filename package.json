@@ -1,5 +1,9 @@
 {
   "name": "commoncal",
   "private": true,
-  "packageManager": "pnpm@9.12.3"
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "e2e": "pnpm --dir e2e test",
+    "e2e:server": "sh scripts/e2e-server.sh"
+  }
 }

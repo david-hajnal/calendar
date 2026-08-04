@@ -265,6 +265,75 @@ async fn cross_site_unsafe_request_fails() {
 }
 
 #[tokio::test]
+async fn unsafe_request_with_a_cross_origin_header_fails_even_when_fetch_metadata_is_same_origin() {
+    let application = TestApplication::new().await;
+    let token = application
+        .session(NOW - 100, NOW - 10, NOW + 1_000, None)
+        .await;
+    let parsed = commoncal_backend::security::SecretToken::parse(token.clone()).unwrap();
+    let csrf = application.key.generate_csrf_token(&parsed);
+
+    let response = application
+        .request(
+            Method::DELETE,
+            "/api/v1/auth/session",
+            Some(&token),
+            Some(csrf.expose()),
+            Some("https://attacker.test"),
+            Some("same-origin"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn unsafe_request_with_cross_site_fetch_metadata_fails_even_when_origin_is_allowed() {
+    let application = TestApplication::new().await;
+    let token = application
+        .session(NOW - 100, NOW - 10, NOW + 1_000, None)
+        .await;
+    let parsed = commoncal_backend::security::SecretToken::parse(token.clone()).unwrap();
+    let csrf = application.key.generate_csrf_token(&parsed);
+
+    let response = application
+        .request(
+            Method::DELETE,
+            "/api/v1/auth/session",
+            Some(&token),
+            Some(csrf.expose()),
+            Some(ORIGIN_URL),
+            Some("cross-site"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn same_site_unsafe_request_with_valid_origin_fetch_metadata_and_csrf_succeeds() {
+    let application = TestApplication::new().await;
+    let token = application
+        .session(NOW - 100, NOW - 10, NOW + 1_000, None)
+        .await;
+    let parsed = commoncal_backend::security::SecretToken::parse(token.clone()).unwrap();
+    let csrf = application.key.generate_csrf_token(&parsed);
+
+    let response = application
+        .request(
+            Method::DELETE,
+            "/api/v1/auth/session",
+            Some(&token),
+            Some(csrf.expose()),
+            Some(ORIGIN_URL),
+            Some("same-site"),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn safe_get_does_not_require_csrf() {
     let application = TestApplication::new().await;
     let token = application

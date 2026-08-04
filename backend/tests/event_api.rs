@@ -230,6 +230,91 @@ async fn production_composition_keeps_auth_admin_calendar_and_event_routes_mount
     }
 }
 
+#[tokio::test]
+async fn imported_event_cannot_be_updated_through_normal_api() {
+    let app = TestApplication::new().await;
+    let (_, event_id) = app.create_event(app.owner).await;
+    let feed_id = sqlx::query(
+        "INSERT INTO external_feeds (
+            calendar_id, source_url_encrypted, source_url_display, refresh_interval_seconds,
+            next_refresh_at, created_by_user_id, created_at
+         ) VALUES (?, X'00', 'https://calendar.example/…', 3600, ?, ?, ?)",
+    )
+    .bind(app.calendar_id)
+    .bind(NOW)
+    .bind(app.owner)
+    .bind(NOW)
+    .execute(&app.pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        "INSERT INTO external_event_mapping (feed_id, external_uid, recurrence_id, event_id, last_seen_sync_id)
+         VALUES (?, 'external-id', '', ?, 1)",
+    )
+    .bind(feed_id)
+    .bind(event_id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let response = app
+        .request(
+            Method::PATCH,
+            &format!("/api/v1/calendars/{}/events/{event_id}", app.calendar_id),
+            app.owner,
+            &format!(
+                r#"{{"calendar_id":{},"version":1,{}}}"#,
+                app.calendar_id,
+                &EVENT[1..EVENT.len() - 1]
+            ),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn imported_event_projection_is_marked_read_only() {
+    let app = TestApplication::new().await;
+    let (_, event_id) = app.create_event(app.owner).await;
+    let feed_id = sqlx::query(
+        "INSERT INTO external_feeds (calendar_id, source_url_encrypted, source_url_display, refresh_interval_seconds, next_refresh_at, created_by_user_id, created_at) VALUES (?, X'00', 'https://calendar.example/…', 3600, ?, ?, ?)",
+    )
+    .bind(app.calendar_id)
+    .bind(NOW)
+    .bind(app.owner)
+    .bind(NOW)
+    .execute(&app.pool)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        "INSERT INTO external_event_mapping (feed_id, external_uid, recurrence_id, event_id, last_seen_sync_id) VALUES (?, 'external-id', '', ?, 1)",
+    )
+    .bind(feed_id)
+    .bind(event_id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let response = app
+        .request(
+            Method::GET,
+            &format!(
+                "/api/v1/calendars/{}/events?from=1750000000&to=1750004000",
+                app.calendar_id
+            ),
+            app.owner,
+            "",
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let events = String::from_utf8(body.to_vec()).unwrap();
+    assert!(events.contains("\"is_external\":true"));
+    assert!(events.contains("\"read_only\":true"));
+}
+
 async fn insert_user(pool: &SqlitePool, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO users (

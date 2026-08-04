@@ -1,7 +1,7 @@
 use axum::{
     Extension, Json, Router,
     body::Body,
-    extract::{ConnectInfo, Path, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, Request, StatusCode,
         header::{COOKIE, SET_COOKIE},
@@ -13,6 +13,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{
     net::SocketAddr,
+    path::Path as FsPath,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -35,11 +36,15 @@ use crate::{
         AllDayOccurrenceChange, EventChange, EventMutation, EventRange, EventService,
         EventServiceError, EventStatus, EventTiming, OccurrenceChange,
     },
+    external_feed::{
+        ExternalFeedService, FeedError, FixtureIcsFeedFetcher, NewFeed, SafeIcsFeedFetcher,
+    },
     identity::UserStatus,
     invitations::{ActiveUser, ConsumeInvitation, ConsumeInvitationError, InvitationConsumer},
     login::{
         ConsumeLoginLink, ConsumeLoginLinkError, LoginFlow, RequestLoginLink, RequestLoginLinkError,
     },
+    notification::NotificationService,
     security::SessionCookieBuilder,
     sessions::{AuthenticatedSession, SessionError, SessionManager},
     shared_view::{
@@ -50,11 +55,94 @@ use crate::{
 
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 const SESSION_COOKIE_NAME: &str = "__Host-commoncal_session";
+const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
+
+/// Controls transport-specific response protections at the deployment boundary.
+/// HSTS must only be enabled when the application is explicitly deployed over HTTPS.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ResponseSecurityConfig {
+    hsts_enabled: bool,
+}
+
+impl ResponseSecurityConfig {
+    pub const fn local_http() -> Self {
+        Self {
+            hsts_enabled: false,
+        }
+    }
+
+    pub const fn production_https() -> Self {
+        Self { hsts_enabled: true }
+    }
+}
+
+/// Applies application-wide browser security and cache headers, including frontend fallbacks.
+pub fn secure_responses(router: Router, config: ResponseSecurityConfig) -> Router {
+    router.layer(middleware::from_fn_with_state(
+        config,
+        response_security_headers,
+    ))
+}
 
 pub fn build_router() -> Router {
     let readiness = Readiness::new();
     readiness.mark_ready();
     build_router_with_readiness(readiness)
+}
+
+/// Serves the compiled single-page frontend after all application routes.
+///
+/// The API router intentionally remains usable without frontend assets for
+/// development and integration tests. Production startup adds this fallback
+/// using the runtime image's `/app/frontend` directory.
+pub fn serve_frontend(router: Router, frontend_directory: impl AsRef<FsPath>) -> Router {
+    let frontend_directory = frontend_directory.as_ref().to_path_buf();
+    secure_responses(
+        router.fallback(get(move |request| {
+            serve_frontend_file(frontend_directory.clone(), request)
+        })),
+        ResponseSecurityConfig::local_http(),
+    )
+}
+
+async fn serve_frontend_file(
+    frontend_directory: std::path::PathBuf,
+    request: Request<Body>,
+) -> Response {
+    let requested_path = request.uri().path().trim_start_matches('/');
+    let asset_path = (!requested_path.is_empty()
+        && requested_path
+            .split('/')
+            .all(|component| component != "." && component != ".."))
+    .then(|| frontend_directory.join(requested_path));
+    let path = asset_path
+        .as_ref()
+        .filter(|path| path.is_file())
+        .cloned()
+        .unwrap_or_else(|| frontend_directory.join("index.html"));
+
+    match tokio::fs::read(&path).await {
+        Ok(contents) => Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", frontend_content_type(&path))
+            .body(Body::from(contents))
+            .expect("static frontend response is valid"),
+        Err(_) => not_found().await.into_response(),
+    }
+}
+
+fn frontend_content_type(path: &FsPath) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") | Some("map") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        _ => "text/html; charset=utf-8",
+    }
 }
 
 pub fn build_router_with_readiness(readiness: Readiness) -> Router {
@@ -67,6 +155,8 @@ pub fn build_router_with_readiness(readiness: Readiness) -> Router {
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -83,6 +173,8 @@ pub fn build_router_with_invitation_consumer(
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -99,6 +191,8 @@ where
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -119,6 +213,8 @@ where
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -132,6 +228,8 @@ pub fn build_router_with_sessions(readiness: Readiness, session_manager: Session
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -153,6 +251,8 @@ where
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -170,6 +270,8 @@ pub fn build_router_with_admin(
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -192,6 +294,8 @@ where
         calendar_service: None,
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -209,6 +313,8 @@ pub fn build_router_with_calendars(
         calendar_service: Some(calendar_service),
         event_service: None,
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -233,6 +339,8 @@ where
         calendar_service: Some(calendar_service),
         event_service: Some(event_service),
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -251,6 +359,8 @@ pub fn build_router_with_calendars_and_events(
         calendar_service: Some(calendar_service),
         event_service: Some(event_service),
         shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -270,6 +380,38 @@ pub fn build_router_with_calendars_events_and_views(
         calendar_service: Some(calendar_service),
         event_service: Some(event_service),
         shared_view_service: Some(shared_view_service),
+        external_feed_service: None,
+        notification_service: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds<L>(
+    readiness: Readiness,
+    invitation_consumer: InvitationConsumer,
+    login_flow: L,
+    session_manager: SessionManager,
+    admin_service: AdminService,
+    calendar_service: CalendarService,
+    event_service: EventService,
+    shared_view_service: SharedViewService,
+    external_feed_service: ExternalFeedService,
+    notification_service: NotificationService,
+) -> Router
+where
+    L: LoginFlow + 'static,
+{
+    build_application_router(ApplicationState {
+        readiness,
+        invitation_consumer: Some(invitation_consumer),
+        login_flow: Some(Arc::new(login_flow)),
+        session_manager: Some(session_manager),
+        admin_service: Some(admin_service),
+        calendar_service: Some(calendar_service),
+        event_service: Some(event_service),
+        shared_view_service: Some(shared_view_service),
+        external_feed_service: Some(external_feed_service),
+        notification_service: Some(notification_service),
     })
 }
 
@@ -296,6 +438,8 @@ where
         calendar_service: Some(calendar_service),
         event_service: Some(event_service),
         shared_view_service: Some(shared_view_service),
+        external_feed_service: None,
+        notification_service: None,
     })
 }
 
@@ -386,6 +530,36 @@ fn build_application_router(state: ApplicationState) -> Router {
                     axum::routing::patch(update_this_and_following),
                 );
         }
+        if state.notification_service.is_some() {
+            protected = protected.route("/api/v1/notifications", get(list_notifications));
+            // This synchronous delivery trigger exists solely for deterministic local E2E tests.
+            // It is deliberately absent from production routers.
+            if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
+                protected = protected.route(
+                    "/api/v1/test-support/notifications",
+                    post(create_test_notification),
+                );
+            }
+        }
+        if state.external_feed_service.is_some() {
+            protected = protected
+                .route(
+                    "/api/v1/calendars/:calendar_id/external-feeds",
+                    get(list_external_feeds).post(create_external_feed),
+                )
+                .route(
+                    "/api/v1/external-feeds/:feed_id",
+                    delete(delete_external_feed),
+                )
+                .route(
+                    "/api/v1/external-feeds/:feed_id/disable",
+                    post(disable_external_feed),
+                )
+                .route(
+                    "/api/v1/external-feeds/:feed_id/refresh",
+                    post(refresh_external_feed),
+                );
+        }
         if state.shared_view_service.is_some() {
             protected = protected
                 .route(
@@ -423,6 +597,7 @@ fn build_application_router(state: ApplicationState) -> Router {
         router = router.merge(protected);
     }
     router
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
                 tracing::span!(
@@ -442,6 +617,10 @@ fn build_application_router(state: ApplicationState) -> Router {
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
             MakeRequestUuid,
+        ))
+        .layer(middleware::from_fn_with_state(
+            ResponseSecurityConfig::local_http(),
+            response_security_headers,
         ))
         .with_state(state)
 }
@@ -465,6 +644,139 @@ async fn list_calendars(
         .await
         .map_err(map_calendar_error)?;
     Ok(Json(calendars))
+}
+
+async fn list_notifications(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+) -> Result<impl IntoResponse, ApiError> {
+    let notifications = state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .list_in_app(session.user.id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    Ok(Json(notifications))
+}
+
+#[derive(Deserialize)]
+struct TestNotificationRequest {
+    event_id: i64,
+}
+
+async fn create_test_notification(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(request): Json<TestNotificationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .create_test_delivery(session.user.id, request.event_id)
+        .await
+        .map_err(|_| ApiError::not_found())?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_external_feeds(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(calendar_id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let feeds = state
+        .external_feed_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .list(session.user.id, session.user.is_superadmin, calendar_id)
+        .await
+        .map_err(map_feed_error)?;
+    Ok(Json(feeds))
+}
+
+async fn create_external_feed(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(calendar_id): Path<i64>,
+    Json(request): Json<ExternalFeedRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let feed = state
+        .external_feed_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .create(
+            session.user.id,
+            session.user.is_superadmin,
+            calendar_id,
+            NewFeed {
+                source_url: request.source_url,
+                refresh_interval_seconds: request.refresh_interval_seconds,
+            },
+        )
+        .await
+        .map_err(map_feed_error)?;
+    Ok((StatusCode::CREATED, Json(feed)))
+}
+
+async fn disable_external_feed(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(feed_id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let feed = state
+        .external_feed_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .disable(session.user.id, session.user.is_superadmin, feed_id)
+        .await
+        .map_err(map_feed_error)?;
+    Ok(Json(feed))
+}
+
+async fn delete_external_feed(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(feed_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .external_feed_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .delete(session.user.id, session.user.is_superadmin, feed_id)
+        .await
+        .map_err(map_feed_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn refresh_external_feed(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(feed_id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let fixture = (std::env::var("APP_ENV").ok().as_deref() == Some("development"))
+        .then(|| std::env::var_os("E2E_ICS_FIXTURE"))
+        .flatten();
+    let service = state
+        .external_feed_service
+        .ok_or_else(ApiError::service_unavailable)?;
+    let feed = if let Some(path) = fixture {
+        let fetcher = FixtureIcsFeedFetcher::from_path(path);
+        service
+            .refresh(
+                session.user.id,
+                session.user.is_superadmin,
+                feed_id,
+                &fetcher,
+            )
+            .await
+    } else {
+        let fetcher = SafeIcsFeedFetcher::production().map_err(map_feed_error)?;
+        service
+            .refresh(
+                session.user.id,
+                session.user.is_superadmin,
+                feed_id,
+                &fetcher,
+            )
+            .await
+    }
+    .map_err(map_feed_error)?;
+    Ok(Json(feed))
 }
 
 async fn create_calendar(
@@ -920,28 +1232,63 @@ async fn list_public_view_events(
 
 async fn public_response_headers(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
+    response.headers_mut().remove(SET_COOKIE);
+    response
+}
+
+async fn response_security_headers(
+    State(config): State<ResponseSecurityConfig>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let is_public = request.uri().path().starts_with("/api/v1/public/");
+    let is_authentication = request.uri().path().starts_with("/api/v1/auth/");
+    let is_api = request.uri().path().starts_with("/api/");
+    let is_health = request.uri().path().starts_with("/health/");
+    let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("private, no-store"),
-    );
+
     headers.insert(
         axum::http::header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
-    );
-    headers.insert(
-        axum::http::header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
+        HeaderValue::from_static(
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+        ),
     );
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
     headers.insert(
-        HeaderName::from_static("x-robots-tag"),
-        HeaderValue::from_static("noindex, nofollow"),
+        axum::http::header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
-    headers.remove(SET_COOKIE);
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), geolocation=(), microphone=(), payment=(), usb=()"),
+    );
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static(if is_public {
+            "private, no-store"
+        } else if is_authentication || is_api || is_health {
+            "no-store"
+        } else {
+            "no-cache"
+        }),
+    );
+    if is_public {
+        headers.insert(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
+        );
+        headers.remove(SET_COOKIE);
+    }
+    if config.hsts_enabled {
+        headers.insert(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
     response
 }
 
@@ -1173,11 +1520,29 @@ fn map_event_error(error: EventServiceError) -> ApiError {
         EventServiceError::InvalidInput => ApiError::bad_request(),
         EventServiceError::NotFound => ApiError::not_found(),
         EventServiceError::NotSupported => ApiError::not_implemented(),
+        EventServiceError::ReadOnly => ApiError::conflict(),
         EventServiceError::Conflict { current_version } => {
             ApiError::version_conflict(current_version)
         }
         EventServiceError::Database(_) => {
             tracing::error!(error_code = "event_operation_failed");
+            ApiError::internal()
+        }
+    }
+}
+
+fn map_feed_error(error: FeedError) -> ApiError {
+    match error {
+        // Feed identifiers are global. Treat an inaccessible one like a
+        // missing one so callers cannot enumerate feeds across calendars.
+        FeedError::Denied => ApiError::not_found(),
+        FeedError::InvalidInput => ApiError::bad_request(),
+        FeedError::NotFound => ApiError::not_found(),
+        // Fetch and parse failures are intentionally indistinguishable to the
+        // caller: neither error reveals the stored URL or remote response.
+        FeedError::FetchFailed | FeedError::ParseFailed => ApiError::bad_request(),
+        FeedError::Database(error) => {
+            tracing::error!(error = %error, "external feed persistence failed");
             ApiError::internal()
         }
     }
@@ -1696,6 +2061,13 @@ struct EventMutationRequest {
     recurrence_rule: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalFeedRequest {
+    source_url: String,
+    refresh_interval_seconds: Option<i64>,
+}
+
 impl EventMutationRequest {
     fn into_mutation(self) -> Result<EventMutation, ApiError> {
         let status = match self.status.as_str() {
@@ -1777,6 +2149,8 @@ struct ApplicationState {
     calendar_service: Option<CalendarService>,
     event_service: Option<EventService>,
     shared_view_service: Option<SharedViewService>,
+    external_feed_service: Option<ExternalFeedService>,
+    notification_service: Option<NotificationService>,
 }
 
 #[derive(Clone, Debug)]

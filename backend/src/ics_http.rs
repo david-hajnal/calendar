@@ -56,6 +56,7 @@ pub struct TransportRequest {
     addresses: Vec<IpAddr>,
     connect_timeout: Duration,
     max_compressed_bytes: usize,
+    headers: HashMap<String, String>,
 }
 
 impl TransportRequest {
@@ -101,6 +102,7 @@ impl TransportResponse {
 pub struct SafeHttpResponse {
     status: u16,
     body: Vec<u8>,
+    headers: HashMap<String, String>,
 }
 
 impl SafeHttpResponse {
@@ -110,6 +112,12 @@ impl SafeHttpResponse {
 
     pub fn body(&self) -> &[u8] {
         &self.body
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .get(&name.to_ascii_lowercase())
+            .map(String::as_str)
     }
 }
 
@@ -189,6 +197,7 @@ pub enum TransportError {
     CompressedTooLarge,
 }
 
+#[derive(Clone)]
 pub struct SafeHttpClient<R, T> {
     config: SafeHttpConfig,
     resolver: R,
@@ -223,12 +232,27 @@ where
     }
 
     pub async fn fetch(&self, input: &str) -> Result<SafeHttpResponse, SafeHttpError> {
-        tokio::time::timeout(self.config.total_timeout, self.fetch_with_redirects(input))
-            .await
-            .map_err(|_| SafeHttpError::new(SafeHttpErrorCode::Timeout))?
+        self.fetch_with_headers(input, &HashMap::new()).await
     }
 
-    async fn fetch_with_redirects(&self, input: &str) -> Result<SafeHttpResponse, SafeHttpError> {
+    pub async fn fetch_with_headers(
+        &self,
+        input: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<SafeHttpResponse, SafeHttpError> {
+        tokio::time::timeout(
+            self.config.total_timeout,
+            self.fetch_with_redirects(input, headers),
+        )
+        .await
+        .map_err(|_| SafeHttpError::new(SafeHttpErrorCode::Timeout))?
+    }
+
+    async fn fetch_with_redirects(
+        &self,
+        input: &str,
+        headers: &HashMap<String, String>,
+    ) -> Result<SafeHttpResponse, SafeHttpError> {
         let mut url =
             Url::parse(input).map_err(|_| SafeHttpError::new(SafeHttpErrorCode::InvalidUrl))?;
 
@@ -247,6 +271,7 @@ where
                     addresses,
                     connect_timeout: self.config.connect_timeout,
                     max_compressed_bytes: self.config.max_compressed_bytes,
+                    headers: headers.clone(),
                 })
                 .await
                 .map_err(map_transport_error)?;
@@ -276,6 +301,7 @@ where
             return Ok(SafeHttpResponse {
                 status: response.status,
                 body,
+                headers: response.headers,
             });
         }
 
@@ -454,7 +480,15 @@ impl Transport for ReqwestTransport {
                 .resolve_to_addrs(host, &socket_addresses)
                 .build()
                 .map_err(|_| TransportError::Failed)?;
-            let response = client.get(request.url).send().await.map_err(|error| {
+            let mut request_builder = client.get(request.url);
+            for (name, value) in request.headers {
+                let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| TransportError::Failed)?;
+                let value = reqwest::header::HeaderValue::from_str(&value)
+                    .map_err(|_| TransportError::Failed)?;
+                request_builder = request_builder.header(name, value);
+            }
+            let response = request_builder.send().await.map_err(|error| {
                 if error.is_timeout() {
                     TransportError::Timeout
                 } else {

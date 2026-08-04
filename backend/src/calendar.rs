@@ -29,14 +29,16 @@ pub struct CalendarService {
 impl CalendarService {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
-            pool,
+            pool: pool.clone(),
             clock: Arc::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
-            notification_canceller: Arc::new(NoPendingNotifications),
+            notification_canceller: Arc::new(crate::notification::NotificationService::new(
+                pool.clone(),
+            )),
         }
     }
 
@@ -698,19 +700,6 @@ pub trait PendingNotificationCanceller: Send + Sync {
         calendar_id: i64,
         user_id: i64,
     ) -> Pin<Box<dyn Future<Output = Result<(), sqlx::Error>> + Send + 'a>>;
-}
-
-struct NoPendingNotifications;
-
-impl PendingNotificationCanceller for NoPendingNotifications {
-    fn cancel_pending<'a>(
-        &'a self,
-        _connection: &'a mut SqliteConnection,
-        _calendar_id: i64,
-        _user_id: i64,
-    ) -> Pin<Box<dyn Future<Output = Result<(), sqlx::Error>> + Send + 'a>> {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 #[derive(FromRow)]

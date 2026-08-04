@@ -1,0 +1,7 @@
+.public-view { max-inline-size: 72rem; margin: 0 auto; padding: 1rem; }
+.public-view__controls { display: flex; gap: .5rem; margin-block: 1rem; }
+.public-view__month, .public-view__agenda { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.public-view__month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.public-view__event { border: 1px solid #ccc; border-radius: .25rem; padding: .5rem; overflow-wrap: anywhere; }
+.public-view__event p { margin: .25rem 0 0; }
+@media (max-width: 40rem) { .public-view__controls { flex-direction: column; } .public-view__controls button { min-block-size: 2.75rem; } .public-view__month { grid-template-columns: 1fr; } .public-view__agenda { gap: .75rem; } }

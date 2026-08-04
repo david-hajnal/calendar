@@ -1,4 +1,4 @@
-.PHONY: all backend-check backend-test check check-no-yarn ci-script-test frontend-build frontend-test lint
+.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test e2e frontend-build frontend-test lint validate-authorization-coverage
 
 all: check
 
@@ -7,6 +7,12 @@ backend-check:
 
 backend-test:
 	cargo test --manifest-path backend/Cargo.toml --locked
+
+validate-authorization-coverage:
+	sh scripts/validate-authorization-coverage-report.sh
+
+authorization-regression: validate-authorization-coverage
+	cargo test --manifest-path backend/Cargo.toml --locked --test authorization_regression
 
 frontend-test:
 	pnpm --dir frontend test
@@ -20,10 +26,13 @@ lint:
 frontend-build:
 	pnpm --dir frontend build
 
+e2e:
+	pnpm e2e
+
 check-no-yarn:
 	sh scripts/check-no-yarn-lock.sh
 
 ci-script-test:
 	sh scripts/test-check-no-yarn-lock.sh
 
-check: check-no-yarn ci-script-test backend-check backend-test frontend-test lint frontend-build
+check: check-no-yarn ci-script-test backend-check backend-test authorization-regression frontend-test lint frontend-build

@@ -134,6 +134,7 @@ impl TestApplication {
                 self.email_sender.clone(),
                 self.limiter.clone(),
                 NOW,
+                false,
             ),
         )
     }
@@ -281,6 +282,7 @@ async fn delivery_failure_keeps_the_generic_response_and_revokes_the_token() {
         Arc::new(ProductionEmailSender::new(RejectingProvider)),
         application.limiter.clone(),
         NOW,
+        false,
     );
     let mut request = Request::builder()
         .method("POST")
@@ -429,8 +431,8 @@ async fn successful_login_rotates_session_and_updates_last_login() {
     assert_eq!(response.status(), StatusCode::OK);
     let set_cookie = response.headers()[SET_COOKIE].to_str().unwrap();
     assert!(!set_cookie.contains(old_session.expose()));
-    assert!(set_cookie.contains("Secure"));
     assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Lax"));
     let old_revoked: Option<i64> =
         sqlx::query("SELECT revoked_at FROM sessions WHERE session_hash = ?")
             .bind(old_hash.as_bytes().as_slice())

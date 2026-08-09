@@ -1,4 +1,8 @@
-CREATE TABLE calendars (
+-- Migration 0008: calendars
+-- Creates calendars and calendar_acl tables.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS calendars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_user_id INTEGER NOT NULL REFERENCES users(id),
     name TEXT NOT NULL CHECK (length(trim(name)) > 0),
@@ -14,7 +18,7 @@ CREATE TABLE calendars (
     updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE calendar_acl (
+CREATE TABLE IF NOT EXISTS calendar_acl (
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     role TEXT NOT NULL CHECK (
@@ -25,8 +29,8 @@ CREATE TABLE calendar_acl (
     PRIMARY KEY (calendar_id, user_id)
 );
 
-CREATE UNIQUE INDEX calendar_acl_one_owner_idx
+CREATE UNIQUE INDEX IF NOT EXISTS calendar_acl_one_owner_idx
 ON calendar_acl(calendar_id)
 WHERE role = 'owner';
 
-CREATE INDEX calendar_acl_user_idx ON calendar_acl(user_id);
+CREATE INDEX IF NOT EXISTS calendar_acl_user_idx ON calendar_acl(user_id);

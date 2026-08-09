@@ -74,8 +74,9 @@ impl CalendarService {
                     calendar_acl.role
              FROM calendars
              JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
-             WHERE calendar_acl.user_id = ?
-             ORDER BY calendars.id",
+              WHERE calendar_acl.user_id = ?
+                AND calendars.archived = 0
+              ORDER BY calendars.id",
         )
         .bind(actor_user_id)
         .fetch_all(&self.pool)
@@ -218,6 +219,13 @@ impl CalendarService {
         .await?;
         let now = (self.clock)();
         let mut transaction = self.pool.begin().await?;
+        let is_archived: i32 = sqlx::query_scalar("SELECT archived FROM calendars WHERE id = ?")
+            .bind(calendar_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+        if !archived && is_archived == 0 {
+            return Err(CalendarServiceError::NotFound);
+        }
         sqlx::query(
             "UPDATE calendars
              SET archived = ?, version = version + 1, updated_at = ?

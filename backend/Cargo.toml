@@ -26,6 +26,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2.5"
 uuid = { version = "1.20", features = ["v4"] }
 
+bcrypt = "0.17"
+
+[[bin]]
+name = "db-tools"
+path = "src/bin/db_tools.rs"
+
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"

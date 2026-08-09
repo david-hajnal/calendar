@@ -128,6 +128,7 @@ impl TestApplication {
                 Arc::new(DevelopmentEmailSender::new()),
                 Arc::new(AllowAllLoginRateLimiter),
                 NOW,
+                false,
             ),
             SessionManager::new_at(
                 self.pool.clone(),

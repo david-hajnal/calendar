@@ -255,17 +255,31 @@ impl OneTimeTokenState {
 
 pub struct SessionCookieBuilder<'a> {
     token: &'a SecretToken,
+    is_secure: bool,
 }
 
 impl<'a> SessionCookieBuilder<'a> {
     pub fn new(token: &'a SecretToken) -> Self {
-        Self { token }
+        Self {
+            token,
+            is_secure: false,
+        }
+    }
+
+    pub fn is_secure(mut self, secure: bool) -> Self {
+        self.is_secure = secure;
+        self
     }
 
     pub fn build(self) -> String {
-        format!(
-            "__Host-commoncal_session={}; Path=/; Secure; HttpOnly; SameSite=Lax",
+        let cookie = format!(
+            "__Host-commoncal_session={}; Path=/; HttpOnly; SameSite=Lax",
             self.token.expose()
-        )
+        );
+        if self.is_secure {
+            cookie.replace("HttpOnly", "Secure; HttpOnly")
+        } else {
+            cookie
+        }
     }
 }

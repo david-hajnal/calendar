@@ -37,8 +37,9 @@ describe("CompositeViewManagement", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create view" }));
     await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/views", expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "New view" }) })));
 
-    expect(screen.getByRole("option", { name: "Work" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Private" })).not.toBeInTheDocument();
+    await screen.findByText("Family");
+    expect(screen.getByText("Work")).toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Add calendar"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add calendar to view" }));
     fireEvent.click(screen.getByRole("button", { name: "Save view calendars" }));
@@ -60,7 +61,7 @@ describe("CompositeViewManagement", () => {
     await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/views/8", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Updated" }) })));
 
     fireEvent.change(screen.getByLabelText("Color for Family"), { target: { value: "#abcdef" } });
-    fireEvent.click(screen.getByRole("button", { name: "Move Family up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Work up" }));
     fireEvent.click(screen.getByRole("button", { name: "Save view calendars" }));
     await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/views/8/calendars", expect.objectContaining({ method: "PUT", body: JSON.stringify({ calendars: [{ calendar_id: 2, position: 0, color: "#abcdef" }, { calendar_id: 1, position: 1, color: "#123456" }] }) })));
   });
@@ -70,6 +71,7 @@ describe("CompositeViewManagement", () => {
     const request = vi.fn()
       .mockResolvedValueOnce(response([view]))
       .mockResolvedValueOnce(response([work]))
+      .mockResolvedValueOnce(response({}, 404))
       .mockResolvedValueOnce(response({ token: "first-token", projection: "title_and_time", display_timezone: "UTC", expires_at: expiresAt, revoked: false, version: 1 }, 201))
       .mockResolvedValueOnce(response({ projection: "free_busy", display_timezone: "UTC", expires_at: expiresAt, revoked: false, version: 2 }))
       .mockResolvedValueOnce(response({ token: "second-token", projection: "title_and_time", display_timezone: "UTC", expires_at: 1_800_000_000, revoked: false, version: 2 }));

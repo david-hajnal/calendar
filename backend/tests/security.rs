@@ -80,7 +80,7 @@ fn consumed_token_fails() {
 #[test]
 fn session_cookie_has_required_security_attributes_and_path() {
     let token = key().generate_token();
-    let cookie = SessionCookieBuilder::new(&token).build();
+    let cookie = SessionCookieBuilder::new(&token).is_secure(true).build();
 
     assert!(cookie.contains("Secure"));
     assert!(cookie.contains("HttpOnly"));

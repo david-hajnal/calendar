@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env.local
+    ports:
+      - "3000:3000"
+    volumes:
+      - sqlite-data:/app/data
+    healthcheck:
+      test: ["CMD", "busybox", "wget", "--spider", "-q", "http://127.0.0.1:3000/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend-dev:
+    image: node:22-bookworm-slim
+    working_dir: /app/frontend
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend-modules:/app/frontend/node_modules
+    environment:
+      - VITE_PROXY_TARGET=http://app:3000
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install -g pnpm@9.12.3 && CONFIRM_MODULES_PURGE=false pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"
+    depends_on:
+      - app
+
+volumes:
+  sqlite-data:
+  frontend-modules:

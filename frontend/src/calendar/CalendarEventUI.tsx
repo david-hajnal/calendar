@@ -8,7 +8,7 @@ import "./CalendarEventUI.css";
 type CalendarView = "month" | "week" | "day" | "agenda";
 type Draft = { title: string; start: string; end: string; calendarId: number; recurrenceRule: string };
 
-const viewLabels: Record<CalendarView, string> = { month: "Month view", week: "Week view", day: "Day view", agenda: "Agenda view" };
+const viewLabels: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day", agenda: "Agenda" };
 
 function writable(calendar: Calendar | undefined) {
   return calendar?.access === "details" && ["owner", "manager", "editor"].includes(calendar.role);
@@ -92,23 +92,182 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     catch (reason) { setError(reason instanceof CalendarApiError && reason.status === 409 ? "This event changed elsewhere. Reload it before saving again." : "We could not move this event."); }
   }
   function renderEvent(event: EventProjection) {
-    const readonly = !editable(event, calendarFor(event));
+    const cal = calendarFor(event);
+    const readonly = !editable(event, cal);
     const name = external(event) ? `${title(event)} (read-only external event)` : title(event);
-    return <li key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`} className="event-ui__event">
-      <button type="button" aria-label={name} draggable={!readonly} onDragStart={(drag) => { if (!readonly) drag.dataTransfer.setData("text/plain", String(event.id)); }} onClick={() => setSelected(event)}>{title(event)}</button>
-      {!readonly && <button type="button" aria-label={`Move ${title(event)} later`} onClick={() => void move(event, 1)}>Move later</button>}
-    </li>;
+    const accentColor = cal?.color ?? 'var(--color-primary)';
+    const bgColor = `${accentColor}1a`;
+    return <div key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`} className="event-chip" style={{ borderLeftColor: accentColor, background: bgColor }}>
+      <button type="button" aria-label={name} className="event-chip__text" draggable={!readonly} onDragStart={(drag) => { if (!readonly) drag.dataTransfer.setData("text/plain", String(event.id)); }} onClick={() => setSelected(event)}>{title(event)}</button>
+      {!readonly && <button type="button" className="event-chip__move" aria-label={`Move ${title(event)} later`} onClick={() => void move(event, 1)} title="Move later">
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>chevron_right</span>
+      </button>}
+    </div>;
   }
-  return <section className="event-ui" aria-labelledby="events-heading">
-    <header className="event-ui__header"><h2 id="events-heading">Events</h2><button type="button" onClick={openNew} disabled={!calendars.some(writable)}>New event</button></header>
-    <div className="event-ui__controls" aria-label="Calendar controls">
-      {(Object.keys(viewLabels) as CalendarView[]).map((item) => <button type="button" key={item} aria-pressed={view === item} onClick={() => setView(item)}>{viewLabels[item]}</button>)}
-      <button type="button" onClick={() => setDate((current) => addDays(current, view === "month" ? -30 : -1))}>Previous</button><strong aria-live="polite">{formatRange(view, date)}</strong><button type="button" onClick={() => setDate((current) => addDays(current, view === "month" ? 30 : 1))}>Next</button>
+  function renderDayHeader(dayIndex: number) {
+     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+     return <div key={dayIndex} className="event-grid__day-header" style={{ gridColumn: dayIndex + 1 }}>{days[dayIndex]}</div>;
+   }
+   const today = useMemo(() => startOfDay(new Date()), []);
+   const isToday = (d: Date) => startOfDay(d).getTime() === today.getTime();
+   const miniCalDays = useMemo(() => {
+     const from = startOfDay(new Date(date.getFullYear(), date.getMonth(), 1));
+     const to = addDays(from, 42);
+     const days: Date[] = [];
+     let current = startOfDay(from);
+     while (current < to) { days.push(new Date(current)); current = addDays(current, 1); }
+     return days;
+   }, [date]);
+   const miniCalMonth = `${date.toLocaleString('default', { month: 'short' })} ${date.getFullYear()}`;
+   return <section className="event-ui" aria-labelledby="events-heading">
+     {/* Desktop sidebar */}
+     <aside className="event-ui__sidebar">
+       <div className="event-ui__sidebar-header">
+         <h3 className="typography-headline-md">Visible calendars</h3>
+       </div>
+       <div className="event-ui__sidebar-list">
+         {calendars.map((calendar) => <label key={calendar.id} className="event-ui__sidebar-toggle">
+           <input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible((current) => { const next = new Set(current); if (next.has(calendar.id)) next.delete(calendar.id); else next.add(calendar.id); return next; })} />
+           <span className="event-ui__sidebar-dot" style={{ background: calendar.color || 'var(--color-primary)' }} />
+           <span className="typography-body-md">{calendar.name ?? "Busy calendar"}</span>
+         </label>)}
+       </div>
+       <div className="event-ui__sidebar-footer">
+         <button type="button" className="event-ui__sidebar-footer-btn" onClick={() => window.location.pathname = "/calendars"}>
+           <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>settings</span>
+           Settings
+         </button>
+         <button type="button" className="event-ui__sidebar-footer-btn" onClick={() => window.location.href = "/logout"}>
+           <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>logout</span>
+           Sign Out
+         </button>
+       </div>
+     </aside>
+    <header className="event-ui__toolbar">
+      <h2 id="events-heading" className="typography-headline-md">Events</h2>
+      <button type="button" className="event-ui__new-btn" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event">
+        <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
+        New event
+      </button>
+    </header>
+    <div className="event-ui__controls">
+      <div className="segmented-control" role="tablist" aria-label="Calendar view">
+        {(Object.keys(viewLabels) as CalendarView[]).map((item) => <button key={item} type="button" role="tab" aria-pressed={view === item} className="segmented-control__button" onClick={() => setView(item)}>{viewLabels[item]}</button>)}
+      </div>
+      <div className="event-ui__date-nav">
+        <button type="button" className="event-ui__nav-btn" onClick={() => setDate((current) => addDays(current, view === "month" ? -30 : -1))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_left</span></button>
+        <strong className="typography-body-lg" aria-live="polite">{formatRange(view, date)}</strong>
+        <button type="button" className="event-ui__nav-btn" onClick={() => setDate((current) => addDays(current, view === "month" ? 30 : 1))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_right</span></button>
+        <button type="button" className="event-ui__today-btn" onClick={() => setDate(new Date())}>Today</button>
+      </div>
     </div>
-    <fieldset className="event-ui__calendars"><legend>Visible calendars</legend>{calendars.map((calendar) => <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible((current) => { const next = new Set(current); if (next.has(calendar.id)) next.delete(calendar.id); else next.add(calendar.id); return next; })} />Show {calendar.name ?? "Busy calendar"}</label>)}</fieldset>
-    {error && <p role="alert">{error} {error.includes("changed elsewhere") && <button type="button" onClick={() => { setEditing(null); setSelected(null); void reload(); }}>Reload events</button>}</p>}
-    {loading ? <p role="status">Loading events…</p> : <section role="region" aria-label={view === "agenda" ? "Agenda" : `${view[0].toUpperCase()}${view.slice(1)} calendar`}><ul role={view === "agenda" ? "list" : undefined} aria-label={view === "agenda" ? "Agenda" : undefined} className={`event-ui__${view}`}>{displayed.map(renderEvent)}</ul>{displayed.length === 0 && <p>No events in this range.</p>}</section>}
-    {selected && <aside className="event-ui__detail" aria-label="Event details"><h3>{title(selected)}</h3>{external(selected) && <p>This external event is read-only.</p>}{!external(selected) && !editable(selected, calendarFor(selected)) && <p>This event is read-only.</p>}{editable(selected, calendarFor(selected)) && <button type="button" onClick={() => openEdit(selected)}>Edit event</button>}<button type="button" onClick={() => setSelected(null)}>Close event details</button></aside>}
-    {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}><h3>{editing === "new" ? "New event" : "Edit event"}</h3><label>Title<input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label>Start<input type="datetime-local" required value={draft.start} onChange={(event) => setDraft({ ...draft, start: event.target.value })} /></label><label>End<input type="datetime-local" required value={draft.end} onChange={(event) => setDraft({ ...draft, end: event.target.value })} /></label><label>Recurrence rule<input aria-label="Recurrence rule" placeholder="FREQ=WEEKLY" value={draft.recurrenceRule} onChange={(event) => setDraft({ ...draft, recurrenceRule: event.target.value })} /></label><label>Calendar<select value={draft.calendarId} onChange={(event) => setDraft({ ...draft, calendarId: Number(event.target.value) })}>{calendars.filter(writable).map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select></label><button type="submit">Save event</button><button type="button" onClick={() => setEditing(null)}>Cancel</button></form>}
+    {/* Mini calendar for mobile */}
+    <div className="event-ui__mini-cal">
+      <div className="event-ui__mini-cal-header">
+        <span className="typography-label-md" style={{ color: 'var(--color-on-surface-variant)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{miniCalMonth}</span>
+      </div>
+      <div className="event-ui__mini-cal-grid">
+        {['S','M','T','W','T','F','S'].map((d, i) => <span key={`h-${i}`} className="event-ui__mini-cal-day-header">{d}</span>)}
+        {miniCalDays.map((day, idx) => {
+          const isCurrentMonth = day.getMonth() === date.getMonth();
+          const isTodayDate = isToday(day);
+          const hasEvents = displayed.some(e => e.start_date === day.toISOString().split('T')[0]);
+          const cal = hasEvents ? calendarFor(displayed.find(e => e.start_date === day.toISOString().split('T')[0])!) : null;
+          const accentColor = cal?.color || 'var(--color-primary)';
+          return <button key={idx} type="button" className={`event-ui__mini-cal-day ${!isCurrentMonth ? 'event-ui__mini-cal-day--other' : ''} ${isTodayDate ? 'event-ui__mini-cal-day--today' : ''}`} onClick={() => setDate(startOfDay(day))} style={{ background: isTodayDate ? accentColor : undefined, color: isTodayDate ? '#fff' : undefined }}>
+            {day.getDate()}
+            {hasEvents && !isTodayDate && <span className="event-ui__mini-cal-dot" style={{ background: accentColor }} />}
+          </button>;
+        })}
+      </div>
+    </div>
+    {error && <p role="alert" className="app-message app-message--error">{error} {error.includes("changed elsewhere") && <button type="button" className="app-button" style={{ fontSize: '0.8125rem', padding: '0.25rem 0.5rem' }} onClick={() => { setEditing(null); setSelected(null); void reload(); }}>Reload events</button>}</p>}
+    {loading ? <div className="event-ui__loading" role="status"><div className="spinner" /> <span className="typography-body-md">Loading events…</span></div> :
+      <section role="region" aria-label={view === "agenda" ? "Agenda" : `${view[0].toUpperCase()}${view.slice(1)} calendar`} className={`event-ui__${view}`}>
+        {view === "month" && (
+          <>
+            <div className="event-grid__headers">{[0,1,2,3,4,5,6].map(renderDayHeader)}</div>
+            <ul role="list" aria-label="Month calendar" className="event-grid">
+              {(() => {
+                const from = startOfDay(new Date(date.getFullYear(), date.getMonth(), 1));
+                const startOffset = from.getDay();
+                const totalCells = 42;
+                const cells: { date: Date; events: EventProjection[]; isCurrentMonth: boolean; isToday: boolean }[] = [];
+                for (let i = 0; i < totalCells; i++) {
+                  const d = addDays(from, i - startOffset);
+                  const dateStr = d.toISOString().split('T')[0];
+                  const dayEvents = displayed.filter(e => e.start_date === dateStr);
+                  cells.push({ date: d, events: dayEvents, isCurrentMonth: d.getMonth() === date.getMonth(), isToday: isToday(d) });
+                }
+                return cells.map((cell, idx) => <li key={idx} className={`event-grid__cell ${cell.isCurrentMonth ? '' : 'event-grid__cell--other-month'}`} style={{ gridColumn: (idx % 7) + 1, gridRow: Math.floor(idx / 7) + 1 }}>
+                  <span className={`event-grid__day ${cell.isToday ? 'event-grid__day--today' : ''}`}>{cell.date.getDate()}</span>
+                  {cell.events.map(renderEvent)}
+                </li>);
+              })()}
+            </ul>
+          </>
+        )}
+        {view !== "month" && <ul role="list" aria-label={view === "agenda" ? "Agenda" : undefined} className={`event-ui__${view}`}>{displayed.map(renderEvent)}</ul>}
+        {displayed.length === 0 && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '2rem 0' }}>No events in this range.</p>}
+      </section>
+    }
+    {selected && <aside className="event-ui__detail" aria-label="Event details">
+      <div className="event-ui__detail-header">
+        <span className="event-ui__detail-accent" style={{ background: calendarFor(selected)?.color || 'var(--color-primary)' }} />
+        <div className="event-ui__detail-title-row">
+          <h3 className="typography-headline-md" style={{ margin: 0 }}>{title(selected)}</h3>
+          <button type="button" className="event-ui__detail-close" onClick={() => setSelected(null)} aria-label="Close event details"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span></button>
+        </div>
+      </div>
+      {external(selected) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This external event is read-only.</p>}
+      {!external(selected) && !editable(selected, calendarFor(selected)) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This event is read-only.</p>}
+      {editable(selected, calendarFor(selected)) && <button type="button" className="app-button app-button--primary" style={{ fontSize: '0.8125rem', marginTop: '0.75rem' }} onClick={() => openEdit(selected)}>Edit event</button>}
+      <div className="event-ui__detail-meta">
+        {selected.start_utc && selected.end_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>schedule</span>{new Date(selected.start_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(selected.end_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}
+        {selected.start_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{new Date(selected.start_utc * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
+      </div>
+      {selected.location && <div className="event-ui__detail-location">
+        <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>location_on</span>{selected.location}</p>
+      </div>}
+      {selected.description && <div className="event-ui__detail-description">
+        <p className="typography-body-md">{selected.description}</p>
+      </div>}
+    </aside>}
+    {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
+      <div className="event-ui__editor-header">
+        <h3 className="typography-headline-md">{editing === "new" ? "New event" : "Edit event"}</h3>
+        <button type="button" className="event-ui__editor-close" onClick={() => setEditing(null)} aria-label="Close editor"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span></button>
+      </div>
+      <div className="event-ui__editor-grid">
+        <label className="event-ui__editor-field">
+          <span className="typography-label-md">Title</span>
+          <input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Event title" />
+        </label>
+        <label className="event-ui__editor-field">
+          <span className="typography-label-md">Start</span>
+          <input type="datetime-local" required value={draft.start} onChange={(event) => setDraft({ ...draft, start: event.target.value })} />
+        </label>
+        <label className="event-ui__editor-field">
+          <span className="typography-label-md">End</span>
+          <input type="datetime-local" required value={draft.end} onChange={(event) => setDraft({ ...draft, end: event.target.value })} />
+        </label>
+        <label className="event-ui__editor-field">
+          <span className="typography-label-md">Recurrence</span>
+          <input aria-label="Recurrence rule" placeholder="FREQ=WEEKLY" value={draft.recurrenceRule} onChange={(event) => setDraft({ ...draft, recurrenceRule: event.target.value })} />
+        </label>
+        <label className="event-ui__editor-field">
+          <span className="typography-label-md">Calendar</span>
+          <select value={draft.calendarId} onChange={(event) => setDraft({ ...draft, calendarId: Number(event.target.value) })}>{calendars.filter(writable).map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select>
+        </label>
+      </div>
+      <div className="event-ui__editor-actions">
+        <button type="submit" className="app-button app-button--primary">Save event</button>
+        <button type="button" className="app-button" onClick={() => setEditing(null)}>Cancel</button>
+      </div>
+    </form>}
+    {/* Mobile FAB */}
+    <button type="button" className="event-ui__fab" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event mobile">
+      <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>add</span>
+    </button>
   </section>;
 }

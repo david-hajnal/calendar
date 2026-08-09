@@ -34,6 +34,7 @@ impl IdentityRepository {
             display_name: user.display_name,
             status: user.status,
             created_at: user.created_at,
+            password_hash: None,
         })
     }
 
@@ -42,7 +43,7 @@ impl IdentityRepository {
         normalized_email: &str,
     ) -> Result<Option<User>, RepositoryError> {
         let record = sqlx::query_as::<_, UserRecord>(
-            "SELECT id, normalized_email, display_name, status, created_at
+            "SELECT id, normalized_email, display_name, status, created_at, password_hash
              FROM users WHERE normalized_email = ?",
         )
         .bind(normalize_email(normalized_email))
@@ -50,6 +51,33 @@ impl IdentityRepository {
         .await?;
 
         record.map(User::try_from).transpose()
+    }
+
+    pub async fn user_by_normalized_email_with_password(
+        &self,
+        normalized_email: &str,
+    ) -> Result<Option<UserWithPasswordRecord>, RepositoryError> {
+        sqlx::query_as(
+            "SELECT id, normalized_email, display_name, status, created_at, password_hash
+             FROM users WHERE normalized_email = ?",
+        )
+        .bind(normalize_email(normalized_email))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn set_password_hash(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+    ) -> Result<(), RepositoryError> {
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(password_hash)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn create_invitation(
@@ -340,6 +368,17 @@ pub struct User {
     pub display_name: Option<String>,
     pub status: UserStatus,
     pub created_at: i64,
+    pub password_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserWithPassword {
+    pub id: i64,
+    pub normalized_email: String,
+    pub display_name: Option<String>,
+    pub status: UserStatus,
+    pub created_at: i64,
+    pub password_hash: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -349,6 +388,17 @@ struct UserRecord {
     display_name: Option<String>,
     status: String,
     created_at: i64,
+    password_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub struct UserWithPasswordRecord {
+    pub id: i64,
+    pub normalized_email: String,
+    pub display_name: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub password_hash: Option<String>,
 }
 
 impl TryFrom<UserRecord> for User {
@@ -361,6 +411,22 @@ impl TryFrom<UserRecord> for User {
             display_name: record.display_name,
             status: UserStatus::try_from(record.status.as_str())?,
             created_at: record.created_at,
+            password_hash: record.password_hash,
+        })
+    }
+}
+
+impl TryFrom<UserWithPasswordRecord> for UserWithPassword {
+    type Error = RepositoryError;
+
+    fn try_from(record: UserWithPasswordRecord) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: record.id,
+            normalized_email: record.normalized_email,
+            display_name: record.display_name,
+            status: UserStatus::try_from(record.status.as_str())?,
+            created_at: record.created_at,
+            password_hash: record.password_hash,
         })
     }
 }

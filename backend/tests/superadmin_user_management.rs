@@ -39,6 +39,12 @@ impl TestApplication {
         let pool = connect_and_migrate(&config, Readiness::new())
             .await
             .unwrap();
+        // Migration 0019 seeds a default superadmin; remove it so this
+        // test's admin is the sole superadmin as the test expects.
+        sqlx::query("DELETE FROM users WHERE normalized_email = 'admin@localhost'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let admin_id = insert_user(&pool, "admin@example.com", true).await;
         let member_id = insert_user(&pool, "member@example.com", false).await;
         Self {

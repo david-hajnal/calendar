@@ -32,9 +32,11 @@ impl Environment {
 pub struct AppConfig {
     pub environment: Environment,
     pub bind_address: SocketAddr,
+    pub access_log_level: tracing::level_filters::LevelFilter,
     database_path: PathBuf,
     session_secret: Option<String>,
     app_origin: String,
+    password_login_enabled: bool,
 }
 
 impl fmt::Debug for AppConfig {
@@ -43,12 +45,14 @@ impl fmt::Debug for AppConfig {
             .debug_struct("AppConfig")
             .field("environment", &self.environment)
             .field("bind_address", &self.bind_address)
+            .field("access_log_level", &self.access_log_level)
             .field("database_path", &self.database_path)
             .field(
                 "session_secret",
                 &self.session_secret.as_ref().map(|_| "[REDACTED]"),
             )
             .field("app_origin", &self.app_origin)
+            .field("password_login_enabled", &self.password_login_enabled)
             .finish()
     }
 }
@@ -58,17 +62,29 @@ impl AppConfig {
         let environment =
             Environment::parse(&env::var("APP_ENV").unwrap_or_else(|_| "development".into()))?;
         let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.into());
+        let access_log_level = env::var("ACCESS_LOG_LEVEL")
+            .ok()
+            .map(|s| s.parse())
+            .transpose()
+            .map_err(|_| ConfigError::new("invalid ACCESS_LOG_LEVEL"))?
+            .unwrap_or_else(|| tracing::level_filters::LevelFilter::INFO);
         let database_path =
             env::var("DATABASE_PATH").unwrap_or_else(|_| DEFAULT_DATABASE_PATH.into());
         let session_secret = env::var("SESSION_SECRET").ok();
         let app_origin = env::var("APP_ORIGIN").unwrap_or_else(|_| DEFAULT_APP_ORIGIN.into());
+        let password_login_enabled = env::var("PASSWORD_LOGIN_ENABLED")
+            .ok()
+            .map(|s| s == "1" || s == "true" || s == "TRUE")
+            .unwrap_or(false);
 
-        Self::with_database_path_and_origin(
+        Self::with_database_path_and_origin_and_access_log_level(
             environment,
             &bind_address,
             session_secret,
             database_path,
             app_origin,
+            access_log_level,
+            false,
         )
     }
 
@@ -107,6 +123,26 @@ impl AppConfig {
         database_path: impl Into<PathBuf>,
         app_origin: impl Into<String>,
     ) -> Result<Self, ConfigError> {
+        Self::with_database_path_and_origin_and_access_log_level(
+            environment,
+            bind_address,
+            session_secret,
+            database_path,
+            app_origin,
+            tracing::level_filters::LevelFilter::INFO,
+            false,
+        )
+    }
+
+    pub fn with_database_path_and_origin_and_access_log_level(
+        environment: Environment,
+        bind_address: &str,
+        session_secret: Option<String>,
+        database_path: impl Into<PathBuf>,
+        app_origin: impl Into<String>,
+        access_log_level: tracing::level_filters::LevelFilter,
+        password_login_enabled: bool,
+    ) -> Result<Self, ConfigError> {
         let bind_address = bind_address.parse().map_err(|error: AddrParseError| {
             ConfigError::new(format!("invalid BIND_ADDRESS: {error}"))
         })?;
@@ -133,9 +169,11 @@ impl AppConfig {
         Ok(Self {
             environment,
             bind_address,
+            access_log_level,
             database_path,
             session_secret,
             app_origin,
+            password_login_enabled,
         })
     }
 
@@ -149,6 +187,14 @@ impl AppConfig {
 
     pub fn app_origin(&self) -> &str {
         &self.app_origin
+    }
+
+    pub fn access_log_level(&self) -> tracing::level_filters::LevelFilter {
+        self.access_log_level
+    }
+
+    pub fn password_login_enabled(&self) -> bool {
+        self.password_login_enabled
     }
 }
 

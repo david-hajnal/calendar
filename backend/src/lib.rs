@@ -15,6 +15,7 @@ pub mod identity;
 pub mod invitations;
 pub mod login;
 pub mod notification;
+pub mod password;
 pub mod recurrence;
 pub mod security;
 pub mod sessions;

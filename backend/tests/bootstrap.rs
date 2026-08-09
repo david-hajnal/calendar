@@ -21,6 +21,12 @@ async fn application() -> (TempDir, SqlitePool, InitialSuperadminBootstrap) {
     let pool = connect_and_migrate(&config, Readiness::new())
         .await
         .unwrap();
+    // Migration 0019 seeds a default admin; remove it so bootstrap tests
+    // see an empty database as they expect.
+    sqlx::query("DELETE FROM users WHERE normalized_email = 'admin@localhost'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let application = InitialSuperadminBootstrap::new(pool.clone(), SecretKey::new([42; 32]));
 
     (temp_dir, pool, application)

@@ -18,6 +18,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -42,7 +43,9 @@ use crate::{
     identity::UserStatus,
     invitations::{ActiveUser, ConsumeInvitation, ConsumeInvitationError, InvitationConsumer},
     login::{
-        ConsumeLoginLink, ConsumeLoginLinkError, LoginFlow, RequestLoginLink, RequestLoginLinkError,
+        ConsumeLoginLink, ConsumeLoginLinkError, DevLogin, DevLoginError, LoginFlow,
+        PasswordLoginCommand, PasswordLoginError, PasswordLoginResult, RequestLoginLink,
+        RequestLoginLinkError,
     },
     notification::NotificationService,
     security::SessionCookieBuilder,
@@ -87,7 +90,7 @@ pub fn secure_responses(router: Router, config: ResponseSecurityConfig) -> Route
 pub fn build_router() -> Router {
     let readiness = Readiness::new();
     readiness.mark_ready();
-    build_router_with_readiness(readiness)
+    build_router_with_readiness_and_password_login(readiness)
 }
 
 /// Serves the compiled single-page frontend after all application routes.
@@ -157,6 +160,27 @@ pub fn build_router_with_readiness(readiness: Readiness) -> Router {
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+    })
+}
+
+pub fn build_router_with_readiness_and_password_login(readiness: Readiness) -> Router {
+    build_application_router(ApplicationState {
+        readiness,
+        invitation_consumer: None,
+        login_flow: None,
+        session_manager: None,
+        admin_service: None,
+        calendar_service: None,
+        event_service: None,
+        shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: true,
     })
 }
 
@@ -175,6 +199,9 @@ pub fn build_router_with_invitation_consumer(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -193,6 +220,9 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -215,6 +245,9 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -230,6 +263,9 @@ pub fn build_router_with_sessions(readiness: Readiness, session_manager: Session
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -253,6 +289,9 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -272,6 +311,9 @@ pub fn build_router_with_admin(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -296,6 +338,9 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -315,6 +360,9 @@ pub fn build_router_with_calendars(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -341,6 +389,9 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -361,6 +412,9 @@ pub fn build_router_with_calendars_and_events(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -382,6 +436,9 @@ pub fn build_router_with_calendars_events_and_views(
         shared_view_service: Some(shared_view_service),
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
@@ -397,6 +454,9 @@ pub fn build_router_with_auth_flows_sessions_admin_calendars_views_and_external_
     shared_view_service: SharedViewService,
     external_feed_service: ExternalFeedService,
     notification_service: NotificationService,
+    access_log_level: tracing::level_filters::LevelFilter,
+    is_secure: bool,
+    password_login_enabled: bool,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -412,6 +472,9 @@ where
         shared_view_service: Some(shared_view_service),
         external_feed_service: Some(external_feed_service),
         notification_service: Some(notification_service),
+        access_log_level,
+        is_secure,
+        password_login_enabled,
     })
 }
 
@@ -440,10 +503,14 @@ where
         shared_view_service: Some(shared_view_service),
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
     })
 }
 
 fn build_application_router(state: ApplicationState) -> Router {
+    let state_for_middleware = state.clone();
     let mut router = Router::new()
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
@@ -451,6 +518,12 @@ fn build_application_router(state: ApplicationState) -> Router {
         .route("/api/v1/auth/login-links", post(request_login_link))
         .route("/api/v1/auth/login-links/consume", post(consume_login_link))
         .fallback(not_found);
+    if state.password_login_enabled {
+        router = router.route("/api/v1/auth/password-login", post(password_login));
+    }
+    if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
+        router = router.route("/api/v1/dev/login", get(dev_login));
+    }
     if state.shared_view_service.is_some() && state.event_service.is_some() {
         let public = Router::new()
             .route("/api/v1/public/views/:token", get(read_public_view))
@@ -490,7 +563,9 @@ fn build_application_router(state: ApplicationState) -> Router {
             protected = protected
                 .route(
                     "/api/v1/calendars",
-                    get(list_calendars).post(create_calendar),
+                    get(list_calendars)
+                        .post(create_calendar)
+                        .options(cors_preflight),
                 )
                 .route(
                     "/api/v1/calendars/:id",
@@ -604,7 +679,7 @@ fn build_application_router(state: ApplicationState) -> Router {
                     Level::INFO,
                     "http_request",
                     method = %request.method(),
-                    path = safe_request_path(request.uri().path()),
+                    path = redact_sensitive_path(request.uri()),
                     request_id = request
                         .headers()
                         .get(&REQUEST_ID_HEADER)
@@ -613,6 +688,10 @@ fn build_application_router(state: ApplicationState) -> Router {
                 )
             }),
         )
+        .layer(middleware::from_fn_with_state(
+            state_for_middleware,
+            access_log_middleware,
+        ))
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
@@ -625,13 +704,48 @@ fn build_application_router(state: ApplicationState) -> Router {
         .with_state(state)
 }
 
-fn safe_request_path(path: &str) -> &str {
-    if path.starts_with("/api/v1/public/views/") {
+fn redact_sensitive_path(uri: &axum::http::Uri) -> String {
+    let path = uri.path();
+    let safe_path = if path.starts_with("/api/v1/public/views/") {
         "/api/v1/public/views/[REDACTED]"
     } else {
         path
+    };
+
+    let query = uri.query().unwrap_or("");
+    if query.is_empty() {
+        return safe_path.to_owned();
+    }
+
+    let mut has_redaction = false;
+    let redacted_pairs: Vec<String> = query
+        .split('&')
+        .map(|pair| {
+            if let Some((key, _)) = pair.split_once('=') {
+                if SENSITIVE_QUERY_KEYS.contains(&key) {
+                    has_redaction = true;
+                    return format!("{key}=[REDACTED]");
+                }
+            }
+            pair.to_owned()
+        })
+        .collect();
+
+    if has_redaction {
+        format!("{}?{}", safe_path, redacted_pairs.join("&"))
+    } else {
+        safe_path.to_owned()
     }
 }
+
+const SENSITIVE_QUERY_KEYS: &[&str] = &[
+    "token",
+    "csrf_token",
+    "api_key",
+    "Authorization",
+    "session",
+    "refresh_token",
+];
 
 async fn list_calendars(
     State(state): State<ApplicationState>,
@@ -1708,6 +1822,43 @@ fn map_admin_error(error: AdminError) -> ApiError {
     }
 }
 
+async fn access_log_middleware(
+    State(state): State<ApplicationState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let log_level = state.access_log_level;
+    let start = Instant::now();
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let response = next.run(request).await;
+    let latency = start.elapsed();
+    let request_id = response
+        .headers()
+        .get(&REQUEST_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    let status = response.status();
+    let body_size = response
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    if log_level >= tracing::Level::INFO {
+        tracing::info!(
+            http.method = %method,
+            http.path = path,
+            http.status_code = %status,
+            http.response_bytes = body_size,
+            latency_ms = latency.as_millis(),
+            request_id = request_id,
+            "access_log"
+        );
+    }
+    response
+}
+
 async fn authenticated_session(
     State(manager): State<SessionManager>,
     mut request: Request<axum::body::Body>,
@@ -1780,6 +1931,29 @@ fn map_session_error(error: SessionError) -> ApiError {
     }
 }
 
+async fn cors_preflight(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .cloned()
+        .or_else(|| Some(HeaderValue::from_static("*")))
+        .unwrap_or_else(|| HeaderValue::from_static("*"));
+    [
+        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET,POST,PATCH,DELETE,OPTIONS"),
+        ),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("content-type,authorization,x-csrf-token"),
+        ),
+        (
+            axum::http::header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("86400"),
+        ),
+    ]
+}
+
 async fn health_live() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
@@ -1848,7 +2022,9 @@ async fn consume_login_link(
             }
         })?;
 
-    let cookie = SessionCookieBuilder::new(&consumed.session_token).build();
+    let cookie = SessionCookieBuilder::new(&consumed.session_token)
+        .is_secure(state.is_secure)
+        .build();
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         SET_COOKIE,
@@ -1886,7 +2062,9 @@ async fn consume_invitation(
             }
         })?;
 
-    let cookie = SessionCookieBuilder::new(&consumed.session_token).build();
+    let cookie = SessionCookieBuilder::new(&consumed.session_token)
+        .is_secure(state.is_secure)
+        .build();
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         SET_COOKIE,
@@ -1899,6 +2077,105 @@ async fn consume_invitation(
             csrf_token: consumed.csrf_token.expose().to_owned(),
         }),
     ))
+}
+
+async fn dev_login(
+    State(state): State<ApplicationState>,
+    query: Option<Query<DevLoginQuery>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if std::env::var("APP_ENV").ok().as_deref() != Some("development") {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let login_flow = state.login_flow.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let query = query.ok_or(StatusCode::BAD_REQUEST)?;
+    let email = query.email.as_ref().ok_or(StatusCode::BAD_REQUEST)?;
+    let normalized_email = email.trim().to_lowercase();
+    let display_name = query.display_name.clone();
+    match login_flow
+        .dev_login(DevLogin {
+            normalized_email,
+            display_name,
+        })
+        .await
+    {
+        Ok(result) => {
+            let mut response = Response::new(Body::from("Redirecting..."));
+            *response.status_mut() = StatusCode::FOUND;
+            response.headers_mut().insert(
+                HeaderName::from_static("location"),
+                HeaderValue::from_str(&result.redirect_url).unwrap(),
+            );
+            response
+                .headers_mut()
+                .insert(SET_COOKIE, HeaderValue::from_str(&result.cookie).unwrap());
+            Ok(response)
+        }
+        Err(DevLoginError::Database(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(DevLoginError::Unavailable) => Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
+}
+
+async fn password_login(
+    State(state): State<ApplicationState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    Json(request): Json<PasswordLoginRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let login_flow = state.login_flow.ok_or_else(ApiError::service_unavailable)?;
+    let client_ip = connect_info
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_owned());
+
+    if request.email.is_empty() || request.password.is_empty() {
+        return Err(ApiError::bad_request());
+    }
+
+    match login_flow
+        .authenticate_password(PasswordLoginCommand {
+            email: request.email,
+            password: request.password,
+            client_ip,
+        })
+        .await
+    {
+        Ok(PasswordLoginResult {
+            session_token,
+            csrf_token,
+            ..
+        }) => {
+            let cookie = SessionCookieBuilder::new(&session_token)
+                .is_secure(state.is_secure)
+                .build();
+            let mut response_headers = HeaderMap::new();
+            response_headers.insert(
+                SET_COOKIE,
+                HeaderValue::from_str(&cookie).map_err(|_| ApiError::internal())?,
+            );
+            Ok((
+                response_headers,
+                Json(PasswordLoginResponse {
+                    csrf_token: csrf_token.expose().to_owned(),
+                }),
+            ))
+        }
+        Err(PasswordLoginError::InvalidCredentials) | Err(PasswordLoginError::PasswordNotSet) => {
+            Err(ApiError::unauthorized_with_code(
+                "invalid_credentials",
+                "Invalid email or password",
+            ))
+        }
+        Err(PasswordLoginError::RateLimited) => Err(ApiError::rate_limited()),
+        Err(PasswordLoginError::Database(_)) => {
+            tracing::error!(error_code = "password_login_failed");
+            Err(ApiError::internal())
+        }
+        Err(PasswordLoginError::Unsupported) => Err(ApiError::service_unavailable()),
+    }
+}
+
+#[derive(Deserialize)]
+struct DevLoginQuery {
+    email: Option<String>,
+    display_name: Option<String>,
 }
 
 fn session_cookie(headers: &HeaderMap) -> Option<&str> {
@@ -1949,6 +2226,18 @@ struct ConsumeLoginLinkRequest {
 #[derive(Serialize)]
 struct ConsumeLoginLinkResponse {
     user: ActiveUser,
+    csrf_token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordLoginRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct PasswordLoginResponse {
     csrf_token: String,
 }
 
@@ -2151,6 +2440,9 @@ struct ApplicationState {
     shared_view_service: Option<SharedViewService>,
     external_feed_service: Option<ExternalFeedService>,
     notification_service: Option<NotificationService>,
+    access_log_level: tracing::level_filters::LevelFilter,
+    is_secure: bool,
+    password_login_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2198,6 +2490,15 @@ impl ApiError {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
             message: "Authentication required",
+            current_version: None,
+        }
+    }
+
+    fn unauthorized_with_code(code: &'static str, message: &'static str) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code,
+            message,
             current_version: None,
         }
     }

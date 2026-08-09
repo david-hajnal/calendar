@@ -346,6 +346,7 @@ impl EndpointHarness {
                 Arc::new(DevelopmentEmailSender::new()),
                 Arc::new(AllowAllLoginRateLimiter),
                 NOW,
+                false,
             ),
             SessionManager::new_at(
                 self.pool.clone(),
@@ -359,6 +360,9 @@ impl EndpointHarness {
             SharedViewService::new_at_with_key(self.pool.clone(), self.key.clone(), NOW),
             ExternalFeedService::new_at(self.pool.clone(), self.key.clone(), NOW),
             NotificationService::new_at(self.pool.clone(), NOW, 14 * 86_400),
+            tracing::level_filters::LevelFilter::INFO,
+            false,
+            false,
         )
     }
 

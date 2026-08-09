@@ -49,6 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if arguments.first().is_some_and(|value| value == "backup") {
         return run_backup(database, &arguments[1..]).await;
     }
+    if arguments.first().is_some_and(|value| value == "seed") {
+        return run_seed(&config, database).await;
+    }
     if !arguments.is_empty() {
         return Err(format!("unknown command: {}", arguments[0]).into());
     }
@@ -68,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let invitation_consumer =
         InvitationConsumer::new(database.clone(), secret_key.clone(), 30 * 24 * 60 * 60);
     let email_sender = Arc::new(DevelopmentEmailSender::new());
+    let is_secure = config.app_origin().starts_with("https://");
     let login_service = LoginService::new(
         database.clone(),
         secret_key.clone(),
@@ -76,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/login",
         email_sender.clone(),
         Arc::new(FixedWindowLoginRateLimiter::new(5, 15 * 60)),
+        is_secure,
     );
     let session_manager = SessionManager::new(
         database.clone(),
@@ -140,6 +145,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shared_view_service,
         external_feed_service,
         notification_service,
+        config.access_log_level(),
+        is_secure,
+        config.password_login_enabled(),
     );
     let frontend_directory =
         std::env::var("FRONTEND_DIR").unwrap_or_else(|_| "/app/frontend".into());
@@ -233,6 +241,90 @@ async fn run_bootstrap(
 
     println!("invitation_id={}", result.invitation_id);
     println!("token={}", result.token.expose());
+    Ok(())
+}
+
+async fn run_seed(
+    config: &AppConfig,
+    database: sqlx::SqlitePool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+    // Check if user already exists
+    let mut tx = database.begin().await?;
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&mut *tx)
+        .await?;
+
+    if user_count > 0 {
+        println!("database already has {} user(s), skipping seed", user_count);
+        return Ok(());
+    }
+
+    // Allow seed in production only when DEFAULT_ADMIN_PASSWORD is set.
+    if config.environment == Environment::Production
+        && std::env::var("DEFAULT_ADMIN_PASSWORD").ok().filter(|v| !v.is_empty()).is_none()
+    {
+        return Err(
+            "seed command is not allowed in production without DEFAULT_ADMIN_PASSWORD"
+                .into(),
+        );
+    }
+
+    // Create user
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (normalized_email, display_name, status, is_superadmin, created_at)
+         VALUES ('dev@example.com', 'Dev User', 'active', 1, ?)
+         RETURNING id",
+    )
+    .bind(now)
+    .fetch_one(&database)
+    .await?;
+
+    // Optionally set password from DEFAULT_ADMIN_PASSWORD env var.
+    if let Ok(password) = std::env::var("DEFAULT_ADMIN_PASSWORD") {
+        if !password.is_empty() {
+            let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
+                .map_err(|e| format!("bcrypt hash failed: {e}"))?;
+            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+                .bind(&hash)
+                .bind(user_id)
+                .execute(&database)
+                .await?;
+            println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
+        }
+    }
+
+    // Create calendar
+    let calendar_id: i64 = sqlx::query_scalar(
+        "INSERT INTO calendars (owner_user_id, name, color, default_timezone, default_event_visibility, created_at, updated_at)
+         VALUES (?, 'My Calendar', '#3b82f6', 'UTC', 'default', ?, ?)
+         RETURNING id",
+    )
+    .bind(user_id)
+    .bind(now)
+    .bind(now)
+    .fetch_one(&database)
+    .await?;
+
+    // Create calendar_acl
+    sqlx::query(
+        "INSERT INTO calendar_acl (calendar_id, user_id, role, created_at, updated_at)
+         VALUES (?, ?, 'owner', ?, ?)",
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .bind(now)
+    .bind(now)
+    .execute(&database)
+    .await?;
+
+    println!("seeded:");
+    println!("  email:     dev@example.com");
+    println!("  display:   Dev User");
+    println!("  superadmin: true");
+    println!("  calendar:  My Calendar");
+
     Ok(())
 }
 

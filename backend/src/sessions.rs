@@ -150,9 +150,15 @@ impl SessionManager {
                 record.last_seen_at
             };
 
+        let csrf_token = self
+            .secret_key
+            .generate_csrf_token(&token)
+            .expose()
+            .to_owned();
         Ok(AuthenticatedSession {
             id: record.session_id,
             token,
+            csrf_token,
             user: ActiveUser {
                 id: record.user_id,
                 email: record.normalized_email,
@@ -272,6 +278,7 @@ pub struct AuthenticatedSession {
     pub id: i64,
     #[serde(skip)]
     token: SecretToken,
+    pub csrf_token: String,
     pub user: ActiveUser,
     pub created_at: i64,
     pub last_seen_at: i64,

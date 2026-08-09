@@ -1,4 +1,8 @@
-CREATE TABLE users (
+-- Migration 0002: core_identity
+-- Creates core tables: users, invitations, login_tokens, sessions, audit_log.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     normalized_email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     display_name TEXT,
@@ -6,7 +10,7 @@ CREATE TABLE users (
     created_at INTEGER NOT NULL
 );
 
-CREATE TABLE invitations (
+CREATE TABLE IF NOT EXISTS invitations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     normalized_email TEXT NOT NULL COLLATE NOCASE,
     display_name TEXT,
@@ -18,10 +22,10 @@ CREATE TABLE invitations (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX invitations_expiration_idx ON invitations(expires_at);
-CREATE INDEX invitations_revocation_idx ON invitations(revoked_at);
+CREATE INDEX IF NOT EXISTS invitations_expiration_idx ON invitations(expires_at);
+CREATE INDEX IF NOT EXISTS invitations_revocation_idx ON invitations(revoked_at);
 
-CREATE TABLE login_tokens (
+CREATE TABLE IF NOT EXISTS login_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     token_hash BLOB NOT NULL UNIQUE CHECK (length(token_hash) > 0),
@@ -31,10 +35,10 @@ CREATE TABLE login_tokens (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX login_tokens_expiration_idx ON login_tokens(expires_at);
-CREATE INDEX login_tokens_revocation_idx ON login_tokens(revoked_at);
+CREATE INDEX IF NOT EXISTS login_tokens_expiration_idx ON login_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS login_tokens_revocation_idx ON login_tokens(revoked_at);
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     session_hash BLOB NOT NULL UNIQUE CHECK (length(session_hash) > 0),
@@ -43,10 +47,10 @@ CREATE TABLE sessions (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX sessions_expiration_idx ON sessions(expires_at);
-CREATE INDEX sessions_revocation_idx ON sessions(revoked_at);
+CREATE INDEX IF NOT EXISTS sessions_expiration_idx ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS sessions_revocation_idx ON sessions(revoked_at);
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_user_id INTEGER REFERENCES users(id),
     action TEXT NOT NULL,
@@ -56,13 +60,13 @@ CREATE TABLE audit_log (
     created_at INTEGER NOT NULL
 );
 
-CREATE TRIGGER audit_log_prevent_update
+CREATE TRIGGER IF NOT EXISTS audit_log_prevent_update
 BEFORE UPDATE ON audit_log
 BEGIN
     SELECT RAISE(ABORT, 'audit_log entries are immutable');
 END;
 
-CREATE TRIGGER audit_log_prevent_delete
+CREATE TRIGGER IF NOT EXISTS audit_log_prevent_delete
 BEFORE DELETE ON audit_log
 BEGIN
     SELECT RAISE(ABORT, 'audit_log entries are immutable');

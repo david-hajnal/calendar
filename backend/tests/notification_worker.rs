@@ -88,7 +88,7 @@ async fn completing_a_claim_is_idempotent_and_prevents_a_second_delivery() {
 #[tokio::test]
 async fn revoked_calendar_access_prevents_private_notification_delivery() {
     let (_dir, pool) = setup().await;
-    let (job_id, user, calendar) = deliverable_job(&pool).await;
+    let (job_id, user, calendar, _) = deliverable_job(&pool).await;
     sqlx::query("DELETE FROM calendar_acl WHERE calendar_id = ? AND user_id = ?")
         .bind(calendar)
         .bind(user)
@@ -108,7 +108,7 @@ async fn revoked_calendar_access_prevents_private_notification_delivery() {
 #[tokio::test]
 async fn suspended_user_receives_no_notification_delivery() {
     let (_dir, pool) = setup().await;
-    let (job_id, user, _) = deliverable_job(&pool).await;
+    let (job_id, user, _, _) = deliverable_job(&pool).await;
     sqlx::query("UPDATE users SET status = 'suspended' WHERE id = ?")
         .bind(user)
         .execute(&pool)
@@ -127,7 +127,7 @@ async fn suspended_user_receives_no_notification_delivery() {
 #[tokio::test]
 async fn valid_claim_creates_an_in_app_notification() {
     let (_dir, pool) = setup().await;
-    let (job_id, _, _) = deliverable_job(&pool).await;
+    let (job_id, _, _, _) = deliverable_job(&pool).await;
     let worker = NotificationWorker::new_at_with_email_sender(
         pool.clone(),
         NOW,
@@ -144,7 +144,7 @@ async fn valid_claim_creates_an_in_app_notification() {
 #[tokio::test]
 async fn valid_claim_sends_a_notification_email() {
     let (_dir, pool) = setup().await;
-    let (_, user, _) = deliverable_job(&pool).await;
+    let (_, _, _, email) = deliverable_job(&pool).await;
     let sender = Arc::new(InMemoryEmailSender::new());
     let worker = NotificationWorker::new_at_with_email_sender(pool, NOW, 60, 10, sender.clone());
 
@@ -152,16 +152,13 @@ async fn valid_claim_sends_a_notification_email() {
 
     let messages = sender.messages();
     assert_eq!(messages.len(), 1);
-    assert_eq!(
-        messages[0].recipient(),
-        format!("deliverable-{user}@example.com")
-    );
+    assert_eq!(messages[0].recipient(), email);
 }
 
 #[tokio::test]
 async fn transient_email_failure_is_retried_after_deterministic_backoff() {
     let (_dir, pool) = setup().await;
-    let (id, _, _) = deliverable_job(&pool).await;
+    let (id, _, _, _) = deliverable_job(&pool).await;
     let sender = Arc::new(SequencedEmailSender::new(vec![
         Err(EmailError::transient()),
         Ok(()),
@@ -203,7 +200,7 @@ async fn transient_email_failure_is_retried_after_deterministic_backoff() {
 #[tokio::test]
 async fn exhausted_transient_failures_reach_terminal_failed_state_without_leaking_private_data() {
     let (_dir, pool) = setup().await;
-    let (id, _, _) = deliverable_job(&pool).await;
+    let (id, _, _, _) = deliverable_job(&pool).await;
     let sender = Arc::new(SequencedEmailSender::new(vec![
         Err(EmailError::transient()),
         Err(EmailError::transient()),
@@ -243,7 +240,7 @@ async fn exhausted_transient_failures_reach_terminal_failed_state_without_leakin
 #[tokio::test]
 async fn permanent_email_failure_is_terminal_immediately_and_metrics_are_safe() {
     let (_dir, pool) = setup().await;
-    let (id, _, _) = deliverable_job(&pool).await;
+    let (id, _, _, _) = deliverable_job(&pool).await;
     let sender = Arc::new(SequencedEmailSender::new(vec![
         Err(EmailError::permanent()),
     ]));
@@ -335,7 +332,7 @@ async fn job(pool: &SqlitePool, scheduled_at: i64) -> i64 {
         .last_insert_rowid()
 }
 
-async fn deliverable_job(pool: &SqlitePool) -> (i64, i64, i64) {
+async fn deliverable_job(pool: &SqlitePool) -> (i64, i64, i64, String) {
     let user = sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, 'User', 'active', ?)")
         .bind("deliverable-1@example.com")
         .bind(NOW)
@@ -359,7 +356,12 @@ async fn deliverable_job(pool: &SqlitePool) -> (i64, i64, i64) {
     let job = sqlx::query("INSERT INTO notification_jobs (user_id, calendar_id, event_id, occurrence_key, scheduled_at, state, created_at, updated_at) VALUES (?, ?, ?, 'occurrence', ?, 'pending', ?, ?)")
         .bind(user).bind(calendar).bind(event).bind(NOW).bind(NOW).bind(NOW)
         .execute(pool).await.unwrap().last_insert_rowid();
-    (job, user, calendar)
+    let email: String = sqlx::query_scalar("SELECT normalized_email FROM users WHERE id = ?")
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (job, user, calendar, email)
 }
 
 async fn in_app_count(pool: &SqlitePool, job_id: i64) -> i64 {

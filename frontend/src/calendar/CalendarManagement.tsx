@@ -30,12 +30,12 @@ interface CalendarSettings {
 }
 
 const blankSettings: CalendarSettings = {
-  name: "", description: "", color: "#2563eb", default_timezone: "UTC", default_event_visibility: "private",
+  name: "", description: "", color: "#3b82f6", default_timezone: "UTC", default_event_visibility: "private",
 };
 
 function settingsFor(calendar?: Calendar): CalendarSettings {
   return calendar === undefined ? blankSettings : {
-    name: calendar.name ?? "", description: calendar.description ?? "", color: calendar.color ?? "#2563eb",
+    name: calendar.name ?? "", description: calendar.description ?? "", color: calendar.color ?? "#3b82f6",
     default_timezone: calendar.default_timezone ?? "UTC", default_event_visibility: calendar.default_event_visibility ?? "private",
   };
 }
@@ -56,7 +56,22 @@ const shareableRoles: { value: ShareableCalendarRole; label: string }[] = [
   { value: "manager", label: "Manager" }, { value: "editor", label: "Editor" }, { value: "viewer", label: "Viewer" }, { value: "free_busy_viewer", label: "Free/busy viewer" },
 ];
 
-function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDenied }: { api: ApiClient; calendar: Calendar; onClose: () => void; onCalendarChanged: (calendar: Calendar) => void; onAccessDenied: () => void }) {
+const CALENDAR_COLORS = [
+  "#ef4444", "#f97316", "#f59e0b", "#10b981", "#3b82f6",
+  "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f43f5e",
+];
+
+function initialsFor(email: string): string {
+  const parts = email.split("@")[0].split(/[._-]/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return email.slice(0, 2).toUpperCase();
+}
+
+function roleLabel(role: string): string {
+  return role === "owner" ? "Owner" : role.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDenied, triggerRef }: { api: ApiClient; calendar: Calendar; onClose: () => void; onCalendarChanged: (calendar: Calendar) => void; onAccessDenied: () => void; triggerRef: React.RefObject<HTMLButtonElement | null> }) {
   const [entries, setEntries] = useState<CalendarAclEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState("");
@@ -68,6 +83,9 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
 
   useEffect(() => {
     closeButton.current?.focus();
+  }, []);
+
+  useEffect(() => {
     let active = true;
     void listCalendarAcl(api, calendar.id).then((result) => { if (active) setEntries(result); }).catch((reason: unknown) => {
       if (!active) return;
@@ -84,6 +102,21 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
       else onClose();
     }
   }
+
+  useEffect(() => {
+    const dialog = closeButton.current?.closest("[role=\"dialog\"]");
+    if (!dialog) return;
+    const handler = (e: Event) => {
+      const keyboardEvent = e as unknown as KeyboardEvent;
+      if (keyboardEvent.key === "Escape") {
+        keyboardEvent.preventDefault();
+        if (transferTarget !== null) setTransferTarget(null);
+        else onClose();
+      }
+    };
+    dialog.addEventListener("keydown", handler);
+    return () => { dialog.removeEventListener("keydown", handler); };
+  }, [transferTarget]);
 
   async function saveRole(entryUserId: number, role: ShareableCalendarRole) {
     setError(null);
@@ -110,27 +143,201 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
     } catch (reason) { if (isCalendarAccessChange(reason)) onAccessDenied(); else setError("We could not transfer ownership."); }
   }
 
-  return <div className="calendar-dialog" role="dialog" aria-modal="true" aria-labelledby="sharing-heading" onKeyDown={onKeyDown}>
-    <h3 id="sharing-heading">Share {calendar.name ?? "calendar"}</h3>
-    <button ref={closeButton} type="button" onClick={onClose}>Close sharing</button>
-    {error && <p role="alert">{error}</p>}
-    <form className="calendar-form" onSubmit={(event) => { event.preventDefault(); const id = Number(userId); if (!Number.isInteger(id) || id <= 0) { setError("Enter a valid user ID."); return; } void saveRole(id, newRole); }} aria-label="Add collaborator">
-      <label>User ID<input type="number" min="1" required value={userId} onChange={(event) => setUserId(event.target.value)} /></label>
-      <label>Role<select value={newRole} onChange={(event) => setNewRole(event.target.value as ShareableCalendarRole)}>{shareableRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label>
-      <button type="submit">Add collaborator</button>
-    </form>
-    <ul aria-label="Collaborators">{entries.map((entry) => <li key={entry.user_id}>
-      <strong>User {entry.user_id}</strong>{entry.role === "owner" ? <span> — Owner</span> : <>
-        <label>Role for user {entry.user_id}<select value={roleEdits[entry.user_id] ?? entry.role} onChange={(event) => setRoleEdits((current) => ({ ...current, [entry.user_id]: event.target.value as ShareableCalendarRole }))}>{shareableRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></label>
-        <button type="button" onClick={() => void saveRole(entry.user_id, roleEdits[entry.user_id] ?? entry.role)}>Save role for user {entry.user_id}</button>
-        <button type="button" onClick={() => void revoke(entry.user_id)}>Revoke access for user {entry.user_id}</button>
-      </>}</li>)}</ul>
-    {owner && <section aria-labelledby="transfer-heading"><h4 id="transfer-heading">Transfer ownership</h4>
-      <p>Transferring ownership makes you a manager.</p>
-      {transferTarget === null ? <button type="button" onClick={() => setTransferTarget(entries.find((entry) => entry.role !== "owner")?.user_id ?? null)} disabled={!entries.some((entry) => entry.role !== "owner")}>Transfer ownership</button> :
-        <div className="calendar-dialog calendar-dialog--nested" role="dialog" aria-modal="true" aria-labelledby="transfer-confirmation-heading"><h4 id="transfer-confirmation-heading">Confirm ownership transfer</h4><p>User {transferTarget} will become the owner.</p><button type="button" onClick={() => void transfer()}>Confirm transfer</button><button type="button" onClick={() => setTransferTarget(null)}>Cancel transfer</button></div>}
-    </section>}
+  const ownerEntry = entries.find((e) => e.role === "owner");
+  const nonOwnerEntries = entries.filter((e) => e.role !== "owner");
+
+  return <div className="sharing-dialog" role="dialog" aria-modal="true" aria-labelledby="sharing-heading">
+    <div className="sharing-dialog__card">
+      <div className="sharing-dialog__header">
+        <h3 id="sharing-heading">Share {calendar.name ?? "calendar"}</h3>
+        <button ref={closeButton} className="sharing-dialog__close" type="button" onClick={onClose} aria-label="Close sharing">
+          <span className="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div className="sharing-dialog__body">
+        {error && <p className="sharing-dialog__error" role="alert">{error}</p>}
+        <div className="sharing-dialog__invite">
+          <label className="sharing-dialog__invite-title">Invite Collaborators</label>
+          <form className="sharing-dialog__invite-row" onSubmit={(event) => { event.preventDefault(); const id = Number(userId); if (!Number.isInteger(id) || id <= 0) { setError("Enter a valid user ID."); return; } void saveRole(id, newRole); }}>
+            <div className="sharing-dialog__invite-input-wrapper">
+              <span className="material-symbols-outlined">person_add</span>
+              <input className="sharing-dialog__invite-input" type="number" min="1" placeholder="Enter User ID or Email" required value={userId} onChange={(event) => setUserId(event.target.value)} />
+            </div>
+            <select className="sharing-dialog__invite-select" value={newRole} onChange={(event) => setNewRole(event.target.value as ShareableCalendarRole)}>
+              {shareableRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+            </select>
+            <button className="sharing-dialog__send-btn" type="submit">Send Invite</button>
+          </form>
+        </div>
+        <div>
+          <h4 className="sharing-dialog__collaborators-title">Current Collaborators</h4>
+          <ul className="sharing-dialog__collaborator-list">
+            {ownerEntry && <li className="sharing-dialog__owner-row">
+              <div className="sharing-dialog__collab-info">
+                <div className="sharing-dialog__avatar sharing-dialog__avatar--owner">{initialsFor(calendar.name ?? "ME")}</div>
+                <div className="sharing-dialog__collab-details">
+                  <div className="sharing-dialog__collab-name">{ownerEntry.user_id}</div>
+                  <div className="sharing-dialog__collab-role"><span className="dot" />Owner</div>
+                </div>
+              </div>
+              {nonOwnerEntries.length > 0 && transferTarget === null &&
+                <button className="sharing-dialog__transfer-btn" type="button" onClick={() => setTransferTarget(nonOwnerEntries.find((e) => e.role !== "owner")?.user_id ?? null)}>
+                  <span className="material-symbols-outlined">swap_horiz</span> Transfer ownership
+                </button>
+              }
+              {transferTarget !== null && <div className="sharing-dialog__confirm" role="dialog" aria-modal="true" aria-labelledby="transfer-confirmation-heading">
+                <h4 id="transfer-confirmation-heading">Confirm ownership transfer</h4>
+                <p>User {transferTarget} will become the owner. You will become a manager.</p>
+                <div className="sharing-dialog__confirm-actions">
+                  <button className="btn-discard" type="button" onClick={() => setTransferTarget(null)}>Cancel</button>
+                  <button className="btn-confirm" type="button" onClick={() => void transfer()}>Confirm transfer</button>
+                </div>
+              </div>}
+            </li>}
+            {nonOwnerEntries.map((entry) => <li key={entry.user_id} className="sharing-dialog__collaborator">
+              <div className="sharing-dialog__collab-info">
+                <div className="sharing-dialog__avatar">{initialsFor(String(entry.user_id))}</div>
+                <div className="sharing-dialog__collab-details">
+                  <div className="sharing-dialog__collab-name">User {entry.user_id}</div>
+                  <div className="sharing-dialog__collab-role sharing-dialog__collab-role--primary">{roleLabel(entry.role)}</div>
+                </div>
+              </div>
+              <div className="sharing-dialog__collab-actions">
+                <label className="sharing-dialog__role-label">Role for user {entry.user_id}
+                  <select className="sharing-dialog__role-select" value={roleEdits[entry.user_id] ?? entry.role} onChange={(event) => setRoleEdits((current) => ({ ...current, [entry.user_id]: event.target.value as ShareableCalendarRole }))}>
+                    {shareableRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                  </select>
+                </label>
+                <button className="sharing-dialog__icon-btn" type="button" onClick={() => void saveRole(entry.user_id, roleEdits[entry.user_id] ?? entry.role)} aria-label={`Save role for user ${entry.user_id}`}>
+                  <span className="material-symbols-outlined">save</span>
+                </button>
+                <button className="sharing-dialog__icon-btn sharing-dialog__icon-btn--danger" type="button" onClick={() => void revoke(entry.user_id)} aria-label={`Revoke access for user ${entry.user_id}`}>
+                  <span className="material-symbols-outlined">person_remove</span>
+                </button>
+              </div>
+            </li>)}
+          </ul>
+        </div>
+      </div>
+      <div className="sharing-dialog__footer">
+        <button className="btn-cancel" type="button" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" type="button" onClick={onClose}>Done</button>
+      </div>
+    </div>
   </div>;
+}
+
+function ColorSwatchPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
+  return <div className="color-swatches-picker" role="radiogroup" aria-label="Theme color">
+    {CALENDAR_COLORS.map((color) =>
+      <button key={color} type="button" className={`color-swatch-picker${value === color ? " color-swatch-picker--active" : ""}`}
+        style={{ background: color }} aria-pressed={value === color} role="radio"
+        aria-label={`Color ${color}`} tabIndex={value === color ? 0 : -1}
+        onClick={() => onChange(color)} />
+    )}
+  </div>;
+}
+
+function CalendarFormModal({ editing, settings, setSettings, onSave, onCancel, submitting }: {
+  editing: Calendar | null;
+  settings: CalendarSettings;
+  setSettings: (s: CalendarSettings) => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+  submitting: boolean;
+}) {
+  const title = editing === null ? "New Calendar" : "Edit Calendar";
+  return <div className="calendar-modal-overlay" onClick={onCancel}>
+    <div className="calendar-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+      <div className="calendar-modal__header">
+        <h3 id="modal-heading">{title}</h3>
+        <button className="calendar-modal__close" type="button" onClick={onCancel}>
+          <span className="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <form className="calendar-form" onSubmit={onSave} aria-label={editing === null ? "Create calendar" : `Edit ${editing.name ?? "calendar"}`}>
+        <div className="calendar-modal__body">
+          <label>Calendar name
+            <input required value={settings.name} onChange={(event) => setSettings({ ...settings, name: event.target.value })} placeholder="e.g., Team Syncs" />
+          </label>
+          <label>Description <span className="optional">(Optional)</span>
+            <textarea value={settings.description} onChange={(event) => setSettings({ ...settings, description: event.target.value })} placeholder="What is this calendar for?" rows={3} />
+          </label>
+          <label>Theme Color
+            <ColorSwatchPicker value={settings.color} onChange={(color) => setSettings({ ...settings, color })} />
+          </label>
+          <div className="calendar-modal__grid">
+            <label>Timezone
+              <select value={settings.default_timezone} onChange={(event) => setSettings({ ...settings, default_timezone: event.target.value })}>
+                <option>Pacific Time (PT)</option>
+                <option>Eastern Time (ET)</option>
+                <option>UTC</option>
+              </select>
+            </label>
+            <label>Visibility
+              <select value={settings.default_event_visibility} onChange={(event) => setSettings({ ...settings, default_event_visibility: event.target.value })}>
+                <option value="private">Private</option>
+                <option value="default">Default</option>
+                <option value="public">Public</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div className="calendar-modal__footer">
+          <button className="btn-cancel" type="button" onClick={onCancel}>Cancel</button>
+          <button className="btn-primary" type="submit" disabled={submitting}>{submitting ? "Saving\u2026" : editing === null ? "Create calendar" : "Save changes"}</button>
+        </div>
+      </form>
+    </div>
+  </div>;
+}
+
+function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete }: {
+  calendar: Calendar;
+  onEdit: () => void;
+  onShare: () => void;
+  onArchive: () => void;
+  onDelete?: () => void;
+}) {
+  const archived = !!calendar.archived;
+  const color = calendar.color || "#3b82f6";
+  return <article className={`calendar-card${archived ? " calendar-card--archived" : ""}`}>
+    <div className="calendar-card__accent" style={{ background: color }} />
+    <div className="calendar-card__body">
+      <div className="calendar-card__top">
+        <div className="calendar-card__title-row">
+          <div className="calendar-card__color-dot" style={{ background: color }} />
+          <h3 className="calendar-card__title">{calendar.name ?? "Busy calendar"}</h3>
+        </div>
+        <span className={`calendar-card__badge${archived ? " calendar-card__badge--archived" : ""}`}>
+          {archived ? <><span className="material-symbols-outlined">archive</span> Archived</> : roleLabel(calendar.role)}
+        </span>
+      </div>
+      {calendar.description && <p className="calendar-card__description">{calendar.description}</p>}
+      <div className="calendar-card__footer">
+        <div className="calendar-card__actions">
+          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={onEdit} aria-label={`Edit ${calendar.name ?? "calendar"}`} title="Edit">
+            <span className="material-symbols-outlined">edit</span>
+          </button>}
+          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={onShare} aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} title="Sharing">
+            <span className="material-symbols-outlined">group</span>
+          </button>}
+        </div>
+        {archived ? <>
+          {canManage(calendar) && <button className="calendar-card__restore-btn" type="button" onClick={onArchive} aria-label={`Restore ${calendar.name ?? "calendar"}`}>
+            <span className="material-symbols-outlined">unarchive</span> Restore
+          </button>}
+          {canDelete(calendar) && <button className="calendar-card__delete-btn" type="button" onClick={onDelete} aria-label={`Delete ${calendar.name ?? "calendar"}`}>
+            <span className="material-symbols-outlined">delete</span>
+          </button>}
+        </> : canManage(calendar) && <div className="calendar-card__hover-actions">
+          <button className="calendar-card__action-btn" type="button" onClick={onArchive} aria-label={`Archive ${calendar.name ?? "calendar"}`} title="Archive">
+            <span className="material-symbols-outlined">archive</span>
+          </button>
+        </div>}
+      </div>
+    </div>
+  </article>;
 }
 
 export function CalendarManagement({ api }: { api: ApiClient }) {
@@ -142,6 +349,7 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
   const [submitting, setSubmitting] = useState(false);
   const [sharing, setSharing] = useState<Calendar | null>(null);
   const shareTrigger = useRef<HTMLButtonElement>(null);
+  const prevSharingRef = useRef<Calendar | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -157,6 +365,14 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
     })();
     return () => { active = false; };
   }, [api]);
+
+  useEffect(() => {
+    if (prevSharingRef.current !== null && sharing === null) {
+      prevSharingRef.current = null;
+      shareTrigger.current?.focus();
+    }
+    prevSharingRef.current = sharing;
+  }, [sharing]);
 
   function openCreate() { setError(null); setSettings(blankSettings); setEditing(null); }
   function openEdit(calendar: Calendar) { setError(null); setSettings(settingsFor(calendar)); setEditing(calendar); }
@@ -200,33 +416,56 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
     } catch (reason) { if (isCalendarAccessChange(reason)) await refreshAfterAccessChange(); else setError("We could not delete this calendar."); }
   }
 
-  if (loading) return <section aria-busy="true"><p role="status">Loading calendars…</p></section>;
+  if (loading) return <section aria-busy="true"><p className="calendar-loading" role="status">Loading calendars\u2026</p></section>;
+
+  const activeCalendars = calendars.filter((c) => !c.archived);
+  const archivedCalendars = calendars.filter((c) => c.archived);
+
   return <section className="calendar-management" aria-labelledby="calendars-heading">
-    <header><h2 id="calendars-heading">Calendars</h2><button type="button" onClick={openCreate}>New calendar</button></header>
-    {error && <p role="alert">{error}</p>}
-    {editing !== undefined && <form className="calendar-form" onSubmit={save} aria-label={editing === null ? "Create calendar" : `Edit ${editing.name ?? "calendar"}`}>
-      <h3>{editing === null ? "Create calendar" : "Edit calendar"}</h3>
-      <label>Calendar name<input required value={settings.name} onChange={(event) => setSettings({ ...settings, name: event.target.value })} /></label>
-      <label>Description<textarea value={settings.description} onChange={(event) => setSettings({ ...settings, description: event.target.value })} /></label>
-      <label>Color<input type="color" value={settings.color} onChange={(event) => setSettings({ ...settings, color: event.target.value })} /></label>
-      <label>Time zone<input required value={settings.default_timezone} onChange={(event) => setSettings({ ...settings, default_timezone: event.target.value })} /></label>
-      <label>Default visibility<select value={settings.default_event_visibility} onChange={(event) => setSettings({ ...settings, default_event_visibility: event.target.value })}><option value="private">Private</option><option value="default">Default</option></select></label>
-      <button type="submit" disabled={submitting}>{submitting ? "Saving…" : editing === null ? "Create calendar" : "Save changes"}</button>
-      <button type="button" onClick={() => setEditing(undefined)} disabled={submitting}>Cancel</button>
-    </form>}
-    {calendars.length === 0 ? <p>No calendars yet.</p> : <ul>
-      {calendars.map((calendar) => <li key={calendar.id}>
-        <article>
-          <h3>{calendar.name ?? "Busy calendar"}</h3>
-          {calendar.description && <p>{calendar.description}</p>}
-          <p>Role: {calendar.role.replaceAll("_", " ")}{calendar.archived ? " · Archived" : ""}</p>
-          {canManage(calendar) && <><button type="button" aria-label={`Edit ${calendar.name ?? "calendar"}`} onClick={() => openEdit(calendar)}>Edit</button>
-            <button type="button" aria-label={`${calendar.archived ? "Restore" : "Archive"} ${calendar.name ?? "calendar"}`} onClick={() => void setArchived(calendar, !calendar.archived)}>{calendar.archived ? "Restore" : "Archive"}</button></>}
-          {canManage(calendar) && <button type="button" aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} onClick={(event) => { shareTrigger.current = event.currentTarget; setSharing(calendar); }}>Sharing</button>}
-          {canDelete(calendar) && <button type="button" aria-label={`Delete ${calendar.name ?? "calendar"}`} onClick={() => void deleteCalendar(calendar)}>Delete</button>}
-        </article>
-      </li>)}
-    </ul>}
-    {sharing && <SharingDialog api={api} calendar={sharing} onClose={() => { setSharing(null); queueMicrotask(() => shareTrigger.current?.focus()); }} onCalendarChanged={(calendar) => { replace(calendar); setSharing(calendar); }} onAccessDenied={() => { void refreshAfterAccessChange(); }} />}
+    <header className="calendar-management__header">
+      <div>
+        <h2 id="calendars-heading">Calendars</h2>
+        <p>Manage your calendars, sharing settings, and default behaviors.</p>
+      </div>
+      <button className="calendar-management__new-btn" type="button" onClick={openCreate}>
+        <span className="material-symbols-outlined">add</span>
+        New calendar
+      </button>
+    </header>
+
+    {error && <p className="app-message app-message--error" role="alert">{error}</p>}
+
+    {editing !== undefined && <CalendarFormModal editing={editing} settings={settings} setSettings={setSettings} onSave={save} onCancel={() => setEditing(undefined)} submitting={submitting} />}
+
+    {activeCalendars.length > 0 && <h3 className="calendar-section-title">Active Calendars</h3>}
+    <div className="calendar-grid">
+      {activeCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
+        onEdit={() => openEdit(calendar)}
+        onShare={() => { setSharing(calendar); queueMicrotask(() => shareTrigger.current?.focus()); }}
+        onArchive={() => void setArchived(calendar, true)}
+      />)}
+    </div>
+
+    {archivedCalendars.length > 0 && <h3 className="calendar-section-title">Archived Calendars</h3>}
+    <div className="calendar-grid">
+      {archivedCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
+        onEdit={() => openEdit(calendar)}
+        onShare={() => { setSharing(calendar); queueMicrotask(() => shareTrigger.current?.focus()); }}
+        onArchive={() => void setArchived(calendar, false)}
+        onDelete={() => void deleteCalendar(calendar)}
+      />)}
+    </div>
+
+    {calendars.length === 0 && <div className="calendar-empty">
+      <div className="calendar-empty__icon"><span className="material-symbols-outlined">calendar_month</span></div>
+      <h3>No calendars yet.</h3>
+      <p>Create your first calendar to start managing events.</p>
+      <button className="calendar-management__new-btn" type="button" onClick={openCreate} aria-label="Create your first calendar">
+        <span className="material-symbols-outlined">add</span>
+        New calendar
+      </button>
+    </div>}
+
+    {sharing && <SharingDialog api={api} calendar={sharing} onClose={() => setSharing(null)} onCalendarChanged={(calendar) => { replace(calendar); setSharing(calendar); }} onAccessDenied={() => { void refreshAfterAccessChange(); }} triggerRef={shareTrigger} />}
   </section>;
 }

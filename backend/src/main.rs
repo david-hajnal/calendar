@@ -16,6 +16,10 @@ use commoncal_backend::{
     invitations::InvitationConsumer,
     login::{FixedWindowLoginRateLimiter, LoginService},
     notification::NotificationWorker,
+    rate_limiter::FixedWindowRateLimiter,
+    write_rate_limit::WriteRateLimiterState,
+    public_rate_limit::PublicRateLimiterState,
+    admin_invitation_rate_limit::AdminInvitationRateLimiterState,
     security::SecretKey,
     sessions::{SessionManager, SessionSecurityConfig},
     shared_view::SharedViewService,
@@ -134,6 +138,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let external_feed_service = ExternalFeedService::new(database.clone(), secret_key.clone());
     let shared_view_service = SharedViewService::new_with_key(database, secret_key);
 
+    let write_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
+        None
+    } else {
+        Some(WriteRateLimiterState {
+            limiter: Arc::new(FixedWindowRateLimiter::new(30, 60)),
+        })
+    };
+
+    let public_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
+        None
+    } else {
+        Some(PublicRateLimiterState {
+            limiter: Arc::new(FixedWindowRateLimiter::new(100, 60)),
+        })
+    };
+
+    let admin_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("production") {
+        let limiter = FixedWindowRateLimiter::new(5, 60);
+        Some(AdminInvitationRateLimiterState {
+            limiter: Arc::new(limiter),
+        })
+    } else {
+        None
+    };
+
     let router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
         readiness,
         invitation_consumer,
@@ -148,6 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.access_log_level(),
         is_secure,
         config.password_login_enabled(),
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     );
     let frontend_directory =
         std::env::var("FRONTEND_DIR").unwrap_or_else(|_| "/app/frontend".into());

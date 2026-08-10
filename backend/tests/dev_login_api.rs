@@ -75,6 +75,9 @@ impl TestApplication {
                 SessionSecurityConfig::new(300, 60, ORIGIN).unwrap(),
                 NOW,
             ),
+            None,
+            None,
+            None,
         )
     }
 

@@ -102,6 +102,11 @@ impl SessionManager {
         manager
     }
 
+    pub fn new_for_test() -> Self {
+        let pool = SqlitePool::connect_lazy(":memory:").unwrap();
+        Self::new(pool, SecretKey::new([42; 32]), SessionSecurityConfig::new(300, 60, "http://localhost").unwrap())
+    }
+
     pub async fn authenticate(
         &self,
         session_cookie: Option<&str>,
@@ -283,6 +288,28 @@ pub struct AuthenticatedSession {
     pub created_at: i64,
     pub last_seen_at: i64,
     pub expires_at: i64,
+}
+
+impl AuthenticatedSession {
+    pub(crate) fn new_for_test(
+        id: i64,
+        token: SecretToken,
+        csrf_token: String,
+        user: ActiveUser,
+        created_at: i64,
+        last_seen_at: i64,
+        expires_at: i64,
+    ) -> Self {
+        Self {
+            id,
+            token,
+            csrf_token,
+            user,
+            created_at,
+            last_seen_at,
+            expires_at,
+        }
+    }
 }
 
 #[derive(FromRow)]

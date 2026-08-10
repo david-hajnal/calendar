@@ -105,6 +105,11 @@ impl AdminService {
         service
     }
 
+    pub fn new_for_test() -> Self {
+        let pool = SqlitePool::connect_lazy(":memory:").unwrap();
+        Self::new(pool, SecretKey::new([42; 32]), 3_600)
+    }
+
     pub async fn list_users(
         &self,
         status: Option<&str>,

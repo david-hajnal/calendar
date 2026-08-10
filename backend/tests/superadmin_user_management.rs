@@ -70,6 +70,9 @@ impl TestApplication {
                 NOW,
             ),
             self.admin_service(),
+            None,
+            None,
+            None,
         )
     }
 

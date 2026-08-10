@@ -136,6 +136,9 @@ impl TestApplication {
                 NOW,
                 false,
             ),
+            None,
+            None,
+            None,
         )
     }
 
@@ -295,7 +298,7 @@ async fn delivery_failure_keeps_the_generic_response_and_revokes_the_token() {
         54321,
     )));
 
-    let response = build_router_with_login_service(Readiness::new(), service)
+    let response = build_router_with_login_service(Readiness::new(), service, None, None, None)
         .oneshot(request)
         .await
         .unwrap();

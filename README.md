@@ -72,6 +72,7 @@ authenticated unsafe requests must match it.
 - **Admin API** — user management (list, suspend, reactivate, promote, demote), invitation management
 - **Backup & restore** — encrypted backup (AES-256-GCM) with SHA-256 integrity verification
 - **Multi-session** — inspect and revoke active sessions
+- **Rate limiting** — per-user write rate limiting on authenticated endpoints (enabled in staging/production)
 
 ## API overview
 
@@ -86,6 +87,20 @@ authenticated unsafe requests must match it.
 | Notifications | `GET /api/v1/notifications` |
 | Public | `GET /api/v1/public/views/:token`, `GET /api/v1/public/views/:token/events` |
 | Backup | `cargo run -- backup`, `cargo run -- restore` (CLI commands) |
+
+## Rate limiting
+
+Write endpoints on authenticated routes are rate-limited per-user (not per-calendar). Rate limiting is active
+when `APP_ENV=staging` or `APP_ENV=production`; it is disabled in development.
+
+| Tier | Limit | Examples |
+|------|-------|----------|
+| Critical | 10 req / 60s | ACL changes, calendar ownership transfer |
+| Standard | 30 req / 60s | Event CRUD, occurrence updates, external feed operations |
+| Permissive | 60 req / 60s | Calendar CRUD, archive/restore, view management |
+
+When rate limited, the API returns `429 Too Many Requests` with an `X-Retry-After` header. Superadmin users
+bypass all write rate limits.
 
 ## Production container
 

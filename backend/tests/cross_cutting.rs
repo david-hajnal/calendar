@@ -101,6 +101,9 @@ impl TestApplication {
                 NOW,
             ),
             CalendarService::new_at(self.pool.clone(), NOW),
+            None,
+            None,
+            None,
         )
         .oneshot(
             Request::builder()
@@ -178,6 +181,9 @@ async fn missing_csrf_token_returns_403() {
             NOW,
         ),
         CalendarService::new_at(app.pool.clone(), NOW),
+        None,
+        None,
+        None,
     );
     let response = router
         .oneshot(
@@ -309,11 +315,14 @@ async fn unauthorized_response_has_correct_json_shape() {
             NOW,
         ),
         CalendarService::new_at(app.pool.clone(), NOW),
+        None,
+        None,
+        None,
     );
     let response = router
         .oneshot(
             Request::builder()
-                .method(Method::GET)
+                .method("GET")
                 .uri("/api/v1/calendars")
                 .header(ORIGIN, TEST_ORIGIN)
                 .header("sec-fetch-site", "same-origin")
@@ -355,6 +364,9 @@ async fn forbidden_response_has_correct_json_shape() {
             NOW,
         ),
         CalendarService::new_at(app.pool.clone(), NOW),
+        None,
+        None,
+        None,
     );
     let response = router
         .oneshot(
@@ -428,6 +440,9 @@ async fn version_conflict_includes_current_version() {
             NOW,
         ),
         CalendarService::new_at(app.pool.clone(), NOW),
+        None,
+        None,
+        None,
     );
     let csrf = app.key.generate_csrf_token(&token);
     let response = router

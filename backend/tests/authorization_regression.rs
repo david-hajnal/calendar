@@ -363,6 +363,9 @@ impl EndpointHarness {
             tracing::level_filters::LevelFilter::INFO,
             false,
             false,
+            None,
+            None,
+            None,
         )
     }
 

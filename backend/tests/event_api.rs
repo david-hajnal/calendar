@@ -139,6 +139,9 @@ impl TestApplication {
             AdminService::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
             CalendarService::new_at(self.pool.clone(), NOW),
             EventService::new_at(self.pool.clone(), NOW),
+            None,
+            None,
+            None,
         )
     }
 

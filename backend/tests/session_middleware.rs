@@ -73,6 +73,9 @@ impl TestApplication {
                 SessionSecurityConfig::new(IDLE_TIMEOUT, WRITE_THROTTLE, ORIGIN_URL).unwrap(),
                 NOW,
             ),
+            None,
+            None,
+            None,
         )
     }
 

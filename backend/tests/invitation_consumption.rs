@@ -62,6 +62,9 @@ impl TestApplication {
                 SESSION_LIFETIME,
                 NOW,
             ),
+            None,
+            None,
+            None,
         )
     }
 

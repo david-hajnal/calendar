@@ -1403,6 +1403,14 @@ async fn rotate_publication(
         .rotate_publication(session.user.id, view_id)
         .await
         .map_err(map_shared_view_error)?;
+    
+    tracing::info!(
+        user_id = session.user.id,
+        view_id,
+        error_code = "publication_token_rotated",
+        "public view publication token rotated"
+    );
+    
     Ok(Json(publication))
 }
 
@@ -1749,6 +1757,12 @@ async fn update_this_and_following(
 
 fn map_event_error(error: EventServiceError) -> ApiError {
     match error {
+        EventServiceError::ComplexityLimitExceeded => ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "recurrence_too_complex",
+            message: "Recurrence rule exceeds complexity limits",
+            current_version: None,
+        },
         EventServiceError::InvalidInput => ApiError::bad_request(),
         EventServiceError::NotFound => ApiError::not_found(),
         EventServiceError::NotSupported => ApiError::not_implemented(),

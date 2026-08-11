@@ -98,3 +98,39 @@ fn csrf_token_from_another_session_fails() {
     assert!(key.validate_csrf_token(&first_session, &csrf));
     assert!(!key.validate_csrf_token(&second_session, &csrf));
 }
+
+#[test]
+fn derive_different_inputs_produce_different_keys() {
+    let key1 = SecretKey::derive(b"input1");
+    let key2 = SecretKey::derive(b"input2");
+    let enc1 = key1.encrypt_secret(b"data");
+    let enc2 = key2.encrypt_secret(b"data");
+    assert_ne!(enc1, enc2);
+}
+
+#[test]
+fn derive_key_can_encrypt_and_decrypt() {
+    let derived = SecretKey::derive(b"password");
+    let plaintext = b"secret data";
+    let encrypted = derived.encrypt_secret(plaintext);
+    let decrypted = derived.decrypt_secret(&encrypted);
+    assert_eq!(decrypted, Some(plaintext.to_vec()));
+}
+
+#[test]
+fn decrypt_with_wrong_key_returns_none() {
+    let key1 = SecretKey::new([0x42; 32]);
+    let key2 = SecretKey::new([0x43; 32]);
+    let encrypted = key1.encrypt_secret(b"secret");
+    let decrypted = key2.decrypt_secret(&encrypted);
+    assert!(decrypted.is_none());
+}
+
+#[test]
+fn decrypt_with_tampered_ciphertext_returns_none() {
+    let key = SecretKey::new([0x42; 32]);
+    let mut encrypted = key.encrypt_secret(b"secret");
+    encrypted[12] ^= 0xFF;
+    let decrypted = key.decrypt_secret(&encrypted);
+    assert!(decrypted.is_none());
+}

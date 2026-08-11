@@ -2,124 +2,113 @@
 
 ## 1. Rate limit configuration
 
-**Algorithm:** Per-admin fixed-window rate limiter (reuse `FixedWindowRateLimiter` from `rate_limiter.rs`)
+**Algorithm:** Per-admin fixed-window rate limiter (reuses `FixedWindowRateLimiter` from `rate_limiter.rs`)
 
 **Limits:**
-- 10 invitations per 60-second window per admin user
-- Lower than `RateLimitTier::Critical` (10/60s) because each request has real-world email cost
-- Superadmins bypass (current `write_rate_limit_middleware` already does this — keep as-is)
+- 5 invitations per 60-second window per admin user
+- Production-only (`APP_ENV == "production"`)
+- Lower threshold because each request triggers an email send
 
-**Key format:** `admin_invite:{user_id}`
+**Key format:** `admin:{user_id}`
 
 **Error response:** HTTP 429 with `Retry-After` header
 
 ## 2. Code changes
 
-### 2a. `backend/src/rate_limiter.rs`
+### 2a. `backend/src/admin_invitation_rate_limit.rs` (NEW FILE)
 
-Add `AdminInvite` tier to `RateLimitTier` enum (line ~69):
+Separate rate limiter file for admin invitations.
 
 ```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RateLimitTier {
-    Critical,
-    Standard,
-    Permissive,
-    AdminInvite,   // NEW
+pub struct AdminInvitationRateLimiterState {
+    pub limiter: Arc<FixedWindowRateLimiter>,
 }
-```
 
-Add config for `AdminInvite` in `RateLimitTier::config()` (line ~72):
-
-```rust
-RateLimitTier::AdminInvite => RateLimitConfig {
-    max_requests: 10,
-    window_seconds: 60,
-},
-```
-
-Add display arm (line ~91):
-
-```rust
-RateLimitTier::AdminInvite => write!(f, "admin_invite"),
-```
-
-### 2b. `backend/src/write_rate_limit.rs`
-
-Add admin invitation check in `write_rate_limit_middleware` (line ~55, after superadmin bypass):
-
-```rust
-// Before the existing tier check, add:
-if request.uri().path() == "/api/v1/admin/invitations" && request.method() == "POST" {
-    let key = WriteRateLimitKey {
-        user_id: session.user.id,
-        tier: RateLimitTier::AdminInvite,
-    };
-    let (allowed, retry_after) = limiter_state.limiter.check(&key);
+pub fn check_admin_invitation_rate_limit(
+    limiter: &AdminInvitationRateLimiterState,
+    user_id: i64,
+) -> Result<(), RateLimitExceeded> {
+    let key = format!("admin:{}", user_id);
+    let (allowed, retry_after) = limiter.limiter.check_by_key(&key);
     if !allowed {
-        return Err(RateLimitExceeded { retry_after });
+        Err(RateLimitExceeded { retry_after })
+    } else {
+        Ok(())
     }
-    return Ok(next.run(request).await);
 }
 ```
 
-This short-circuits the tier detection for admin invitations, avoiding a parse through `write_endpoint_tier`.
+Key design decisions:
+- Uses `check_by_key()` instead of `check()` — no `WriteRateLimitKey` needed (admin users don't go through write middleware)
+- No superadmin bypass — superadmins are rate-limited too (prevents admin abuse)
+- Separate file to avoid coupling with `write_rate_limit_middleware`
 
-### 2c. `backend/src/http.rs`
+### 2b. `backend/src/http.rs`
 
-No changes needed — `write_rate_limit_middleware` is already wired on the protected router at line 710-714.
+Add rate limit check in `invite_user` handler (line ~1855):
+
+```rust
+async fn invite_user(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(request): Json<InviteUserRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_superadmin(&session)?;
+    if let Some(ref limiter) = state.admin_rate_limiter {
+        check_admin_invitation_rate_limit(limiter, session.user.id)
+            .map_err(|_| ApiError::rate_limited())?;
+    }
+    // ... rest of handler
+}
+```
+
+Add `admin_rate_limiter` field to `ApplicationState`:
+
+```rust
+pub admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+```
+
+Update all `build_router_*` functions to accept `admin_rate_limiter: Option<AdminInvitationRateLimiterState>` parameter.
+
+### 2c. `backend/src/main.rs`
+
+Production-only instantiation:
+
+```rust
+let admin_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("production") {
+    let limiter = FixedWindowRateLimiter::new(5, 60);
+    Some(AdminInvitationRateLimiterState {
+        limiter: Arc::new(limiter),
+    })
+} else {
+    None
+};
+```
 
 ## 3. Test plan
 
-### 3a. Unit tests in `write_rate_limit.rs`
+### 3a. Unit tests in `admin_invitation_rate_limit.rs`
+- `test_check_allows_under_limit` — requests within limit succeed
+- `test_check_blocks_over_limit` — requests over limit return 429
+- `test_check_different_users_independent` — different users have independent limits
+- `test_check_retry_after_value` — retry_after is 60
+- `test_check_rate_limit_exceeded_into_response` — 429 status + Retry-After header
+- `test_check_window_not_expired_within_window` — window expiration works
+- `test_check_no_superadmin_bypass` — superadmins are rate-limited
 
-Add test `test_admin_invite_rate_limit`:
-
-```rust
-#[tokio::test]
-async fn test_admin_invite_rate_limit() {
-    let limiter_state = make_limiter(3, 60, 1000);
-    let session = make_session(1, false);
-    let app = build_app(limiter_state, session);
-
-    // 3 requests should succeed
-    for i in 0..3 {
-        let req = make_request("POST", "/api/v1/admin/invitations");
-        let resp = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK, "request {} should succeed", i + 1);
-    }
-
-    // 4th request should be rate limited
-    let req = make_request("POST", "/api/v1/admin/invitations");
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
-}
-```
-
-### 3b. Integration test in `backend/src/http.rs` or test module
-
-Add test that verifies `GET /api/v1/admin/invitations` is NOT rate-limited by this specific check (it goes through normal tier detection).
-
-### 3c. Resend endpoint
-
-Test that `POST /api/v1/admin/invitations/:id/resend` is also rate-limited. Add to middleware:
-
-```rust
-if request.uri().path().starts_with("/api/v1/admin/invitations")
-    && request.method() == "POST"
-{
-    // ... rate limit check
-}
-```
+### 3b. Integration tests in `http.rs`
+- `test_admin_invitation_rate_limiting` — end-to-end rate limiting
+- `test_admin_invitation_rate_limit_includes_superadmin` — superadmin not bypassed
 
 ## 4. Security review checklist
 
-- [ ] Rate limit values appropriate for production (10/min)
-- [ ] Superadmin bypass is intentional (admin abuse is a separate concern)
-- [ ] Retry-After header present on 429 responses
-- [ ] No information leakage in rate-limit error messages
-- [ ] Bucket key collision impossible (user_id is unique)
-- [ ] In-memory buckets don't grow unbounded (existing `HashMap` has no eviction)
+- [x] Rate limit values appropriate for production (5/min — conservative)
+- [x] Superadmin NOT bypassed (intentional — admin abuse prevention)
+- [x] Retry-After header present on 429 responses
+- [x] No information leakage in rate-limit error messages
+- [x] Bucket key collision impossible (user_id is unique)
+- [x] Buckets evicted when window expired (check_by_key retain)
+- [ ] In-memory buckets don't grow unbounded — fixed with eviction
 
 ## 5. Dependencies
 
@@ -127,12 +116,6 @@ No new crates. Reuses `FixedWindowRateLimiter` from `rate_limiter.rs`.
 
 ## 6. Monitoring
 
-Add tracing event when rate limit hits:
-
-```rust
-tracing::warn!(
-    user_id = session.user.id,
-    error_code = "admin_invite_rate_limited",
-    "admin invitation rate limit exceeded"
-);
-```
+Add tracing event when rate limit hits (via `RateLimitExceeded.into_response()`):
+- 429 response with `x-retry-after` header
+- Log at WARN level when rate limit exceeded

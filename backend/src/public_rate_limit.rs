@@ -21,8 +21,13 @@ pub async fn public_rate_limit_middleware(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, RateLimitExceeded> {
-    let ip = connect_info
-        .map(|ci| ci.ip().to_string())
+    let ip = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|v| v.trim().to_string())
+        .or_else(|| connect_info.map(|ci| ci.ip().to_string()))
         .unwrap_or_else(|| "unknown".to_owned());
     let key = format!("public:{}", ip);
     let (allowed, retry_after) = limiter_state.limiter.check_by_key(&key);

@@ -1,4 +1,4 @@
-# Plan: Add rate limiting on public view endpoints
+# Plan: Rate limiting on public view endpoints
 
 ## Severity: HIGH
 
@@ -16,19 +16,44 @@ Public view endpoints (`GET /api/v1/public/views/:token` and `GET /api/v1/public
 - Token validation probing (valid token → 200/404, invalid → 404)
 - Denial of service for legitimate public view access
 
-## Data Flow
-`Request` → `http.rs:1305-1345` → `resolve_publication` → DB lookup → event serialization → response (no rate limiting)
+## Implementation
 
-## Fix Plan
-1. Add IP-based rate limiting for public endpoints
-2. Use a lower threshold than authenticated endpoints (no session context)
-3. Consider caching for frequently accessed public views
-4. Add request size limits for event enumeration responses
-5. Monitor for unusual access patterns
+### Architecture
+Separate `PublicRateLimiterState` in `backend/src/public_rate_limit.rs`.
+Uses `FixedWindowRateLimiter` with `check_by_key()` — single limiter for all public endpoints (not separate metadata/events limiters).
 
-## Files to Modify
-- `backend/src/http.rs` (public route handlers, middleware wiring)
-- `backend/src/shared_view.rs` (public view resolution)
-- `backend/src/login.rs` (rate limiter types, generalize if needed)
+### Rate limit config
+- **Limit:** 100 requests per 60-second window per IP
+- **Key format:** `public:{ip}`
+- **IP extraction:** `x-forwarded-for` header (first IP in chain) → falls back to `ConnectInfo` → falls back to `"unknown"`
+- **Enabled:** All environments except development (`APP_ENV != "development"`)
+
+### Code locations
+- `backend/src/public_rate_limit.rs` — `PublicRateLimiterState`, `public_rate_limit_middleware()`
+- `backend/src/http.rs:639-644` — middleware wired on public router
+- `backend/src/main.rs:149-155` — instantiation (production: 100 req/60s)
+
+### Tests
+- `public_rate_limit.rs` — 6 unit tests
+- `http.rs` — 2 integration tests (`test_public_endpoint_rate_limiting`, `test_public_endpoint_independent_ips`)
+
+## Production config (main.rs)
+```rust
+FixedWindowRateLimiter::new(100, 60)  // 100 req/60s per IP
+```
+
+## Security review checklist
+- [x] IP extraction correct (x-forwarded-for + ConnectInfo fallback)
+- [x] Single limit for all public endpoints (simpler, adequate for current traffic patterns)
+- [x] No session-based bypass possible
+- [x] Bucket key collision impossible (IP addresses are unique identifiers)
+- [x] Buckets evicted when window expired (check_by_key retain)
+- [x] 429 response includes Retry-After header
+- [ ] In-memory only — doesn't work across multiple instances (acceptable for current deployment)
+
+## Production considerations
+- In-memory rate limiting doesn't work across multiple instances. For production, consider Redis-backed limiter.
+- `x-forwarded-for` parsing handles proxy scenarios (first IP in chain).
+- Monitor memory usage of rate limiter buckets under high traffic.
 
 ## Discovered by: focused agent for shared view token validation

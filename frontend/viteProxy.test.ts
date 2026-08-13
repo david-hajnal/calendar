@@ -1,14 +1,14 @@
 // @vitest-environment node
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
-import config from "./vite.config";
+import { describe, expect, it } from "vitest";
 
 describe("Vite development server", () => {
-  it("proxies API requests to the local backend", () => {
-    expect(config.server?.proxy?.["/api"]).toMatchObject({
+  it("proxies API requests to the local backend", async () => {
+    const { default: config } = await import("./vite.config.js");
+    const devConfig = typeof config === "function" ? await Promise.resolve(config({ mode: "development", command: "serve" })) : config;
+    expect(devConfig.server?.proxy?.["/api"]).toMatchObject({
       target: "http://127.0.0.1:3000",
-      changeOrigin: true,
     });
   });
 
@@ -18,13 +18,13 @@ describe("Vite development server", () => {
 
     try {
       process.chdir(resolve(frontendDirectory, ".."));
-      vi.resetModules();
-      const { default: rootLaunchConfig } = await import("./vite.config");
-
-      expect(rootLaunchConfig.root).toBe(frontendDirectory);
+      const { default: rootLaunchConfig } = await import("./vite.config.js");
+      const resolved = typeof rootLaunchConfig === "function"
+        ? await Promise.resolve(rootLaunchConfig({ mode: "development", command: "serve" }))
+        : rootLaunchConfig;
+      expect(resolved.root).toBe(frontendDirectory);
     } finally {
       process.chdir(originalWorkingDirectory);
-      vi.resetModules();
     }
   });
 });

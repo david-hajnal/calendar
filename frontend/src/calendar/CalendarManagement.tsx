@@ -71,6 +71,7 @@ function roleLabel(role: string): string {
   return role === "owner" ? "Owner" : role.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDenied, triggerRef }: { api: ApiClient; calendar: Calendar; onClose: () => void; onCalendarChanged: (calendar: Calendar) => void; onAccessDenied: () => void; triggerRef: React.RefObject<HTMLButtonElement | null> }) {
   const [entries, setEntries] = useState<CalendarAclEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +80,6 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
   const [roleEdits, setRoleEdits] = useState<Record<number, ShareableCalendarRole>>({});
   const [transferTarget, setTransferTarget] = useState<number | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-  const owner = calendar.role === "owner";
 
   useEffect(() => {
     closeButton.current?.focus();
@@ -94,14 +94,6 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
     });
     return () => { active = false; };
   }, [api, calendar.id, onAccessDenied]);
-
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (transferTarget !== null) setTransferTarget(null);
-      else onClose();
-    }
-  }
 
   useEffect(() => {
     const dialog = closeButton.current?.closest("[role=\"dialog\"]");

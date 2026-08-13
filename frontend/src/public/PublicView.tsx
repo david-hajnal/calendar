@@ -61,7 +61,6 @@ function getMonthGrid(date: Date) {
   const year = date.getFullYear();
   const month = date.getMonth();
   const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
   const startOffset = firstDay.getDay();
   const startDate = new Date(year, month, 1 - startOffset);
 
@@ -125,17 +124,6 @@ export function PublicViewPage({ token, fetcher = fetch, now = defaultNow }: { t
       <p className="typography-headline-md" style={{ color: 'var(--color-on-surface)' }}>Loading public calendar…</p>
     </div>
   </main>;
-
-  const eventChips = events.map((event, index) => {
-    const isBusy = event.busy === true;
-    const statusColor = event.status === "tentative" ? "var(--color-tertiary)" : event.status === "cancelled" ? "var(--color-error)" : "var(--color-primary)";
-    const chipBg = isBusy ? "transparent" : `rgb(70 72 212 / 10%)`;
-    return <div key={index} className={`public-view__event-chip ${isBusy ? 'public-view__event-chip--busy' : ''}`} style={isBusy ? { borderLeftColor: 'var(--color-outline)' } : { borderLeftColor: statusColor, backgroundColor: chipBg }} title={event.title}>
-      <span className="public-view__event-chip-text typography-label-md" style={{ color: isBusy ? 'var(--color-on-surface-variant)' : 'var(--color-on-primary-container)' }}>
-        {isBusy ? "Busy" : event.title}
-      </span>
-    </div>;
-  });
 
   const renderMonthGrid = () => {
     const rows: React.ReactNode[] = [];

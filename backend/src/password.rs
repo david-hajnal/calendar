@@ -20,7 +20,7 @@ impl fmt::Display for PasswordError {
 impl std::error::Error for PasswordError {}
 
 pub fn hash_password(password: &str) -> Result<String, PasswordError> {
-    if password.len() < 1 || password.len() > 72 {
+    if password.is_empty() || password.len() > 72 {
         return Err(PasswordError::InvalidPassword);
     }
     bcrypt::hash(password, BCRYPT_COST).map_err(|e| PasswordError::HashError(e.to_string()))

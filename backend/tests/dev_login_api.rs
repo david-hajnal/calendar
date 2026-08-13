@@ -95,6 +95,7 @@ impl TestApplication {
     }
 }
 
+#[allow(dead_code)]
 async fn body(response: axum::response::Response) -> String {
     String::from_utf8(
         response

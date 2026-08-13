@@ -327,7 +327,7 @@ async fn restore_requires_authentication() {
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri(&format!(
+                .uri(format!(
                     "/api/v1/calendars/{}/restore",
                     app.archived_calendar_id
                 ))

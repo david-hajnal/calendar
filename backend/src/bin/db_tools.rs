@@ -17,7 +17,6 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("usage: db-tools <command> [args]");
-        eprintln!("");
         eprintln!("commands:");
         eprintln!("  status [db_path]              Show migration status");
         eprintln!("  reset [db_path] --force       Reset database and run migrations");
@@ -73,7 +72,6 @@ async fn main() {
         }
         _ => {
             eprintln!("error: unknown command '{command}'");
-            eprintln!("");
             eprintln!("commands:");
             eprintln!("  status [db_path]              Show migration status");
             eprintln!("  reset [db_path] --force       Reset database and run migrations");
@@ -113,8 +111,8 @@ async fn cmd_status(db_path: &str) -> Result<(), String> {
 
     println!("Applied migrations:");
     println!(
-        "{:>3}  {:<10}  {:<35}  {}",
-        "#", "status", "name", "applied_at"
+        "{:>3}  {:<10}  {:<35}  applied_at",
+        "#", "status", "name"
     );
     println!("---  ----------  -----------------------------------  ----------");
 
@@ -124,8 +122,7 @@ async fn cmd_status(db_path: &str) -> Result<(), String> {
         let ts = chrono::NaiveDateTime::parse_from_str(installed_on, "%Y-%m-%d %H:%M:%S")
             .ok()
             .map(|dt| dt.and_utc().timestamp())
-            .map(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0))
-            .flatten();
+            .and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0));
         let timestamp = ts
             .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "unknown".to_string());
@@ -201,8 +198,9 @@ async fn cmd_seed(db_path: &str) -> Result<(), String> {
     .map_err(|e| format!("failed to create user: {e}"))?;
 
     // Optionally set password from DEFAULT_ADMIN_PASSWORD env var.
-    if let Ok(password) = std::env::var("DEFAULT_ADMIN_PASSWORD") {
-        if !password.is_empty() {
+    if let Ok(password) = std::env::var("DEFAULT_ADMIN_PASSWORD")
+        && !password.is_empty()
+    {
             let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
                 .map_err(|e| format!("bcrypt hash failed: {e}"))?;
             sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
@@ -213,7 +211,6 @@ async fn cmd_seed(db_path: &str) -> Result<(), String> {
                 .map_err(|e| format!("failed to set password: {e}"))?;
             println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
         }
-    }
 
     // Create calendar
     let calendar_id: i64 = sqlx::query_scalar(
@@ -337,12 +334,11 @@ async fn cmd_new(description: &str) -> Result<(), String> {
         }
 
         // Parse NNNN_ prefix
-        if let Some(seq_str) = name.split('_').next() {
-            if let Ok(seq) = seq_str.parse::<u32>() {
-                if seq > max_seq {
-                    max_seq = seq;
-                }
-            }
+        if let Some(seq_str) = name.split('_').next()
+            && let Ok(seq) = seq_str.parse::<u32>()
+            && seq > max_seq
+        {
+            max_seq = seq;
         }
     }
 
@@ -350,8 +346,7 @@ async fn cmd_new(description: &str) -> Result<(), String> {
     let padded = format!("{:04}", new_seq);
     let slug = description
         .to_lowercase()
-        .replace(' ', "_")
-        .replace('-', "_");
+        .replace([' ', '-'], "_");
     let filename = format!("{padded}_{slug}.sql");
     let filepath = migrations_dir.join(&filename);
 

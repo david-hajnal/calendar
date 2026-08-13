@@ -67,12 +67,12 @@ impl AppConfig {
             .map(|s| s.parse())
             .transpose()
             .map_err(|_| ConfigError::new("invalid ACCESS_LOG_LEVEL"))?
-            .unwrap_or_else(|| tracing::level_filters::LevelFilter::INFO);
+            .unwrap_or(tracing::level_filters::LevelFilter::INFO);
         let database_path =
             env::var("DATABASE_PATH").unwrap_or_else(|_| DEFAULT_DATABASE_PATH.into());
         let session_secret = env::var("SESSION_SECRET").ok();
         let app_origin = env::var("APP_ORIGIN").unwrap_or_else(|_| DEFAULT_APP_ORIGIN.into());
-        let password_login_enabled = env::var("PASSWORD_LOGIN_ENABLED")
+        let _password_login_enabled = env::var("PASSWORD_LOGIN_ENABLED")
             .ok()
             .map(|s| s == "1" || s == "true" || s == "TRUE")
             .unwrap_or(false);

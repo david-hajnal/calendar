@@ -148,6 +148,7 @@ impl<E> LoginService<E>
 where
     E: EmailSender + Send + Sync + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: SqlitePool,
         secret_key: SecretKey,

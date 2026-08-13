@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+
+FROM rust:1-bookworm AS backend-build
+WORKDIR /build/mcp-server
+COPY mcp-server/Cargo.toml mcp-server/Cargo.lock ./
+COPY mcp-server/src ./src
+RUN cargo build --release --locked
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates busybox-static \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system commoncal \
+    && useradd --system --gid commoncal --home-dir /app --shell /usr/sbin/nologin commoncal \
+    && mkdir -p /app/data /app/tmp \
+    && chown -R commoncal:commoncal /app
+WORKDIR /app
+COPY --from=backend-build /build/mcp-server/target/release/mcp-server /usr/local/bin/mcp-server
+
+USER commoncal
+ENV APP_ENV=production \
+    BIND_ADDRESS=0.0.0.0:3001 \
+    TMPDIR=/app/tmp
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/bin/busybox", "wget", "--spider", "-q", "http://127.0.0.1:3001/health/live"]
+ENTRYPOINT ["/usr/local/bin/mcp-server"]

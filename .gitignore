@@ -6,3 +6,9 @@ e2e/test-results/
 e2e/playwright-report/
 .e2e/
 LEAD_PROJECT_STATE.md
+
+# env
+.env.local
+
+# production config
+docs/plan/prod.md

@@ -414,15 +414,15 @@ async fn run_seed(
     if let Ok(password) = std::env::var("DEFAULT_ADMIN_PASSWORD")
         && !password.is_empty()
     {
-            let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
-                .map_err(|e| format!("bcrypt hash failed: {e}"))?;
-            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
-                .bind(&hash)
-                .bind(user_id)
-                .execute(&database)
-                .await?;
-            println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
-        }
+        let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
+            .map_err(|e| format!("bcrypt hash failed: {e}"))?;
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(&hash)
+            .bind(user_id)
+            .execute(&database)
+            .await?;
+        println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
+    }
 
     // Create calendar
     let calendar_id: i64 = sqlx::query_scalar(

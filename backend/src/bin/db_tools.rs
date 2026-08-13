@@ -110,10 +110,7 @@ async fn cmd_status(db_path: &str) -> Result<(), String> {
     let migration_count = MIGRATOR.migrations.len();
 
     println!("Applied migrations:");
-    println!(
-        "{:>3}  {:<10}  {:<35}  applied_at",
-        "#", "status", "name"
-    );
+    println!("{:>3}  {:<10}  {:<35}  applied_at", "#", "status", "name");
     println!("---  ----------  -----------------------------------  ----------");
 
     for (i, (version, description, installed_on, _success, _checksum, _execution_time)) in
@@ -201,16 +198,16 @@ async fn cmd_seed(db_path: &str) -> Result<(), String> {
     if let Ok(password) = std::env::var("DEFAULT_ADMIN_PASSWORD")
         && !password.is_empty()
     {
-            let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
-                .map_err(|e| format!("bcrypt hash failed: {e}"))?;
-            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
-                .bind(&hash)
-                .bind(user_id)
-                .execute(&pool)
-                .await
-                .map_err(|e| format!("failed to set password: {e}"))?;
-            println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
-        }
+        let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
+            .map_err(|e| format!("bcrypt hash failed: {e}"))?;
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(&hash)
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("failed to set password: {e}"))?;
+        println!("  password:  set (from DEFAULT_ADMIN_PASSWORD)");
+    }
 
     // Create calendar
     let calendar_id: i64 = sqlx::query_scalar(
@@ -344,9 +341,7 @@ async fn cmd_new(description: &str) -> Result<(), String> {
 
     let new_seq = max_seq + 1;
     let padded = format!("{:04}", new_seq);
-    let slug = description
-        .to_lowercase()
-        .replace([' ', '-'], "_");
+    let slug = description.to_lowercase().replace([' ', '-'], "_");
     let filename = format!("{padded}_{slug}.sql");
     let filepath = migrations_dir.join(&filename);
 

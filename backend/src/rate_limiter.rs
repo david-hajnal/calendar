@@ -26,10 +26,7 @@ impl FixedWindowRateLimiter {
             max_requests,
             window_seconds,
             buckets: Mutex::new(HashMap::new()),
-            clock: Arc::new(|| {
-                Utc::now()
-                    .timestamp()
-            }),
+            clock: Arc::new(|| Utc::now().timestamp()),
         }
     }
 
@@ -44,10 +41,12 @@ impl FixedWindowRateLimiter {
         let now = (self.clock)();
         let mut buckets = self.buckets.lock().unwrap();
         let tier_config = key.tier.config();
-        let bucket = buckets.entry(bucket_key).or_insert_with(|| RateLimitBucket {
-            window_started_at: now,
-            attempts: 0,
-        });
+        let bucket = buckets
+            .entry(bucket_key)
+            .or_insert_with(|| RateLimitBucket {
+                window_started_at: now,
+                attempts: 0,
+            });
         if now - bucket.window_started_at >= self.window_seconds {
             bucket.window_started_at = now;
             bucket.attempts = 0;
@@ -64,10 +63,12 @@ impl FixedWindowRateLimiter {
         let now = (self.clock)();
         let mut buckets = self.buckets.lock().unwrap();
         let tier_config = RateLimitTier::Public.config();
-        let bucket = buckets.entry(key.to_string()).or_insert_with(|| RateLimitBucket {
-            window_started_at: now,
-            attempts: 0,
-        });
+        let bucket = buckets
+            .entry(key.to_string())
+            .or_insert_with(|| RateLimitBucket {
+                window_started_at: now,
+                attempts: 0,
+            });
         if now - bucket.window_started_at >= self.window_seconds {
             bucket.window_started_at = now;
             bucket.attempts = 0;
@@ -206,10 +207,7 @@ pub fn write_endpoint_tier(method: &str, path: &str) -> Option<RateLimitTier> {
 
     // `*/external-feeds/*/` + (DELETE) → Standard
     for i in 0..segments.len().saturating_sub(1) {
-        if segments[i] == "external-feeds"
-            && is_param(segments[i + 1])
-            && method == "DELETE"
-        {
+        if segments[i] == "external-feeds" && is_param(segments[i + 1]) && method == "DELETE" {
             return Some(RateLimitTier::Standard);
         }
     }
@@ -265,10 +263,7 @@ pub fn write_endpoint_tier(method: &str, path: &str) -> Option<RateLimitTier> {
 
     // `*/views/*/` + (POST/PATCH/DELETE) → Permissive
     for i in 0..segments.len().saturating_sub(1) {
-        if segments[i] == "views"
-            && is_param(segments[i + 1])
-            && method != "GET"
-        {
+        if segments[i] == "views" && is_param(segments[i + 1]) && method != "GET" {
             return Some(RateLimitTier::Permissive);
         }
     }
@@ -281,10 +276,7 @@ mod tests {
     use super::*;
 
     fn make_key(user_id: i64, tier: RateLimitTier) -> WriteRateLimitKey {
-        WriteRateLimitKey {
-            user_id,
-            tier,
-        }
+        WriteRateLimitKey { user_id, tier }
     }
 
     // --- FixedWindowRateLimiter tests ---
@@ -407,7 +399,10 @@ mod tests {
 
     #[test]
     fn test_write_endpoint_tier_standard_occurrence_following() {
-        let tier = write_endpoint_tier("PATCH", "/api/v1/calendars/:id/occurrences/:occ_id/following");
+        let tier = write_endpoint_tier(
+            "PATCH",
+            "/api/v1/calendars/:id/occurrences/:occ_id/following",
+        );
         assert_eq!(tier, Some(RateLimitTier::Standard));
     }
 

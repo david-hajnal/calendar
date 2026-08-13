@@ -104,7 +104,11 @@ impl SessionManager {
 
     pub fn new_for_test() -> Self {
         let pool = SqlitePool::connect_lazy(":memory:").unwrap();
-        Self::new(pool, SecretKey::new([42; 32]), SessionSecurityConfig::new(300, 60, "http://localhost").unwrap())
+        Self::new(
+            pool,
+            SecretKey::new([42; 32]),
+            SessionSecurityConfig::new(300, 60, "http://localhost").unwrap(),
+        )
     }
 
     pub async fn authenticate(

@@ -129,10 +129,12 @@ async fn dev_login_creates_user_and_redirects_when_user_does_not_exist() {
     assert!(set_cookie.contains("__Host-commoncal_session="));
     assert!(set_cookie.contains("HttpOnly"));
     assert!(set_cookie.contains("SameSite=Lax"));
-    let user = sqlx::query("SELECT normalized_email, display_name, status FROM users ORDER BY id DESC LIMIT 1")
-        .fetch_one(&app.pool)
-        .await
-        .unwrap();
+    let user = sqlx::query(
+        "SELECT normalized_email, display_name, status FROM users ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
     assert_eq!(
         user.get::<String, _>("normalized_email"),
         "new.user@example.com"
@@ -189,10 +191,11 @@ async fn dev_login_normalizes_email() {
     app.request("/api/v1/dev/login?email=UPPER%40Example.COM")
         .await;
 
-    let normalized: String = sqlx::query_scalar("SELECT normalized_email FROM users ORDER BY id DESC LIMIT 1")
-        .fetch_one(&app.pool)
-        .await
-        .unwrap();
+    let normalized: String =
+        sqlx::query_scalar("SELECT normalized_email FROM users ORDER BY id DESC LIMIT 1")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
     assert_eq!(normalized, "upper@example.com");
 }
 

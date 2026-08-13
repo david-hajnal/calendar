@@ -53,14 +53,13 @@ impl SecretKey {
         let (nonce, ciphertext) = encoded.split_at(12);
         let nonce_arr = aes_gcm::Nonce::from_slice(nonce);
         let cipher = aes_gcm::Aes256Gcm::new_from_slice(&self.0).expect("key must be 32 bytes");
-        cipher
-            .decrypt(nonce_arr, ciphertext)
-            .ok()
+        cipher.decrypt(nonce_arr, ciphertext).ok()
     }
 
     fn apply_secret_stream(&self, nonce: &[u8], bytes: &mut [u8]) {
         for (counter, chunk) in bytes.chunks_mut(32).enumerate() {
-            let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+            let mut mac =
+                <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
             mac.update(b"commoncal/secret-encryption/v1\0");
             mac.update(nonce);
             mac.update(&(counter as u64).to_be_bytes());
@@ -71,7 +70,8 @@ impl SecretKey {
     }
 
     fn secret_tag(&self, nonce: &[u8], ciphertext: &[u8]) -> [u8; 32] {
-        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac =
+            <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(b"commoncal/secret-encryption-tag/v1\0");
         mac.update(nonce);
         mac.update(ciphertext);
@@ -137,7 +137,8 @@ impl SecretKey {
     }
 
     fn token_mac(&self, domain: TokenDomain) -> HmacSha256 {
-        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac =
+            <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(TOKEN_HASH_CONTEXT);
         mac.update(domain.label());
         mac.update(&[0]);
@@ -149,7 +150,8 @@ impl SecretKey {
     }
 
     fn csrf_mac(&self, session: &str, nonce: &str) -> HmacSha256 {
-        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac =
+            <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(CSRF_CONTEXT);
         mac.update(session.as_bytes());
         mac.update(&[0]);

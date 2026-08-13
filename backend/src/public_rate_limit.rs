@@ -1,12 +1,12 @@
+use crate::rate_limiter::FixedWindowRateLimiter;
+use crate::write_rate_limit::RateLimitExceeded;
 use axum::{
-    extract::{ConnectInfo, State, Request},
+    extract::{ConnectInfo, Request, State},
     middleware::Next,
     response::Response,
 };
 use std::net::SocketAddr as StdSocketAddr;
 use std::sync::Arc;
-use crate::rate_limiter::FixedWindowRateLimiter;
-use crate::write_rate_limit::RateLimitExceeded;
 
 /// Shared state for the public rate limiter.
 #[derive(Clone)]
@@ -52,15 +52,16 @@ mod tests {
         }
     }
 
-    fn build_app(
-        limiter_state: PublicRateLimiterState,
-    ) -> axum::Router {
+    fn build_app(limiter_state: PublicRateLimiterState) -> axum::Router {
         axum::Router::new()
             .route(
                 "/api/v1/calendars",
                 axum::routing::get(handler).post(handler),
             )
-            .layer(middleware::from_fn_with_state(limiter_state, public_rate_limit_middleware))
+            .layer(middleware::from_fn_with_state(
+                limiter_state,
+                public_rate_limit_middleware,
+            ))
     }
 
     async fn handler(_: axum::extract::Request) -> &'static str {
@@ -134,7 +135,10 @@ mod tests {
             .get("x-retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(
+            retry_after.is_some(),
+            "x-retry-after header should be present"
+        );
         assert!(retry_after.unwrap() > 0, "retry_after should be positive");
     }
 
@@ -186,7 +190,12 @@ mod tests {
             let app = build_app(limiter_state.clone());
             let request = make_request("GET", "/api/v1/calendars");
             let response = app.oneshot(request).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "request {} should be allowed", i + 1);
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "request {} should be allowed",
+                i + 1
+            );
         }
     }
 }

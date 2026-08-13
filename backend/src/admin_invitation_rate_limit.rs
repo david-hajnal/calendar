@@ -37,7 +37,11 @@ pub fn check_admin_invitation_rate_limit(
 mod tests {
     use super::*;
 
-    fn make_limiter(max_requests: u32, window_seconds: i64, now: i64) -> AdminInvitationRateLimiterState {
+    fn make_limiter(
+        max_requests: u32,
+        window_seconds: i64,
+        now: i64,
+    ) -> AdminInvitationRateLimiterState {
         let limiter = FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
         AdminInvitationRateLimiterState {
             limiter: Arc::new(limiter),

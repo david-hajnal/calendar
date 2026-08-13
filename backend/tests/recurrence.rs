@@ -290,10 +290,7 @@ fn rejects_unsupported_or_malicious_rules_and_bounds_unending_rules() {
 #[test]
 fn rejects_until_span_exceeding_five_years() {
     let start = Budapest.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
-    let far_until = event(
-        start,
-        "FREQ=DAILY;UNTIL=99991231T235959Z",
-    );
+    let far_until = event(start, "FREQ=DAILY;UNTIL=99991231T235959Z");
     let result = starts(
         &far_until,
         window("2024-01-01T00:00:00Z", "2030-01-01T00:00:00Z"),
@@ -304,10 +301,7 @@ fn rejects_until_span_exceeding_five_years() {
 #[test]
 fn accepts_until_span_within_five_years() {
     let start = Budapest.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
-    let near_until = event(
-        start,
-        "FREQ=WEEKLY;UNTIL=20280101T090000Z",
-    );
+    let near_until = event(start, "FREQ=WEEKLY;UNTIL=20280101T090000Z");
     let result = starts(
         &near_until,
         window("2024-01-01T00:00:00Z", "2029-01-01T00:00:00Z"),

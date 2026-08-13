@@ -3,9 +3,9 @@
 // These endpoints allow users to manage their MCP grant permissions
 // through the frontend.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -160,16 +160,29 @@ pub async fn update_mcp_grant(
     sets.push("updated_at = ?".to_string());
     sets.push("id = ?".to_string());
 
-    let query_str = format!(
-        "UPDATE mcp_grant SET {} WHERE id = ?",
-        sets.join(", ")
-    );
+    let query_str = format!("UPDATE mcp_grant SET {} WHERE id = ?", sets.join(", "));
 
     let result = sqlx::query(&query_str)
-        .bind(payload.calendar_ids.map(|c| serde_json::to_string(&c).unwrap_or_default()))
-        .bind(payload.allow_availability.map(|v| if v { 1i32 } else { 0i32 }))
-        .bind(payload.allow_event_titles.map(|v| if v { 1i32 } else { 0i32 }))
-        .bind(payload.allow_event_details.map(|v| if v { 1i32 } else { 0i32 }))
+        .bind(
+            payload
+                .calendar_ids
+                .map(|c| serde_json::to_string(&c).unwrap_or_default()),
+        )
+        .bind(
+            payload
+                .allow_availability
+                .map(|v| if v { 1i32 } else { 0i32 }),
+        )
+        .bind(
+            payload
+                .allow_event_titles
+                .map(|v| if v { 1i32 } else { 0i32 }),
+        )
+        .bind(
+            payload
+                .allow_event_details
+                .map(|v| if v { 1i32 } else { 0i32 }),
+        )
         .bind(payload.allow_create.map(|v| if v { 1i32 } else { 0i32 }))
         .bind(payload.allow_update.map(|v| if v { 1i32 } else { 0i32 }))
         .bind(payload.allow_delete.map(|v| if v { 1i32 } else { 0i32 }))
@@ -194,7 +207,22 @@ pub async fn update_mcp_grant(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match grant {
-        Some((id, user_id, client_id, calendar_ids, avail, titles, details, create, update, delete, created_at, last_used, expires, revoked)) => {
+        Some((
+            id,
+            user_id,
+            client_id,
+            calendar_ids,
+            avail,
+            titles,
+            details,
+            create,
+            update,
+            delete,
+            created_at,
+            last_used,
+            expires,
+            revoked,
+        )) => {
             let calendars: Vec<i64> = serde_json::from_str(&calendar_ids).unwrap_or_default();
             Ok(Json(McpGrantResponse {
                 grant_id: id,
@@ -224,17 +252,19 @@ pub async fn revoke_mcp_grant(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let now = chrono::Utc::now().timestamp();
 
-    let result = sqlx::query(
-        "UPDATE mcp_grant SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL"
-    )
-    .bind(now)
-    .bind(&id)
-    .execute(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let result =
+        sqlx::query("UPDATE mcp_grant SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+            .bind(now)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if result.rows_affected() == 0 {
-        Err((StatusCode::NOT_FOUND, "grant not found or already revoked".to_string()))
+        Err((
+            StatusCode::NOT_FOUND,
+            "grant not found or already revoked".to_string(),
+        ))
     } else {
         Ok(StatusCode::OK)
     }
@@ -256,7 +286,22 @@ pub async fn resend_mcp_grant_confirmation(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match grant {
-        Some((id, user_id, client_id, calendar_ids, avail, titles, details, create, update, delete, created_at, last_used, expires, revoked)) => {
+        Some((
+            id,
+            user_id,
+            client_id,
+            calendar_ids,
+            avail,
+            titles,
+            details,
+            create,
+            update,
+            delete,
+            created_at,
+            last_used,
+            expires,
+            revoked,
+        )) => {
             let calendars: Vec<i64> = serde_json::from_str(&calendar_ids).unwrap_or_default();
             Ok(Json(McpGrantResponse {
                 grant_id: id,

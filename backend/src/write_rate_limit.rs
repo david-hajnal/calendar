@@ -1,14 +1,14 @@
+use crate::rate_limiter::{FixedWindowRateLimiter, WriteRateLimitKey, write_endpoint_tier};
+use crate::sessions::AuthenticatedSession;
 use axum::{
     Extension,
     body::Body,
-    extract::{State, Request},
+    extract::{Request, State},
     http::{HeaderName, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
-use crate::rate_limiter::{FixedWindowRateLimiter, WriteRateLimitKey, write_endpoint_tier};
-use crate::sessions::AuthenticatedSession;
 
 /// Shared state for the write rate limiter.
 ///
@@ -33,7 +33,8 @@ impl IntoResponse for RateLimitExceeded {
                     "code": "rate_limited",
                     "message": "Too many requests, try again later",
                 }
-            }).to_string(),
+            })
+            .to_string(),
         ));
         *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
         response.headers_mut().insert(
@@ -124,7 +125,10 @@ mod tests {
                 "/api/v1/calendars/:id/events",
                 axum::routing::get(handler).post(handler),
             )
-            .layer(middleware::from_fn_with_state(limiter_state, write_rate_limit_middleware))
+            .layer(middleware::from_fn_with_state(
+                limiter_state,
+                write_rate_limit_middleware,
+            ))
             .layer(Extension(session))
     }
 
@@ -249,7 +253,10 @@ mod tests {
             .get("x-retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(
+            retry_after.is_some(),
+            "x-retry-after header should be present"
+        );
         assert!(retry_after.unwrap() > 0, "retry_after should be positive");
     }
 
@@ -265,7 +272,12 @@ mod tests {
             let app = build_app(limiter_state.clone(), session.clone());
             let request = make_request("POST", "/api/v1/calendars/:id/events");
             let response = app.oneshot(request).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "request {} should be allowed", i + 1);
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "request {} should be allowed",
+                i + 1
+            );
         }
     }
 }

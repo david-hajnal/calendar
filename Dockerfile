@@ -3,10 +3,12 @@
 FROM node:22-bookworm-slim AS frontend-build
 WORKDIR /build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY frontend/package.json frontend/package.json
+COPY frontend/ frontend/
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY frontend frontend
-RUN pnpm --dir frontend build
+RUN pnpm --filter @commoncal/frontend build && \
+    test -d /build/frontend/dist/assets && \
+    test -f /build/frontend/dist/index.html || (echo "Frontend build produced no output" && exit 1)
 
 FROM rust:1-bookworm AS backend-build
 WORKDIR /build/backend

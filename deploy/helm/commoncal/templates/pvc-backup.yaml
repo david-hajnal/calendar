@@ -1,0 +1,17 @@
+{{- if .Values.backup.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "commoncal.fullname" . }}-backup
+  labels:
+    {{- include "commoncal.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size | default "10Gi" | quote }}
+  {{- with .Values.backup.persistence.storageClass | default .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

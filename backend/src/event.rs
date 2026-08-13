@@ -1760,6 +1760,7 @@ fn date_at_utc(value: &str) -> Result<chrono::DateTime<Utc>, EventServiceError> 
 
 #[derive(Debug)]
 pub enum EventServiceError {
+    ComplexityLimitExceeded,
     Conflict { current_version: i64 },
     Database(sqlx::Error),
     InvalidInput,

@@ -102,6 +102,9 @@ impl TestApplication {
                 NOW,
             ),
             CalendarService::new_at(self.pool.clone(), NOW),
+            None,
+            None,
+            None,
         )
     }
 

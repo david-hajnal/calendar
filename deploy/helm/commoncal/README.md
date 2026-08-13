@@ -18,6 +18,9 @@ TLS by setting `ingress.tls` with a pre-provisioned certificate secret (or a
 certificate controller annotation). k3s's default Traefik class is selected by
 default and can be changed through `ingress.className`.
 
+Rate limiting is active in production (critical: 10/min, standard: 30/min,
+permissive: 60/min per user). Superadmin users bypass all write rate limits.
+
 ## Operational hardening
 
 The StatefulSet runs as a non-root user with a read-only root filesystem,

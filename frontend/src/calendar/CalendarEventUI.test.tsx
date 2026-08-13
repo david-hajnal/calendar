@@ -10,8 +10,8 @@ const calendars: Calendar[] = [
   { id: 2, name: "Shared", color: "#dc2626", role: "viewer", access: "details" },
 ];
 const events = [
-  { id: 10, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "timed" as const, title: "Planning", start_utc: 1_750_032_800, end_utc: 1_750_036_400, timezone: "UTC", version: 1 },
-  { id: 11, calendar_id: 2, access: "details" as const, status: "confirmed" as const, event_kind: "timed" as const, title: "Imported holiday", start_utc: 1_750_036_400, end_utc: 1_750_040_000, timezone: "UTC", version: 1, is_external: true },
+  { id: 10, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "timed" as const, title: "Planning", start_utc: 1_750_032_800, end_utc: 1_750_036_400, timezone: "UTC", version: 1, start_date: "2025-06-16" },
+  { id: 11, calendar_id: 2, access: "details" as const, status: "confirmed" as const, event_kind: "timed" as const, title: "Imported holiday", start_utc: 1_750_036_400, end_utc: 1_750_040_000, timezone: "UTC", version: 1, is_external: true, start_date: "2025-06-16" },
 ];
 
 function apiWithEvents() {
@@ -28,10 +28,11 @@ describe("CalendarEventUI", () => {
     const api = apiWithEvents();
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    expect(await screen.findByRole("button", { name: "Planning" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Week view" }));
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Week" }));
     expect(await screen.findByRole("region", { name: "Week calendar" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "New event" }));
+    const [newEventBtn] = screen.getAllByRole("button", { name: /New event/ });
+    fireEvent.click(newEventBtn);
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Standup" } });
     fireEvent.click(screen.getByRole("button", { name: "Save event" }));
 
@@ -44,7 +45,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "New event" }));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Recurring standup" } });
-    fireEvent.change(screen.getByLabelText("Recurrence rule"), { target: { value: "FREQ=WEEKLY;COUNT=3" } });
+    fireEvent.change(screen.getByLabelText("Recurrence"), { target: { value: "FREQ=WEEKLY;COUNT=3" } });
     fireEvent.click(screen.getByRole("button", { name: "Save event" }));
 
     await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events", expect.objectContaining({
@@ -70,7 +71,7 @@ describe("CalendarEventUI", () => {
     });
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    fireEvent.click(await screen.findByText("Planning"));
     fireEvent.click(screen.getByRole("button", { name: "Edit event" }));
     fireEvent.click(screen.getByRole("button", { name: "Save event" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This event changed elsewhere. Reload it before saving again.");
@@ -81,9 +82,10 @@ describe("CalendarEventUI", () => {
   it("renders an accessible agenda and hides toggled calendars", async () => {
     render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Agenda view" }));
+    const agendaBtn = await screen.findByRole("tab", { name: "Agenda" });
+    fireEvent.click(agendaBtn);
     expect(await screen.findByRole("list", { name: "Agenda" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Show Work" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Work" }));
     expect(screen.queryByRole("button", { name: "Planning" })).not.toBeInTheDocument();
   });
 });

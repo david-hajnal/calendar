@@ -1,4 +1,8 @@
-CREATE TABLE events (
+-- Migration 0009: events
+-- Creates events table with timed/all_day support.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     title TEXT NOT NULL CHECK (length(trim(title)) > 0),
@@ -40,10 +44,10 @@ CREATE TABLE events (
     )
 );
 
-CREATE INDEX events_calendar_timed_range_idx
+CREATE INDEX IF NOT EXISTS events_calendar_timed_range_idx
 ON events(calendar_id, timed_start_utc, timed_end_utc)
 WHERE event_kind = 'timed';
 
-CREATE INDEX events_calendar_all_day_range_idx
+CREATE INDEX IF NOT EXISTS events_calendar_all_day_range_idx
 ON events(calendar_id, all_day_start_date, all_day_end_date)
 WHERE event_kind = 'all_day';

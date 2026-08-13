@@ -155,3 +155,44 @@ describe("authentication pages", () => {
     expect(window.location.search).toBe("");
   });
 });
+
+describe("routing", () => {
+  it("shows the default calendar view at /dashboard", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(session), { status: 200 }));
+    renderAt("/dashboard", fetcher);
+
+    expect(await screen.findByText("Loading calendars…")).toBeInTheDocument();
+  });
+
+  it("shows the composite view management page at /shared", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/session") {
+        return new Response(JSON.stringify(session), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    renderAt("/shared", fetcher);
+
+    expect(await screen.findByText("Composite views")).toBeInTheDocument();
+  });
+
+  it("navigates to /shared when clicking Composite views button", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(session), { status: 200 }));
+    renderAt("/calendars", fetcher);
+
+    await screen.findByRole("heading", { name: "CommonCal" });
+    fireEvent.click(screen.getByRole("button", { name: "Composite views" }));
+
+    expect(window.location.pathname).toBe("/shared");
+  });
+
+  it("redirects unauthenticated users to /dashboard", async () => {
+    renderAt("/", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("redirect")).toBe("/");
+  });
+
+
+});

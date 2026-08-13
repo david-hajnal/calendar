@@ -11,6 +11,7 @@ use chrono_tz::Tz;
 
 const MAX_RULE_COUNT: u32 = 1_000_000;
 const MAX_RULE_INTERVAL: u32 = 100_000;
+const MAX_UNTIL_SPAN_SECONDS: i64 = 5 * 365 * 86400;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Frequency {
@@ -154,6 +155,13 @@ pub fn expand_occurrences(
     }
     if limits.max_occurrences == 0 || limits.max_iterations == 0 {
         return Err(RecurrenceError::ComplexityLimitExceeded);
+    }
+
+    if let Some(until) = &event.rule.until {
+        let span = (*until - event.starts_at.with_timezone(&Utc)).num_seconds();
+        if span > MAX_UNTIL_SPAN_SECONDS {
+            return Err(RecurrenceError::ComplexityLimitExceeded);
+        }
     }
 
     let local_start = event.starts_at.naive_local();

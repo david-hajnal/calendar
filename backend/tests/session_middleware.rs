@@ -27,6 +27,7 @@ struct TestApplication {
     _temp_dir: TempDir,
     pool: SqlitePool,
     key: SecretKey,
+    user_id: i64,
 }
 
 impl TestApplication {
@@ -59,6 +60,7 @@ impl TestApplication {
             _temp_dir: temp_dir,
             pool,
             key: SecretKey::new([42; 32]),
+            user_id,
         }
     }
 
@@ -71,6 +73,9 @@ impl TestApplication {
                 SessionSecurityConfig::new(IDLE_TIMEOUT, WRITE_THROTTLE, ORIGIN_URL).unwrap(),
                 NOW,
             ),
+            None,
+            None,
+            None,
         )
     }
 
@@ -86,8 +91,9 @@ impl TestApplication {
         sqlx::query(
             "INSERT INTO sessions (
                 user_id, session_hash, expires_at, revoked_at, created_at, last_seen_at
-             ) VALUES (1, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?)",
         )
+        .bind(self.user_id)
         .bind(hash.as_bytes().as_slice())
         .bind(expires_at)
         .bind(revoked_at)

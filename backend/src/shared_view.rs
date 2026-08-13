@@ -338,14 +338,41 @@ impl SharedViewService {
         actor_user_id: i64,
         view_id: i64,
     ) -> Result<IssuedPublicView, SharedViewError> {
+        let now = (self.clock)();
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+
+        // Revoke the existing active publication token
+        let revoked = sqlx::query(
+            "UPDATE public_view_links
+             SET revoked_at = ?, version = version + 1, updated_at = ?
+             WHERE view_id = ? AND revoked_at IS NULL
+               AND EXISTS(
+                   SELECT 1 FROM shared_views
+                   WHERE id = ? AND owner_user_id = ?
+               )",
+        )
+        .bind(now)
+        .bind(now)
+        .bind(view_id)
+        .bind(view_id)
+        .bind(actor_user_id)
+        .execute(&mut *transaction)
+        .await?;
+
+        if revoked.rows_affected() != 1 {
+            transaction.rollback().await?;
+            return Err(SharedViewError::NotFound);
+        }
+
+        // Issue the new token
         let token = self.token_key.generate_token();
         let prefix = token_prefix(token.expose());
         let hash = self.token_key.hash_token(TokenDomain::PublicView, &token);
-        let now = (self.clock)();
-        let result = sqlx::query(
+
+        sqlx::query(
             "UPDATE public_view_links
              SET token_prefix = ?, token_hash = ?, version = version + 1, updated_at = ?
-             WHERE view_id = ? AND revoked_at IS NULL
+             WHERE view_id = ? AND revoked_at IS NOT NULL
                AND EXISTS(
                    SELECT 1 FROM shared_views
                    WHERE id = ? AND owner_user_id = ?
@@ -357,11 +384,11 @@ impl SharedViewService {
         .bind(view_id)
         .bind(view_id)
         .bind(actor_user_id)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
-        if result.rows_affected() != 1 {
-            return Err(SharedViewError::NotFound);
-        }
+
+        transaction.commit().await?;
+
         Ok(IssuedPublicView {
             token: token.expose().to_owned(),
             publication: self.publication(actor_user_id, view_id).await?,
@@ -376,7 +403,7 @@ impl SharedViewService {
         let now = (self.clock)();
         let result = sqlx::query(
             "UPDATE public_view_links
-             SET revoked_at = ?, version = version + 1, updated_at = ?
+             SET revoked_at = ?, token_hash = X'0000000000000000000000000000000000000000000000000000000000000000', version = version + 1, updated_at = ?
              WHERE view_id = ? AND revoked_at IS NULL
                AND EXISTS(
                    SELECT 1 FROM shared_views
@@ -484,11 +511,11 @@ impl SharedViewService {
             .try_into()
             .map(crate::security::TokenHash::from_bytes)
             .map_err(|_| SharedViewError::NotFound)?;
-        if record.revoked_at.is_some()
-            || (self.clock)() >= record.expires_at
-            || !self
-                .token_key
-                .verify_token(TokenDomain::PublicView, &token, &expected)
+        let token_matches = self
+            .token_key
+            .verify_token(TokenDomain::PublicView, &token, &expected);
+        if (self.clock)() >= record.expires_at
+            || !token_matches
         {
             return Err(SharedViewError::NotFound);
         }
@@ -793,5 +820,155 @@ pub enum SharedViewError {
 impl From<sqlx::Error> for SharedViewError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    struct TestDb {
+        _file: NamedTempFile,
+        pool: SqlitePool,
+    }
+
+    impl TestDb {
+        async fn new() -> Self {
+            let file = NamedTempFile::new().unwrap();
+            let conn_str = format!("sqlite:{}", file.path().to_str().unwrap());
+            let pool = SqlitePool::connect(&conn_str).await.unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS shared_views (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+                    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS shared_view_calendars (
+                    view_id INTEGER NOT NULL,
+                    calendar_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL CHECK (position >= 0),
+                    color TEXT NOT NULL CHECK (length(trim(color)) > 0),
+                    PRIMARY KEY (view_id, calendar_id),
+                    UNIQUE (view_id, position)
+                )",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS public_view_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    view_id INTEGER NOT NULL UNIQUE,
+                    token_prefix TEXT NOT NULL UNIQUE CHECK (length(token_prefix) = 8),
+                    token_hash BLOB NOT NULL CHECK (length(token_hash) = 32),
+                    projection TEXT NOT NULL CHECK (projection IN ('full_details', 'title_and_time', 'free_busy')),
+                    display_timezone TEXT NOT NULL CHECK (length(trim(display_timezone)) > 0),
+                    expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS calendar_acl (
+                    calendar_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (calendar_id, user_id)
+                )",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            Self { _file: file, pool }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rotate_publication_revokes_old_token() {
+        let db = TestDb::new().await;
+        let key = SecretKey::generate();
+        let now = 1000i64;
+        let service = SharedViewService::new_at_with_key(db.pool, key, now);
+
+        let user_id: i64 = 1;
+        let view_id: i64 = 1;
+
+        sqlx::query(
+            "INSERT INTO shared_views (id, owner_user_id, name, version, created_at, updated_at)
+             VALUES (?, ?, 'Test View', 1, ?, ?)",
+        )
+        .bind(view_id)
+        .bind(user_id)
+        .bind(now)
+        .bind(now)
+        .execute(&service.pool)
+        .await
+        .unwrap();
+
+        let config = PublicViewConfiguration {
+            projection: PublicViewProjection::FullDetails,
+            display_timezone: "UTC".to_string(),
+            expires_at: now + 86400,
+        };
+        let pub1 = service.create_publication(user_id, view_id, config).await.unwrap();
+
+        let meta1 = service.public_metadata(&pub1.token).await.unwrap();
+        assert_eq!(meta1.name, "Test View");
+
+        let pub2 = service.rotate_publication(user_id, view_id).await.unwrap();
+
+        let meta2 = service.public_metadata(&pub2.token).await.unwrap();
+        assert_eq!(meta2.name, "Test View");
+
+        let result = service.public_metadata(&pub1.token).await;
+        assert!(matches!(result, Err(SharedViewError::NotFound)),
+            "old token should be revoked but still works");
+    }
+
+    #[tokio::test]
+    async fn test_rotate_publication_new_token_is_different() {
+        let db = TestDb::new().await;
+        let key = SecretKey::generate();
+        let now = 1000i64;
+        let service = SharedViewService::new_at_with_key(db.pool, key, now);
+
+        let user_id: i64 = 1;
+        let view_id: i64 = 1;
+
+        sqlx::query(
+            "INSERT INTO shared_views (id, owner_user_id, name, version, created_at, updated_at)
+             VALUES (?, ?, 'Test View', 1, ?, ?)",
+        )
+        .bind(view_id)
+        .bind(user_id)
+        .bind(now)
+        .bind(now)
+        .execute(&service.pool)
+        .await
+        .unwrap();
+
+        let config = PublicViewConfiguration {
+            projection: PublicViewProjection::FullDetails,
+            display_timezone: "UTC".to_string(),
+            expires_at: now + 86400,
+        };
+        let pub1 = service.create_publication(user_id, view_id, config).await.unwrap();
+
+        let pub2 = service.rotate_publication(user_id, view_id).await.unwrap();
+
+        assert_ne!(pub1.token, pub2.token);
     }
 }

@@ -3,7 +3,7 @@ use std::fmt::{self, Debug, Formatter};
 use aes_gcm::aead::{Aead, KeyInit};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 const TOKEN_BYTES: usize = 32;
 const TOKEN_HASH_CONTEXT: &[u8] = b"commoncal/token-hash/v1\0";
@@ -56,6 +56,7 @@ impl SecretKey {
         cipher.decrypt(nonce_arr, ciphertext).ok()
     }
 
+    #[allow(dead_code)]
     fn apply_secret_stream(&self, nonce: &[u8], bytes: &mut [u8]) {
         for (counter, chunk) in bytes.chunks_mut(32).enumerate() {
             let mut mac =
@@ -69,6 +70,7 @@ impl SecretKey {
         }
     }
 
+    #[allow(dead_code)]
     fn secret_tag(&self, nonce: &[u8], ciphertext: &[u8]) -> [u8; 32] {
         let mut mac =
             <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
@@ -160,6 +162,7 @@ impl SecretKey {
     }
 }
 
+#[allow(dead_code)]
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len()
         && left

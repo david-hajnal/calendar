@@ -8,7 +8,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -52,7 +52,6 @@ use crate::{
     },
     notification::NotificationService,
     public_rate_limit::PublicRateLimiterState,
-    rate_limiter::{FixedWindowRateLimiter, RateLimitTier, WriteRateLimitKey, write_endpoint_tier},
     security::SessionCookieBuilder,
     sessions::{AuthenticatedSession, SessionError, SessionManager},
     shared_view::{
@@ -381,6 +380,7 @@ pub fn build_router_with_admin(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_router_with_auth_flows_sessions_and_admin<L>(
     readiness: Readiness,
     invitation_consumer: InvitationConsumer,
@@ -442,6 +442,7 @@ pub fn build_router_with_calendars(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_router_with_auth_flows_sessions_admin_and_calendars<L>(
     readiness: Readiness,
     invitation_consumer: InvitationConsumer,
@@ -506,6 +507,7 @@ pub fn build_router_with_calendars_and_events(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_router_with_calendars_events_and_views(
     readiness: Readiness,
     session_manager: SessionManager,
@@ -841,11 +843,11 @@ fn redact_sensitive_path(uri: &axum::http::Uri) -> String {
     let redacted_pairs: Vec<String> = query
         .split('&')
         .map(|pair| {
-            if let Some((key, _)) = pair.split_once('=') {
-                if SENSITIVE_QUERY_KEYS.contains(&key) {
-                    has_redaction = true;
-                    return format!("{key}=[REDACTED]");
-                }
+            if let Some((key, _)) = pair.split_once('=')
+                && SENSITIVE_QUERY_KEYS.contains(&key)
+            {
+                has_redaction = true;
+                return format!("{key}=[REDACTED]");
             }
             pair.to_owned()
         })
@@ -2716,7 +2718,8 @@ impl ApiError {
         }
     }
 
-    fn rate_limited_with_retry(retry_after: i64) -> Self {
+    #[allow(dead_code)]
+    fn rate_limited_with_retry(_retry_after: i64) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             code: "rate_limited",
@@ -2817,6 +2820,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn make_session(user_id: i64, is_superadmin: bool) -> AuthenticatedSession {
         let secret_key = crate::security::SecretKey::generate();
         let token = secret_key.generate_token();

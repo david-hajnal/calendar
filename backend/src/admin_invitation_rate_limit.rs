@@ -1,8 +1,3 @@
-use axum::{
-    body::Body,
-    http::{HeaderName, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
-};
 use std::sync::Arc;
 
 use crate::rate_limiter::FixedWindowRateLimiter;
@@ -111,6 +106,8 @@ mod tests {
 
     #[test]
     fn test_check_rate_limit_exceeded_into_response() {
+        use axum::{http::{StatusCode, HeaderValue}, response::{IntoResponse, Response}};
+
         let limiter = make_limiter(1, 60, 1000);
         assert!(check_admin_invitation_rate_limit(&limiter, 1).is_ok());
         let err = check_admin_invitation_rate_limit(&limiter, 1).unwrap_err();

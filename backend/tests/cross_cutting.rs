@@ -411,7 +411,7 @@ async fn not_found_response_has_correct_json_shape() {
 #[tokio::test]
 async fn version_conflict_includes_current_version() {
     let app = TestApplication::new().await;
-    let calendar: (i64, i64) = sqlx::query_as("SELECT id, version FROM calendars WHERE id = ?")
+    let _calendar: (i64, i64) = sqlx::query_as("SELECT id, version FROM calendars WHERE id = ?")
         .bind(app.calendar_id)
         .fetch_one(&app.pool)
         .await
@@ -449,7 +449,7 @@ async fn version_conflict_includes_current_version() {
         .oneshot(
             Request::builder()
                 .method(Method::PATCH)
-                .uri(&format!("/api/v1/calendars/{}", app.calendar_id))
+                .uri(format!("/api/v1/calendars/{}", app.calendar_id))
                 .header(
                     COOKIE,
                     format!("__Host-commoncal_session={}", token.expose()),
@@ -458,9 +458,9 @@ async fn version_conflict_includes_current_version() {
                 .header(ORIGIN, TEST_ORIGIN)
                 .header("sec-fetch-site", "same-origin")
                 .header("x-csrf-token", csrf.expose())
-                .body(Body::from(format!(
-                    r##"{{"name":"X","color":"#000000","default_timezone":"UTC","default_event_visibility":"private","version":0}}"##
-                )))
+                .body(Body::from(
+                    r##"{{"name":"X","color":"#000000","default_timezone":"UTC","default_event_visibility":"private","version":0}}"##.to_string()
+                ))
                 .unwrap(),
         )
         .await

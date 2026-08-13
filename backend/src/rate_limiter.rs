@@ -350,7 +350,7 @@ mod tests {
         limiter.check(&key);
         let (_, retry_after_1) = limiter.check(&key);
         // retry_after should be ~59 (60 - 1 second elapsed)
-        assert!(retry_after_1 >= 58 && retry_after_1 <= 60);
+        assert!((58..=60).contains(&retry_after_1));
     }
 
     // --- write_endpoint_tier tests ---

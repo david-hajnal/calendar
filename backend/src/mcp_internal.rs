@@ -204,6 +204,7 @@ pub struct ReminderResponse {
 }
 
 /// Validate the x-mcp-api-key header.
+#[allow(dead_code)]
 fn validate_mcp_api_key(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, &'static str)> {
     let api_key = headers
         .get("x-mcp-api-key")

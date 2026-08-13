@@ -79,6 +79,9 @@ impl TestApplication {
             CalendarService::new_at(self.pool.clone(), NOW),
             EventService::new_at(self.pool.clone(), NOW),
             SharedViewService::new_at(self.pool.clone(), NOW),
+            None,
+            None,
+            None,
         )
     }
 

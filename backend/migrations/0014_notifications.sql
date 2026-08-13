@@ -1,4 +1,8 @@
-CREATE TABLE notification_preferences (
+-- Migration 0014: notifications
+-- Creates notification_preferences, event_reminder_overrides, notification_jobs, in_app_notifications tables.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     calendar_id INTEGER REFERENCES calendars(id) ON DELETE CASCADE,
@@ -9,11 +13,11 @@ CREATE TABLE notification_preferences (
     updated_at INTEGER NOT NULL,
     CHECK ((calendar_id IS NULL AND event_id IS NULL) OR (calendar_id IS NOT NULL AND event_id IS NULL) OR (calendar_id IS NULL AND event_id IS NOT NULL))
 );
-CREATE UNIQUE INDEX notification_preferences_account_idx ON notification_preferences(user_id) WHERE calendar_id IS NULL AND event_id IS NULL;
-CREATE UNIQUE INDEX notification_preferences_calendar_idx ON notification_preferences(user_id, calendar_id) WHERE calendar_id IS NOT NULL;
-CREATE UNIQUE INDEX notification_preferences_event_idx ON notification_preferences(user_id, event_id) WHERE event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS notification_preferences_account_idx ON notification_preferences(user_id) WHERE calendar_id IS NULL AND event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS notification_preferences_calendar_idx ON notification_preferences(user_id, calendar_id) WHERE calendar_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS notification_preferences_event_idx ON notification_preferences(user_id, event_id) WHERE event_id IS NOT NULL;
 
-CREATE TABLE event_reminder_overrides (
+CREATE TABLE IF NOT EXISTS event_reminder_overrides (
     event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     reminder_minutes INTEGER NOT NULL CHECK (reminder_minutes >= 0 AND reminder_minutes <= 10080),
@@ -22,7 +26,7 @@ CREATE TABLE event_reminder_overrides (
     PRIMARY KEY (event_id, user_id)
 );
 
-CREATE TABLE notification_jobs (
+CREATE TABLE IF NOT EXISTS notification_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     calendar_id INTEGER NOT NULL REFERENCES calendars(id),
@@ -40,11 +44,11 @@ CREATE TABLE notification_jobs (
     claim_expires_at INTEGER,
     UNIQUE (user_id, event_id, occurrence_key, scheduled_at)
 );
-CREATE INDEX notification_jobs_pending_idx ON notification_jobs(state, scheduled_at);
-CREATE INDEX notification_jobs_claim_expiry_idx ON notification_jobs(state, claim_expires_at);
-CREATE INDEX notification_jobs_event_user_idx ON notification_jobs(event_id, user_id, state);
+CREATE INDEX IF NOT EXISTS notification_jobs_pending_idx ON notification_jobs(state, scheduled_at);
+CREATE INDEX IF NOT EXISTS notification_jobs_claim_expiry_idx ON notification_jobs(state, claim_expires_at);
+CREATE INDEX IF NOT EXISTS notification_jobs_event_user_idx ON notification_jobs(event_id, user_id, state);
 
-CREATE TABLE in_app_notifications (
+CREATE TABLE IF NOT EXISTS in_app_notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id),
     notification_job_id INTEGER NOT NULL UNIQUE REFERENCES notification_jobs(id),

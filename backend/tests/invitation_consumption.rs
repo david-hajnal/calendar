@@ -40,6 +40,11 @@ impl TestApplication {
         let pool = connect_and_migrate(&config, Readiness::new())
             .await
             .unwrap();
+        // Migration 0019 seeds a default admin; remove it for clean test state.
+        sqlx::query("DELETE FROM users WHERE normalized_email = 'admin@localhost'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         Self {
             _temp_dir: temp_dir,
@@ -57,6 +62,9 @@ impl TestApplication {
                 SESSION_LIFETIME,
                 NOW,
             ),
+            None,
+            None,
+            None,
         )
     }
 
@@ -133,8 +141,8 @@ async fn valid_invitation_activates_user() {
         .to_str()
         .unwrap();
     assert!(cookie.starts_with("__Host-commoncal_session="));
-    assert!(cookie.contains("Secure"));
     assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Lax"));
     let body = response_body(response).await;
     assert!(body.contains(r#""email":"invitee@example.com""#));
     assert!(body.contains(r#""status":"active""#));

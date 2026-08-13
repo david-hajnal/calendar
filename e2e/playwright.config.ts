@@ -13,9 +13,10 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
+    ignoreHTTPSErrors: true,
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "desktop", use: { ...devices["Desktop Firefox"] } },
     { name: "mobile", use: { ...devices["iPhone 13"] } },
   ],
   webServer: process.env.E2E_BASE_URL ? undefined : {

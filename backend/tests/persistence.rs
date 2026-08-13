@@ -113,7 +113,7 @@ async fn readiness_remains_false_when_migration_fails() {
 
     assert!(result.is_err());
     assert!(!readiness.is_ready());
-    let response = build_router_with_readiness(readiness)
+    let response = build_router_with_readiness(readiness, None, None, None)
         .oneshot(
             Request::builder()
                 .uri("/health/ready")

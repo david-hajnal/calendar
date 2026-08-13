@@ -1,4 +1,8 @@
-CREATE TABLE public_view_links (
+-- Migration 0012: public_view_links
+-- Creates public_view_links table.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS public_view_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     view_id INTEGER NOT NULL UNIQUE REFERENCES shared_views(id) ON DELETE CASCADE,
     token_prefix TEXT NOT NULL UNIQUE CHECK (length(token_prefix) = 8),
@@ -13,5 +17,5 @@ CREATE TABLE public_view_links (
     updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX public_view_links_active_lookup_idx
+CREATE INDEX IF NOT EXISTS public_view_links_active_lookup_idx
     ON public_view_links(token_prefix, expires_at, revoked_at);

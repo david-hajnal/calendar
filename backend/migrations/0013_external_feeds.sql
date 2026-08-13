@@ -1,4 +1,8 @@
-CREATE TABLE external_feeds (
+-- Migration 0013: external_feeds
+-- Creates external_feeds and external_event_mapping tables.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS external_feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
     source_url_encrypted BLOB NOT NULL,
@@ -16,10 +20,10 @@ CREATE TABLE external_feeds (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX external_feeds_calendar_id_idx ON external_feeds(calendar_id);
-CREATE INDEX external_feeds_next_refresh_idx ON external_feeds(next_refresh_at) WHERE disabled_at IS NULL;
+CREATE INDEX IF NOT EXISTS external_feeds_calendar_id_idx ON external_feeds(calendar_id);
+CREATE INDEX IF NOT EXISTS external_feeds_next_refresh_idx ON external_feeds(next_refresh_at) WHERE disabled_at IS NULL;
 
-CREATE TABLE external_event_mapping (
+CREATE TABLE IF NOT EXISTS external_event_mapping (
     feed_id INTEGER NOT NULL REFERENCES external_feeds(id) ON DELETE CASCADE,
     external_uid TEXT NOT NULL,
     recurrence_id TEXT NOT NULL DEFAULT '',

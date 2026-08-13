@@ -8,7 +8,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,6 +18,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -42,7 +43,9 @@ use crate::{
     identity::UserStatus,
     invitations::{ActiveUser, ConsumeInvitation, ConsumeInvitationError, InvitationConsumer},
     login::{
-        ConsumeLoginLink, ConsumeLoginLinkError, LoginFlow, RequestLoginLink, RequestLoginLinkError,
+        ConsumeLoginLink, ConsumeLoginLinkError, DevLogin, DevLoginError, LoginFlow,
+        PasswordLoginCommand, PasswordLoginError, PasswordLoginResult, RequestLoginLink,
+        RequestLoginLinkError,
     },
     notification::NotificationService,
     security::SessionCookieBuilder,
@@ -51,6 +54,10 @@ use crate::{
         PublicViewConfiguration, PublicViewProjection, SharedViewCalendarInput, SharedViewError,
         SharedViewService,
     },
+    rate_limiter::{FixedWindowRateLimiter, WriteRateLimitKey, RateLimitTier, write_endpoint_tier},
+    write_rate_limit::WriteRateLimiterState,
+    public_rate_limit::PublicRateLimiterState,
+    admin_invitation_rate_limit::{AdminInvitationRateLimiterState, check_admin_invitation_rate_limit},
 };
 
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -87,7 +94,7 @@ pub fn secure_responses(router: Router, config: ResponseSecurityConfig) -> Route
 pub fn build_router() -> Router {
     let readiness = Readiness::new();
     readiness.mark_ready();
-    build_router_with_readiness(readiness)
+    build_router_with_readiness_and_password_login(readiness, None, None, None)
 }
 
 /// Serves the compiled single-page frontend after all application routes.
@@ -145,7 +152,12 @@ fn frontend_content_type(path: &FsPath) -> &'static str {
     }
 }
 
-pub fn build_router_with_readiness(readiness: Readiness) -> Router {
+pub fn build_router_with_readiness(
+    readiness: Readiness,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+) -> Router {
     build_application_router(ApplicationState {
         readiness,
         invitation_consumer: None,
@@ -157,12 +169,47 @@ pub fn build_router_with_readiness(readiness: Readiness) -> Router {
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
+    })
+}
+
+pub fn build_router_with_readiness_and_password_login(
+    readiness: Readiness,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+) -> Router {
+    build_application_router(ApplicationState {
+        readiness,
+        invitation_consumer: None,
+        login_flow: None,
+        session_manager: None,
+        admin_service: None,
+        calendar_service: None,
+        event_service: None,
+        shared_view_service: None,
+        external_feed_service: None,
+        notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: true,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
 pub fn build_router_with_invitation_consumer(
     readiness: Readiness,
     invitation_consumer: InvitationConsumer,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router {
     build_application_router(ApplicationState {
         readiness,
@@ -175,10 +222,22 @@ pub fn build_router_with_invitation_consumer(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
-pub fn build_router_with_login_service<L>(readiness: Readiness, login_flow: L) -> Router
+pub fn build_router_with_login_service<L>(
+    readiness: Readiness,
+    login_flow: L,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+) -> Router
 where
     L: LoginFlow + 'static,
 {
@@ -193,6 +252,12 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -200,6 +265,9 @@ pub fn build_router_with_auth_flows<L>(
     readiness: Readiness,
     invitation_consumer: InvitationConsumer,
     login_flow: L,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -215,10 +283,22 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
-pub fn build_router_with_sessions(readiness: Readiness, session_manager: SessionManager) -> Router {
+pub fn build_router_with_sessions(
+    readiness: Readiness,
+    session_manager: SessionManager,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+) -> Router {
     build_application_router(ApplicationState {
         readiness,
         invitation_consumer: None,
@@ -230,6 +310,12 @@ pub fn build_router_with_sessions(readiness: Readiness, session_manager: Session
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -238,6 +324,9 @@ pub fn build_router_with_auth_flows_and_sessions<L>(
     invitation_consumer: InvitationConsumer,
     login_flow: L,
     session_manager: SessionManager,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -253,6 +342,12 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -260,6 +355,9 @@ pub fn build_router_with_admin(
     readiness: Readiness,
     session_manager: SessionManager,
     admin_service: AdminService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router {
     build_application_router(ApplicationState {
         readiness,
@@ -272,6 +370,12 @@ pub fn build_router_with_admin(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -281,6 +385,9 @@ pub fn build_router_with_auth_flows_sessions_and_admin<L>(
     login_flow: L,
     session_manager: SessionManager,
     admin_service: AdminService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -296,6 +403,12 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -303,6 +416,9 @@ pub fn build_router_with_calendars(
     readiness: Readiness,
     session_manager: SessionManager,
     calendar_service: CalendarService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router {
     build_application_router(ApplicationState {
         readiness,
@@ -315,6 +431,12 @@ pub fn build_router_with_calendars(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -326,6 +448,9 @@ pub fn build_router_with_auth_flows_sessions_admin_and_calendars<L>(
     admin_service: AdminService,
     calendar_service: CalendarService,
     event_service: EventService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -341,6 +466,12 @@ where
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -349,6 +480,9 @@ pub fn build_router_with_calendars_and_events(
     session_manager: SessionManager,
     calendar_service: CalendarService,
     event_service: EventService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router {
     build_application_router(ApplicationState {
         readiness,
@@ -361,6 +495,12 @@ pub fn build_router_with_calendars_and_events(
         shared_view_service: None,
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -370,6 +510,9 @@ pub fn build_router_with_calendars_events_and_views(
     calendar_service: CalendarService,
     event_service: EventService,
     shared_view_service: SharedViewService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router {
     build_application_router(ApplicationState {
         readiness,
@@ -382,6 +525,12 @@ pub fn build_router_with_calendars_events_and_views(
         shared_view_service: Some(shared_view_service),
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -397,6 +546,12 @@ pub fn build_router_with_auth_flows_sessions_admin_calendars_views_and_external_
     shared_view_service: SharedViewService,
     external_feed_service: ExternalFeedService,
     notification_service: NotificationService,
+    access_log_level: tracing::level_filters::LevelFilter,
+    is_secure: bool,
+    password_login_enabled: bool,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -412,6 +567,12 @@ where
         shared_view_service: Some(shared_view_service),
         external_feed_service: Some(external_feed_service),
         notification_service: Some(notification_service),
+        access_log_level,
+        is_secure,
+        password_login_enabled,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
@@ -425,6 +586,9 @@ pub fn build_router_with_auth_flows_sessions_admin_calendars_and_views<L>(
     calendar_service: CalendarService,
     event_service: EventService,
     shared_view_service: SharedViewService,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -440,10 +604,17 @@ where
         shared_view_service: Some(shared_view_service),
         external_feed_service: None,
         notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::INFO,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter,
+        public_rate_limiter,
+        admin_rate_limiter,
     })
 }
 
 fn build_application_router(state: ApplicationState) -> Router {
+    let state_for_middleware = state.clone();
     let mut router = Router::new()
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
@@ -451,14 +622,26 @@ fn build_application_router(state: ApplicationState) -> Router {
         .route("/api/v1/auth/login-links", post(request_login_link))
         .route("/api/v1/auth/login-links/consume", post(consume_login_link))
         .fallback(not_found);
+    if state.password_login_enabled {
+        router = router.route("/api/v1/auth/password-login", post(password_login));
+    }
+    if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
+        router = router.route("/api/v1/dev/login", get(dev_login));
+    }
     if state.shared_view_service.is_some() && state.event_service.is_some() {
-        let public = Router::new()
+        let mut public = Router::new()
             .route("/api/v1/public/views/:token", get(read_public_view))
             .route(
                 "/api/v1/public/views/:token/events",
                 get(list_public_view_events),
             )
             .layer(middleware::from_fn(public_response_headers));
+        if let Some(limiter) = state.public_rate_limiter.clone() {
+            public = public.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        }
         router = router.merge(public);
     }
     if let Some(manager) = state.session_manager.clone() {
@@ -490,7 +673,9 @@ fn build_application_router(state: ApplicationState) -> Router {
             protected = protected
                 .route(
                     "/api/v1/calendars",
-                    get(list_calendars).post(create_calendar),
+                    get(list_calendars)
+                        .post(create_calendar)
+                        .options(cors_preflight),
                 )
                 .route(
                     "/api/v1/calendars/:id",
@@ -590,6 +775,14 @@ fn build_application_router(state: ApplicationState) -> Router {
                     post(revoke_publication),
                 );
         }
+        let protected = if let Some(limiter) = state.write_rate_limiter.clone() {
+            protected.layer(middleware::from_fn_with_state(
+                limiter,
+                crate::write_rate_limit::write_rate_limit_middleware,
+            ))
+        } else {
+            protected
+        };
         let protected = protected.route_layer(middleware::from_fn_with_state(
             manager,
             authenticated_session,
@@ -604,7 +797,7 @@ fn build_application_router(state: ApplicationState) -> Router {
                     Level::INFO,
                     "http_request",
                     method = %request.method(),
-                    path = safe_request_path(request.uri().path()),
+                    path = redact_sensitive_path(request.uri()),
                     request_id = request
                         .headers()
                         .get(&REQUEST_ID_HEADER)
@@ -613,6 +806,10 @@ fn build_application_router(state: ApplicationState) -> Router {
                 )
             }),
         )
+        .layer(middleware::from_fn_with_state(
+            state_for_middleware,
+            access_log_middleware,
+        ))
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
         .layer(SetRequestIdLayer::new(
             REQUEST_ID_HEADER.clone(),
@@ -625,13 +822,48 @@ fn build_application_router(state: ApplicationState) -> Router {
         .with_state(state)
 }
 
-fn safe_request_path(path: &str) -> &str {
-    if path.starts_with("/api/v1/public/views/") {
+fn redact_sensitive_path(uri: &axum::http::Uri) -> String {
+    let path = uri.path();
+    let safe_path = if path.starts_with("/api/v1/public/views/") {
         "/api/v1/public/views/[REDACTED]"
     } else {
         path
+    };
+
+    let query = uri.query().unwrap_or("");
+    if query.is_empty() {
+        return safe_path.to_owned();
+    }
+
+    let mut has_redaction = false;
+    let redacted_pairs: Vec<String> = query
+        .split('&')
+        .map(|pair| {
+            if let Some((key, _)) = pair.split_once('=') {
+                if SENSITIVE_QUERY_KEYS.contains(&key) {
+                    has_redaction = true;
+                    return format!("{key}=[REDACTED]");
+                }
+            }
+            pair.to_owned()
+        })
+        .collect();
+
+    if has_redaction {
+        format!("{}?{}", safe_path, redacted_pairs.join("&"))
+    } else {
+        safe_path.to_owned()
     }
 }
+
+const SENSITIVE_QUERY_KEYS: &[&str] = &[
+    "token",
+    "csrf_token",
+    "api_key",
+    "Authorization",
+    "session",
+    "refresh_token",
+];
 
 async fn list_calendars(
     State(state): State<ApplicationState>,
@@ -1171,6 +1403,14 @@ async fn rotate_publication(
         .rotate_publication(session.user.id, view_id)
         .await
         .map_err(map_shared_view_error)?;
+    
+    tracing::info!(
+        user_id = session.user.id,
+        view_id,
+        error_code = "publication_token_rotated",
+        "public view publication token rotated"
+    );
+    
     Ok(Json(publication))
 }
 
@@ -1517,6 +1757,12 @@ async fn update_this_and_following(
 
 fn map_event_error(error: EventServiceError) -> ApiError {
     match error {
+        EventServiceError::ComplexityLimitExceeded => ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "recurrence_too_complex",
+            message: "Recurrence rule exceeds complexity limits",
+            current_version: None,
+        },
         EventServiceError::InvalidInput => ApiError::bad_request(),
         EventServiceError::NotFound => ApiError::not_found(),
         EventServiceError::NotSupported => ApiError::not_implemented(),
@@ -1620,6 +1866,10 @@ async fn invite_user(
     Json(request): Json<InviteUserRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_superadmin(&session)?;
+    if let Some(ref limiter) = state.admin_rate_limiter {
+        check_admin_invitation_rate_limit(limiter, session.user.id)
+            .map_err(|_| ApiError::rate_limited())?;
+    }
     let service = state
         .admin_service
         .ok_or_else(ApiError::service_unavailable)?;
@@ -1708,6 +1958,43 @@ fn map_admin_error(error: AdminError) -> ApiError {
     }
 }
 
+async fn access_log_middleware(
+    State(state): State<ApplicationState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let log_level = state.access_log_level;
+    let start = Instant::now();
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let response = next.run(request).await;
+    let latency = start.elapsed();
+    let request_id = response
+        .headers()
+        .get(&REQUEST_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    let status = response.status();
+    let body_size = response
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    if log_level >= tracing::Level::INFO {
+        tracing::info!(
+            http.method = %method,
+            http.path = path,
+            http.status_code = %status,
+            http.response_bytes = body_size,
+            latency_ms = latency.as_millis(),
+            request_id = request_id,
+            "access_log"
+        );
+    }
+    response
+}
+
 async fn authenticated_session(
     State(manager): State<SessionManager>,
     mut request: Request<axum::body::Body>,
@@ -1780,6 +2067,29 @@ fn map_session_error(error: SessionError) -> ApiError {
     }
 }
 
+async fn cors_preflight(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .cloned()
+        .or_else(|| Some(HeaderValue::from_static("*")))
+        .unwrap_or_else(|| HeaderValue::from_static("*"));
+    [
+        (axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, origin),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET,POST,PATCH,DELETE,OPTIONS"),
+        ),
+        (
+            axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("content-type,authorization,x-csrf-token"),
+        ),
+        (
+            axum::http::header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("86400"),
+        ),
+    ]
+}
+
 async fn health_live() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
@@ -1848,7 +2158,9 @@ async fn consume_login_link(
             }
         })?;
 
-    let cookie = SessionCookieBuilder::new(&consumed.session_token).build();
+    let cookie = SessionCookieBuilder::new(&consumed.session_token)
+        .is_secure(state.is_secure)
+        .build();
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         SET_COOKIE,
@@ -1886,7 +2198,9 @@ async fn consume_invitation(
             }
         })?;
 
-    let cookie = SessionCookieBuilder::new(&consumed.session_token).build();
+    let cookie = SessionCookieBuilder::new(&consumed.session_token)
+        .is_secure(state.is_secure)
+        .build();
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         SET_COOKIE,
@@ -1899,6 +2213,105 @@ async fn consume_invitation(
             csrf_token: consumed.csrf_token.expose().to_owned(),
         }),
     ))
+}
+
+async fn dev_login(
+    State(state): State<ApplicationState>,
+    query: Option<Query<DevLoginQuery>>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if std::env::var("APP_ENV").ok().as_deref() != Some("development") {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let login_flow = state.login_flow.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let query = query.ok_or(StatusCode::BAD_REQUEST)?;
+    let email = query.email.as_ref().ok_or(StatusCode::BAD_REQUEST)?;
+    let normalized_email = email.trim().to_lowercase();
+    let display_name = query.display_name.clone();
+    match login_flow
+        .dev_login(DevLogin {
+            normalized_email,
+            display_name,
+        })
+        .await
+    {
+        Ok(result) => {
+            let mut response = Response::new(Body::from("Redirecting..."));
+            *response.status_mut() = StatusCode::FOUND;
+            response.headers_mut().insert(
+                HeaderName::from_static("location"),
+                HeaderValue::from_str(&result.redirect_url).unwrap(),
+            );
+            response
+                .headers_mut()
+                .insert(SET_COOKIE, HeaderValue::from_str(&result.cookie).unwrap());
+            Ok(response)
+        }
+        Err(DevLoginError::Database(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(DevLoginError::Unavailable) => Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
+}
+
+async fn password_login(
+    State(state): State<ApplicationState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    Json(request): Json<PasswordLoginRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let login_flow = state.login_flow.ok_or_else(ApiError::service_unavailable)?;
+    let client_ip = connect_info
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_owned());
+
+    if request.email.is_empty() || request.password.is_empty() {
+        return Err(ApiError::bad_request());
+    }
+
+    match login_flow
+        .authenticate_password(PasswordLoginCommand {
+            email: request.email,
+            password: request.password,
+            client_ip,
+        })
+        .await
+    {
+        Ok(PasswordLoginResult {
+            session_token,
+            csrf_token,
+            ..
+        }) => {
+            let cookie = SessionCookieBuilder::new(&session_token)
+                .is_secure(state.is_secure)
+                .build();
+            let mut response_headers = HeaderMap::new();
+            response_headers.insert(
+                SET_COOKIE,
+                HeaderValue::from_str(&cookie).map_err(|_| ApiError::internal())?,
+            );
+            Ok((
+                response_headers,
+                Json(PasswordLoginResponse {
+                    csrf_token: csrf_token.expose().to_owned(),
+                }),
+            ))
+        }
+        Err(PasswordLoginError::InvalidCredentials) | Err(PasswordLoginError::PasswordNotSet) => {
+            Err(ApiError::unauthorized_with_code(
+                "invalid_credentials",
+                "Invalid email or password",
+            ))
+        }
+        Err(PasswordLoginError::RateLimited) => Err(ApiError::rate_limited()),
+        Err(PasswordLoginError::Database(_)) => {
+            tracing::error!(error_code = "password_login_failed");
+            Err(ApiError::internal())
+        }
+        Err(PasswordLoginError::Unsupported) => Err(ApiError::service_unavailable()),
+    }
+}
+
+#[derive(Deserialize)]
+struct DevLoginQuery {
+    email: Option<String>,
+    display_name: Option<String>,
 }
 
 fn session_cookie(headers: &HeaderMap) -> Option<&str> {
@@ -1949,6 +2362,18 @@ struct ConsumeLoginLinkRequest {
 #[derive(Serialize)]
 struct ConsumeLoginLinkResponse {
     user: ActiveUser,
+    csrf_token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasswordLoginRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct PasswordLoginResponse {
     csrf_token: String,
 }
 
@@ -2151,6 +2576,12 @@ struct ApplicationState {
     shared_view_service: Option<SharedViewService>,
     external_feed_service: Option<ExternalFeedService>,
     notification_service: Option<NotificationService>,
+    access_log_level: tracing::level_filters::LevelFilter,
+    is_secure: bool,
+    password_login_enabled: bool,
+    write_rate_limiter: Option<WriteRateLimiterState>,
+    public_rate_limiter: Option<PublicRateLimiterState>,
+    admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
 }
 
 #[derive(Clone, Debug)]
@@ -2198,6 +2629,15 @@ impl ApiError {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
             message: "Authentication required",
+            current_version: None,
+        }
+    }
+
+    fn unauthorized_with_code(code: &'static str, message: &'static str) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code,
+            message,
             current_version: None,
         }
     }
@@ -2274,6 +2714,15 @@ impl ApiError {
         }
     }
 
+    fn rate_limited_with_retry(retry_after: i64) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "rate_limited",
+            message: "Too many requests, try again later",
+            current_version: None,
+        }
+    }
+
     fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -2329,4 +2778,219 @@ struct ErrorBody {
     message: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     current_version: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::extract::ConnectInfo;
+    use axum::http::Request;
+    use axum::middleware;
+    use axum::routing::get;
+    use tower::ServiceExt;
+    use std::net::SocketAddr;
+
+    fn make_public_limiter(max_requests: u32, window_seconds: i64, now: i64) -> PublicRateLimiterState {
+        let limiter = crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
+        PublicRateLimiterState { limiter: std::sync::Arc::new(limiter) }
+    }
+
+    fn make_admin_limiter(max_requests: u32, window_seconds: i64, now: i64) -> AdminInvitationRateLimiterState {
+        let limiter = crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
+        AdminInvitationRateLimiterState { limiter: std::sync::Arc::new(limiter) }
+    }
+
+    fn make_session(user_id: i64, is_superadmin: bool) -> AuthenticatedSession {
+        let secret_key = crate::security::SecretKey::generate();
+        let token = secret_key.generate_token();
+        let csrf_token = secret_key.generate_csrf_token(&token).expose().to_owned();
+        AuthenticatedSession::new_for_test(
+            user_id, token, csrf_token,
+            ActiveUser {
+                id: user_id,
+                email: "test@example.com".into(),
+                display_name: Some("Test User".into()),
+                status: "active",
+                is_superadmin,
+            },
+            1000, 1000, 4600,
+        )
+    }
+
+    fn make_request(method: &str, path: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    // --- test_public_endpoint_rate_limiting ---
+    // Tests public rate limiting middleware directly.
+    // Note: build_router_with_readiness applies the public rate limiter only to the
+    // public router (for /api/v1/public/views/*), which requires SharedViewService.
+    // We test the middleware behavior directly here.
+
+    #[tokio::test]
+    async fn test_public_endpoint_rate_limiting() {
+        let limiter = make_public_limiter(2, 60, 1000);
+
+        // Build app with public rate limiter middleware applied to a simple handler.
+        let app = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter.clone(),
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+
+        for i in 0..2 {
+            let request = make_request("GET", "/test");
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "request {} should be allowed", i + 1);
+        }
+
+        let request = make_request("GET", "/test");
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    // --- test_public_endpoint_independent_ips ---
+    // Two different IPs should have independent rate limits.
+
+    #[tokio::test]
+    async fn test_public_endpoint_independent_ips() {
+        let limiter = make_public_limiter(1, 60, 1000);
+
+        // Exhaust limit for IP 127.0.0.1.
+        let app1 = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter.clone(),
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        let mut request1 = make_request("GET", "/test");
+        request1.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
+        let response1 = app1.oneshot(request1).await.unwrap();
+        assert_eq!(response1.status(), StatusCode::OK);
+
+        let app1_blocked = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter.clone(),
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        let mut request1_blocked = make_request("GET", "/test");
+        request1_blocked.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
+        let response1_blocked = app1_blocked.oneshot(request1_blocked).await.unwrap();
+        assert_eq!(response1_blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // IP 127.0.0.2 should have independent limit.
+        let app2 = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter,
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        let mut request2 = make_request("GET", "/test");
+        request2.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 2], 8080))));
+        let response2 = app2.oneshot(request2).await.unwrap();
+
+        assert_eq!(response2.status(), StatusCode::OK);
+    }
+
+    // --- test_admin_invitation_rate_limiting ---
+    // Tests admin invitation rate limiting directly via check_admin_invitation_rate_limit.
+    // Note: build_router_with_admin applies the session middleware before the handler,
+    // which blocks requests without valid sessions. We test the rate limit check directly.
+
+    #[tokio::test]
+    async fn test_admin_invitation_rate_limiting() {
+        let limiter = make_admin_limiter(2, 60, 1000);
+
+        for i in 0..2 {
+            let result = check_admin_invitation_rate_limit(&limiter, 1);
+            assert!(result.is_ok(), "request {} should be allowed", i + 1);
+        }
+
+        let result = check_admin_invitation_rate_limit(&limiter, 1);
+        assert!(result.is_err(), "4th request should be rate limited");
+        assert_eq!(result.unwrap_err().retry_after, 60);
+    }
+
+    // --- test_admin_invitation_rate_limit_includes_superadmin ---
+    // Superadmin should NOT be bypassed for admin invitation rate limiting.
+
+    #[tokio::test]
+    async fn test_admin_invitation_rate_limit_includes_superadmin() {
+        let limiter = make_admin_limiter(1, 60, 1000);
+
+        // First request goes through for superadmin (user_id=999).
+        assert!(check_admin_invitation_rate_limit(&limiter, 999).is_ok());
+
+        // Second request should be rate limited (no superadmin bypass).
+        let result = check_admin_invitation_rate_limit(&limiter, 999);
+        assert!(result.is_err(), "superadmin should also be rate limited");
+        assert_eq!(result.unwrap_err().retry_after, 60);
+    }
+
+    // --- test_public_endpoint_retry_after_header ---
+
+    #[tokio::test]
+    async fn test_public_endpoint_retry_after_header() {
+        let limiter = make_public_limiter(1, 60, 1000);
+
+        let app1 = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter.clone(),
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        let request1 = make_request("GET", "/test");
+        let response1 = app1.oneshot(request1).await.unwrap();
+        assert_eq!(response1.status(), StatusCode::OK);
+
+        let app2 = Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                limiter,
+                crate::public_rate_limit::public_rate_limit_middleware,
+            ));
+        let request2 = make_request("GET", "/test");
+        let response2 = app2.oneshot(request2).await.unwrap();
+
+        assert_eq!(response2.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let retry_after = response2
+            .headers()
+            .get("x-retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok());
+        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(retry_after.unwrap() > 0, "retry_after should be positive");
+    }
+
+    // --- test_admin_invitation_retry_after_header ---
+
+    #[tokio::test]
+    async fn test_admin_invitation_retry_after_header() {
+        let limiter = make_admin_limiter(1, 60, 1000);
+
+        assert!(check_admin_invitation_rate_limit(&limiter, 1).is_ok());
+        let result = check_admin_invitation_rate_limit(&limiter, 1);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let response: Response = err.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let retry_after = response
+            .headers()
+            .get("x-retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok());
+        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(retry_after.unwrap() > 0, "retry_after should be positive");
+    }
 }

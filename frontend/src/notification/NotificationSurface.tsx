@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 import type { ApiClient } from "../auth/api";
 
+import "./NotificationSurface.css";
+
 type Notification = { id: number; event_id: number; event_title: string; created_at: number; read_at: number | null };
 
 export function NotificationSurface({ api }: { api: ApiClient }) {

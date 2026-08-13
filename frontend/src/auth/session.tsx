@@ -11,6 +11,7 @@ export interface User {
 
 export interface Session {
   user: User;
+  csrf_token: string;
   created_at: number;
   last_seen_at: number;
   expires_at: number;
@@ -49,7 +50,11 @@ export function AuthProvider({ children, fetcher, loadSession = true }: { childr
       if (!response.ok) {
         throw new Error(`Unable to load session (${response.status})`);
       }
-      setState({ status: "authenticated", session: (await response.json()) as Session });
+      const data = (await response.json()) as Session;
+      if (data.csrf_token) {
+        api.setCsrfToken(data.csrf_token);
+      }
+      setState({ status: "authenticated", session: data });
     } catch (error) {
       setState({ status: "error", error: error instanceof Error ? error : new Error("Unable to load session") });
     }

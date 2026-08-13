@@ -1,7 +1,15 @@
 # CommonCal
 
-CommonCal is a multi-user calendar platform. This repository currently contains
-the initial Rust HTTP application and React project foundation.
+Multi-user calendar platform with email-based authentication, shared composite views,
+public calendar sharing, external ICS feed ingestion, and encrypted backup/restore.
+
+## Tech stack
+
+- **Backend**: Rust (Axum, SQLite, sqlx, tokio)
+- **Frontend**: React 19, Vite 7, TypeScript
+- **Infra**: Docker multi-stage build, Helm charts
+- **Auth**: Magic-link email auth, session cookies (`__Host-commoncal_session`)
+- **Storage**: SQLite (single-node, file-backed)
 
 ## Prerequisites
 
@@ -53,6 +61,47 @@ Production startup requires `APP_ENV=production` and a non-empty
 `SESSION_SECRET`. Set `APP_ORIGIN` to the browser-visible application origin;
 authenticated unsafe requests must match it.
 
+## Features
+
+- **Calendar management** — create, update, archive, restore, delete calendars with ACL
+- **Event management** — CRUD events with recurring event support (update single/occurrence/this-and-following)
+- **Composite views** — combine multiple calendars into named views with per-calendar color and position
+- **Public sharing** — publish composite views via tokenized public URLs with ICS feed endpoints
+- **External ICS feeds** — subscribe to remote calendars with configurable refresh intervals
+- **Notifications** — in-app notification surface with event-based notification replanning
+- **Admin API** — user management (list, suspend, reactivate, promote, demote), invitation management
+- **Backup & restore** — encrypted backup (AES-256-GCM) with SHA-256 integrity verification
+- **Multi-session** — inspect and revoke active sessions
+- **Rate limiting** — per-user write rate limiting on authenticated endpoints (enabled in staging/production)
+
+## API overview
+
+| Area | Key endpoints |
+|------|---------------|
+| Auth | `POST /api/v1/auth/login-links`, `POST /api/v1/auth/login-links/consume`, `GET/DELETE /api/v1/auth/session`, `DELETE /api/v1/auth/sessions` |
+| Admin | `GET /api/v1/admin/users`, `POST/DELETE /api/v1/admin/invitations/*`, user suspend/reactivate/promote/demote, `POST /api/v1/admin/users/:id/revoke-sessions` |
+| Calendars | `GET/POST /api/v1/calendars`, `GET/PATCH/DELETE /api/v1/calendars/:id`, `POST /api/v1/calendars/:id/archive|restore`, ACL, ownership transfer |
+| Events | `GET/POST /api/v1/calendars/:id/events`, `GET/PATCH/DELETE /api/v1/calendars/:id/events/:id`, occurrence overrides |
+| Views | `GET/POST /api/v1/views`, `GET/PATCH/DELETE /api/v1/views/:id`, calendar composition, publication management |
+| Feeds | `GET/POST /api/v1/calendars/:id/external-feeds`, `DELETE/POST /api/v1/external-feeds/:id/disable|refresh` |
+| Notifications | `GET /api/v1/notifications` |
+| Public | `GET /api/v1/public/views/:token`, `GET /api/v1/public/views/:token/events` |
+| Backup | `cargo run -- backup`, `cargo run -- restore` (CLI commands) |
+
+## Rate limiting
+
+Write endpoints on authenticated routes are rate-limited per-user (not per-calendar). Rate limiting is active
+when `APP_ENV=staging` or `APP_ENV=production`; it is disabled in development.
+
+| Tier | Limit | Examples |
+|------|-------|----------|
+| Critical | 10 req / 60s | ACL changes, calendar ownership transfer |
+| Standard | 30 req / 60s | Event CRUD, occurrence updates, external feed operations |
+| Permissive | 60 req / 60s | Calendar CRUD, archive/restore, view management |
+
+When rate limited, the API returns `429 Too Many Requests` with an `X-Retry-After` header. Superadmin users
+bypass all write rate limits.
+
 ## Production container
 
 Build the production image from a clean build context, then run the bounded
@@ -62,4 +111,16 @@ configuration failure, health, frontend, and image contents):
 ```sh
 docker build --tag commoncal:local .
 scripts/verify-production-image.sh commoncal:local
+```
+
+Run with Docker Compose:
+
+```sh
+docker compose up
+```
+
+Bootstrap a superadmin for first-run:
+
+```sh
+APP_ENV=development cargo run --manifest-path backend/Cargo.toml -- bootstrap-superadmin <email> [display-name]
 ```

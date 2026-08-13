@@ -1,6 +1,10 @@
+-- Migration 0010: recurring_events
+-- Adds recurrence_rule to events and creates event_recurrence_exceptions table.
+-- Idempotent: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS.
+
 ALTER TABLE events ADD COLUMN recurrence_rule TEXT;
 
-CREATE TABLE event_recurrence_exceptions (
+CREATE TABLE IF NOT EXISTS event_recurrence_exceptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     series_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     recurrence_id INTEGER,
@@ -58,8 +62,8 @@ CREATE TABLE event_recurrence_exceptions (
     )
 );
 
-CREATE UNIQUE INDEX event_recurrence_exceptions_timed_idx
+CREATE UNIQUE INDEX IF NOT EXISTS event_recurrence_exceptions_timed_idx
 ON event_recurrence_exceptions(series_id, recurrence_id);
 
-CREATE UNIQUE INDEX event_recurrence_exceptions_all_day_idx
+CREATE UNIQUE INDEX IF NOT EXISTS event_recurrence_exceptions_all_day_idx
 ON event_recurrence_exceptions(series_id, recurrence_date);

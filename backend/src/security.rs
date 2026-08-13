@@ -1,5 +1,6 @@
 use std::fmt::{self, Debug, Formatter};
 
+use aes_gcm::aead::{Aead, KeyInit};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -25,40 +26,41 @@ impl SecretKey {
     }
 
     pub fn derive(secret: &[u8]) -> Self {
-        let mut digest = Sha256::new();
-        digest.update(b"commoncal/secret-key/v1\0");
-        digest.update(secret);
-        Self(digest.finalize().into())
+        let mut salt = [0u8; 16];
+        getrandom::fill(&mut salt).expect("random source unavailable");
+        let mut output = [0u8; 32];
+        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(secret, &salt, 100_000, &mut output);
+        Self(output)
     }
 
     /// Authenticated encryption for small internal secrets.  The nonce and tag are
     /// included in the returned blob; callers must never expose it.
     pub fn encrypt_secret(&self, plaintext: &[u8]) -> Vec<u8> {
-        let mut nonce = [0_u8; 16];
-        getrandom::fill(&mut nonce).expect("operating system random source unavailable");
-        let mut ciphertext = plaintext.to_vec();
-        self.apply_secret_stream(&nonce, &mut ciphertext);
-        let tag = self.secret_tag(&nonce, &ciphertext);
-        [nonce.as_slice(), tag.as_slice(), ciphertext.as_slice()].concat()
+        let mut nonce = [0u8; 12];
+        getrandom::fill(&mut nonce).expect("random source unavailable");
+        let cipher = aes_gcm::Aes256Gcm::new_from_slice(&self.0).expect("key must be 32 bytes");
+        let nonce_arr = aes_gcm::Nonce::from_slice(&nonce);
+        let ciphertext = cipher
+            .encrypt(nonce_arr, plaintext)
+            .expect("encryption failed");
+        [nonce.as_slice(), &ciphertext[..]].concat()
     }
 
     pub fn decrypt_secret(&self, encoded: &[u8]) -> Option<Vec<u8>> {
-        if encoded.len() < 48 {
+        if encoded.len() < 12 {
             return None;
         }
-        let (nonce, rest) = encoded.split_at(16);
-        let (tag, ciphertext) = rest.split_at(32);
-        if !constant_time_eq(tag, &self.secret_tag(nonce, ciphertext)) {
-            return None;
-        }
-        let mut plaintext = ciphertext.to_vec();
-        self.apply_secret_stream(nonce, &mut plaintext);
-        Some(plaintext)
+        let (nonce, ciphertext) = encoded.split_at(12);
+        let nonce_arr = aes_gcm::Nonce::from_slice(nonce);
+        let cipher = aes_gcm::Aes256Gcm::new_from_slice(&self.0).expect("key must be 32 bytes");
+        cipher
+            .decrypt(nonce_arr, ciphertext)
+            .ok()
     }
 
     fn apply_secret_stream(&self, nonce: &[u8], bytes: &mut [u8]) {
         for (counter, chunk) in bytes.chunks_mut(32).enumerate() {
-            let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+            let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
             mac.update(b"commoncal/secret-encryption/v1\0");
             mac.update(nonce);
             mac.update(&(counter as u64).to_be_bytes());
@@ -69,7 +71,7 @@ impl SecretKey {
     }
 
     fn secret_tag(&self, nonce: &[u8], ciphertext: &[u8]) -> [u8; 32] {
-        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(b"commoncal/secret-encryption-tag/v1\0");
         mac.update(nonce);
         mac.update(ciphertext);
@@ -135,7 +137,7 @@ impl SecretKey {
     }
 
     fn token_mac(&self, domain: TokenDomain) -> HmacSha256 {
-        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(TOKEN_HASH_CONTEXT);
         mac.update(domain.label());
         mac.update(&[0]);
@@ -147,7 +149,7 @@ impl SecretKey {
     }
 
     fn csrf_mac(&self, session: &str, nonce: &str) -> HmacSha256 {
-        let mut mac = HmacSha256::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
         mac.update(CSRF_CONTEXT);
         mac.update(session.as_bytes());
         mac.update(&[0]);
@@ -255,17 +257,31 @@ impl OneTimeTokenState {
 
 pub struct SessionCookieBuilder<'a> {
     token: &'a SecretToken,
+    is_secure: bool,
 }
 
 impl<'a> SessionCookieBuilder<'a> {
     pub fn new(token: &'a SecretToken) -> Self {
-        Self { token }
+        Self {
+            token,
+            is_secure: false,
+        }
+    }
+
+    pub fn is_secure(mut self, secure: bool) -> Self {
+        self.is_secure = secure;
+        self
     }
 
     pub fn build(self) -> String {
-        format!(
-            "__Host-commoncal_session={}; Path=/; Secure; HttpOnly; SameSite=Lax",
+        let cookie = format!(
+            "__Host-commoncal_session={}; Path=/; HttpOnly; SameSite=Lax",
             self.token.expose()
-        )
+        );
+        if self.is_secure {
+            cookie.replace("HttpOnly", "Secure; HttpOnly")
+        } else {
+            cookie
+        }
     }
 }

@@ -1,0 +1,51 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "commoncal.fullname" . }}-backup
+  labels:
+    {{- include "commoncal.labels" . | nindent 4 }}
+spec:
+  schedule: "{{ .Values.backup.schedule }}"
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: {{ include "commoncal.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /usr/local/bin/commoncal-backend
+                - backup
+                - /backup/backup.tar.gz
+              env:
+                - name: BACKUP_ENCRYPTION_KEY_HEX
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                      key: {{ .Values.existingSecret.backupEncryptionKeyHex | default "BACKUP_ENCRYPTION_KEY_HEX" }}
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ include "commoncal.fullname" . }}-data
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "commoncal.fullname" . }}-backup
+          restartPolicy: Never
+{{- end }}

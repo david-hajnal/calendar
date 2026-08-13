@@ -13,8 +13,10 @@ use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
 use crate::{
     email::{AuthenticationLink, EmailSender, LoginLinkEmail},
+    identity::UserWithPasswordRecord,
     invitations::ActiveUser,
-    security::{CsrfToken, SecretKey, SecretToken, TokenDomain},
+    password,
+    security::{CsrfToken, SecretKey, SecretToken, SessionCookieBuilder, TokenDomain},
 };
 
 const REQUEST_ACTION: &str = "auth.login_link.requested";
@@ -112,6 +114,21 @@ pub trait LoginFlow: Send + Sync {
         &'a self,
         command: ConsumeLoginLink,
     ) -> Pin<Box<dyn Future<Output = Result<ConsumedLoginLink, ConsumeLoginLinkError>> + Send + 'a>>;
+
+    fn dev_login<'a>(
+        &'a self,
+        _command: DevLogin,
+    ) -> Pin<Box<dyn Future<Output = Result<DevLoginResult, DevLoginError>> + Send + 'a>> {
+        Box::pin(async { Err(DevLoginError::Unavailable) })
+    }
+
+    fn authenticate_password<'a>(
+        &'a self,
+        _command: PasswordLoginCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<PasswordLoginResult, PasswordLoginError>> + Send + 'a>>
+    {
+        Box::pin(async { Err(PasswordLoginError::Unsupported) })
+    }
 }
 
 #[derive(Clone)]
@@ -124,6 +141,7 @@ pub struct LoginService<E> {
     email_sender: Arc<E>,
     limiter: Arc<dyn LoginRateLimiter>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    is_secure: bool,
 }
 
 impl<E> LoginService<E>
@@ -138,6 +156,7 @@ where
         login_url: impl Into<Arc<str>>,
         email_sender: Arc<E>,
         limiter: Arc<dyn LoginRateLimiter>,
+        is_secure: bool,
     ) -> Self {
         Self {
             pool,
@@ -153,7 +172,140 @@ where
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
+            is_secure,
         }
+    }
+
+    async fn authenticate_password_impl(
+        &self,
+        command: PasswordLoginCommand,
+    ) -> Result<PasswordLoginResult, PasswordLoginError> {
+        let now = (self.clock)();
+        let normalized_email = normalize_email(&command.email);
+
+        let ip_allowed = self
+            .limiter
+            .allow(LoginRateLimitKey::Ip(&command.client_ip));
+        let email_allowed = self
+            .limiter
+            .allow(LoginRateLimitKey::Email(&normalized_email));
+        if !ip_allowed || !email_allowed {
+            insert_audit(
+                &self.pool,
+                None,
+                "auth.password_login.rate_limited",
+                "login",
+                None,
+                r#"{"result":"rejected"}"#,
+                now,
+            )
+            .await?;
+            return Err(PasswordLoginError::RateLimited);
+        }
+
+        let mut user = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        let record = sqlx::query_as::<_, UserWithPasswordRecord>(
+            "SELECT id, normalized_email, display_name, status, created_at, password_hash
+             FROM users WHERE normalized_email = ? AND status = 'active'",
+        )
+        .bind(&normalized_email)
+        .fetch_optional(&mut *user)
+        .await
+        .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        let Some(record) = record else {
+            user.commit()
+                .await
+                .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+            audit_generic_request(&self.pool, "auth.password_login.failed", now).await?;
+            return Err(PasswordLoginError::InvalidCredentials);
+        };
+
+        let password_hash = match &record.password_hash {
+            Some(hash) => hash.clone(),
+            None => {
+                user.commit()
+                    .await
+                    .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+                return Err(PasswordLoginError::PasswordNotSet);
+            }
+        };
+
+        let valid = password::verify_password(&command.password, &password_hash)
+            .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        if !valid {
+            user.commit()
+                .await
+                .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+            audit_generic_request(&self.pool, "auth.password_login.failed", now).await?;
+            return Err(PasswordLoginError::InvalidCredentials);
+        }
+
+        let session_token = self.secret_key.generate_token();
+        let session_hash = self
+            .secret_key
+            .hash_token(TokenDomain::Session, &session_token);
+
+        sqlx::query(
+            "INSERT INTO sessions (
+                user_id, session_hash, expires_at, revoked_at, created_at, last_seen_at
+             ) VALUES (?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(record.id)
+        .bind(session_hash.as_bytes().as_slice())
+        .bind(now + self.session_lifetime_seconds)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *user)
+        .await
+        .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        sqlx::query("UPDATE users SET last_login_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(record.id)
+            .execute(&mut *user)
+            .await
+            .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        insert_audit_in_transaction(
+            &mut user,
+            Some(record.id),
+            "auth.password_login.succeeded",
+            "login",
+            None,
+            r#"{"result":"authenticated"}"#,
+            now,
+        )
+        .await
+        .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        user.commit()
+            .await
+            .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
+
+        let csrf_token = self.secret_key.generate_csrf_token(&session_token);
+
+        tracing::info!(
+            "password login succeeded for user {}",
+            record.normalized_email
+        );
+        Ok(PasswordLoginResult {
+            user: ActiveUser {
+                id: record.id,
+                email: record.normalized_email,
+                display_name: record.display_name,
+                status: "active",
+                is_superadmin: false,
+            },
+            session_token,
+            csrf_token,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -166,6 +318,7 @@ where
         email_sender: Arc<E>,
         limiter: Arc<dyn LoginRateLimiter>,
         now: i64,
+        is_secure: bool,
     ) -> Self {
         let mut service = Self::new(
             pool,
@@ -175,6 +328,7 @@ where
             login_url,
             email_sender,
             limiter,
+            is_secure,
         );
         service.clock = Arc::new(move || now);
         service
@@ -393,6 +547,88 @@ where
             csrf_token,
         })
     }
+
+    async fn dev_login_impl(&self, command: DevLogin) -> Result<DevLoginResult, DevLoginError> {
+        let now = (self.clock)();
+        let mut transaction = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|e| DevLoginError::Database(e.to_string()))?;
+
+        let user = sqlx::query_as::<_, DevLoginUserRecord>(
+            "SELECT id, normalized_email, display_name, status, is_superadmin
+             FROM users WHERE normalized_email = ?",
+        )
+        .bind(&command.normalized_email)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|e| DevLoginError::Database(e.to_string()))?;
+
+        let (user_id, _display_name) = match user {
+            Some(record) => (
+                record.id,
+                record.display_name.or(command.display_name.clone()),
+            ),
+            None => {
+                let result = sqlx::query(
+                    "INSERT INTO users (normalized_email, display_name, status, created_at)
+                     VALUES (?, ?, 'active', ?)",
+                )
+                .bind(&command.normalized_email)
+                .bind(&command.display_name)
+                .bind(now)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|e| DevLoginError::Database(e.to_string()))?;
+                (result.last_insert_rowid(), command.display_name.clone())
+            }
+        };
+
+        let session_token = self.secret_key.generate_token();
+        let session_hash = self
+            .secret_key
+            .hash_token(TokenDomain::Session, &session_token);
+        sqlx::query(
+            "INSERT INTO sessions (
+                user_id, session_hash, expires_at, revoked_at, created_at, last_seen_at
+             ) VALUES (?, ?, ?, NULL, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(session_hash.as_bytes().as_slice())
+        .bind(now + self.session_lifetime_seconds)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|e| DevLoginError::Database(e.to_string()))?;
+
+        let csrf_token = self.secret_key.generate_csrf_token(&session_token);
+        let redirect_url = format!("/dev-login?csrf_token={}", csrf_token.expose());
+        let cookie = SessionCookieBuilder::new(&session_token)
+            .is_secure(self.is_secure)
+            .build();
+
+        transaction
+            .commit()
+            .await
+            .map_err(|e| DevLoginError::Database(e.to_string()))?;
+
+        Ok(DevLoginResult {
+            redirect_url,
+            cookie,
+        })
+    }
+}
+
+#[derive(FromRow)]
+#[allow(dead_code)]
+struct DevLoginUserRecord {
+    id: i64,
+    normalized_email: String,
+    display_name: Option<String>,
+    status: String,
+    is_superadmin: bool,
 }
 
 impl<E> LoginFlow for LoginService<E>
@@ -413,6 +649,21 @@ where
     {
         Box::pin(self.consume(command))
     }
+
+    fn dev_login<'a>(
+        &'a self,
+        command: DevLogin,
+    ) -> Pin<Box<dyn Future<Output = Result<DevLoginResult, DevLoginError>> + Send + 'a>> {
+        Box::pin(self.dev_login_impl(command))
+    }
+
+    fn authenticate_password<'a>(
+        &'a self,
+        command: PasswordLoginCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<PasswordLoginResult, PasswordLoginError>> + Send + 'a>>
+    {
+        Box::pin(self.authenticate_password_impl(command))
+    }
 }
 
 pub struct RequestLoginLink {
@@ -430,6 +681,35 @@ pub struct ConsumedLoginLink {
     pub session_token: SecretToken,
     pub csrf_token: CsrfToken,
 }
+
+#[derive(Clone, Debug)]
+pub struct DevLogin {
+    pub normalized_email: String,
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DevLoginResult {
+    pub redirect_url: String,
+    pub cookie: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DevLoginError {
+    Unavailable,
+    Database(String),
+}
+
+impl Display for DevLoginError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            DevLoginError::Unavailable => write!(f, "dev login unavailable"),
+            DevLoginError::Database(msg) => write!(f, "database error: {msg}"),
+        }
+    }
+}
+
+impl Error for DevLoginError {}
 
 #[derive(FromRow)]
 struct RequestUser {
@@ -640,3 +920,63 @@ pub struct LoginResponse {
     pub user: ActiveUser,
     pub csrf_token: String,
 }
+
+async fn audit_generic_request(
+    pool: &SqlitePool,
+    action: &'static str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    insert_audit(
+        pool,
+        None,
+        action,
+        "login",
+        None,
+        r#"{"result":"accepted"}"#,
+        now,
+    )
+    .await
+}
+
+#[derive(Clone, Debug)]
+pub struct PasswordLoginCommand {
+    pub email: String,
+    pub password: String,
+    pub client_ip: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PasswordLoginResult {
+    pub user: ActiveUser,
+    pub session_token: SecretToken,
+    pub csrf_token: CsrfToken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordLoginError {
+    Unsupported,
+    InvalidCredentials,
+    PasswordNotSet,
+    RateLimited,
+    Database(String),
+}
+
+impl From<sqlx::Error> for PasswordLoginError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error.to_string())
+    }
+}
+
+impl fmt::Display for PasswordLoginError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported => write!(f, "password login unsupported"),
+            Self::InvalidCredentials => write!(f, "invalid credentials"),
+            Self::PasswordNotSet => write!(f, "password not set for this account"),
+            Self::RateLimited => write!(f, "too many attempts, try again later"),
+            Self::Database(msg) => write!(f, "database error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for PasswordLoginError {}

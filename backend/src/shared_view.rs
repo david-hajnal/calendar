@@ -514,9 +514,7 @@ impl SharedViewService {
         let token_matches = self
             .token_key
             .verify_token(TokenDomain::PublicView, &token, &expected);
-        if (self.clock)() >= record.expires_at
-            || !token_matches
-        {
+        if (self.clock)() >= record.expires_at || !token_matches {
             return Err(SharedViewError::NotFound);
         }
         Ok(ResolvedPublicView {
@@ -923,7 +921,10 @@ mod tests {
             display_timezone: "UTC".to_string(),
             expires_at: now + 86400,
         };
-        let pub1 = service.create_publication(user_id, view_id, config).await.unwrap();
+        let pub1 = service
+            .create_publication(user_id, view_id, config)
+            .await
+            .unwrap();
 
         let meta1 = service.public_metadata(&pub1.token).await.unwrap();
         assert_eq!(meta1.name, "Test View");
@@ -934,8 +935,10 @@ mod tests {
         assert_eq!(meta2.name, "Test View");
 
         let result = service.public_metadata(&pub1.token).await;
-        assert!(matches!(result, Err(SharedViewError::NotFound)),
-            "old token should be revoked but still works");
+        assert!(
+            matches!(result, Err(SharedViewError::NotFound)),
+            "old token should be revoked but still works"
+        );
     }
 
     #[tokio::test]
@@ -965,7 +968,10 @@ mod tests {
             display_timezone: "UTC".to_string(),
             expires_at: now + 86400,
         };
-        let pub1 = service.create_publication(user_id, view_id, config).await.unwrap();
+        let pub1 = service
+            .create_publication(user_id, view_id, config)
+            .await
+            .unwrap();
 
         let pub2 = service.rotate_publication(user_id, view_id).await.unwrap();
 

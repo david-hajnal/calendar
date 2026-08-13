@@ -28,6 +28,9 @@ use tracing::Level;
 
 use crate::{
     admin::{AdminError, AdminService, InviteUser},
+    admin_invitation_rate_limit::{
+        AdminInvitationRateLimiterState, check_admin_invitation_rate_limit,
+    },
     authorization::{
         AuthorizationDecision, CalendarRole, PlatformAction, PlatformRole,
         authorize_platform_action,
@@ -48,16 +51,15 @@ use crate::{
         RequestLoginLinkError,
     },
     notification::NotificationService,
+    public_rate_limit::PublicRateLimiterState,
+    rate_limiter::{FixedWindowRateLimiter, RateLimitTier, WriteRateLimitKey, write_endpoint_tier},
     security::SessionCookieBuilder,
     sessions::{AuthenticatedSession, SessionError, SessionManager},
     shared_view::{
         PublicViewConfiguration, PublicViewProjection, SharedViewCalendarInput, SharedViewError,
         SharedViewService,
     },
-    rate_limiter::{FixedWindowRateLimiter, WriteRateLimitKey, RateLimitTier, write_endpoint_tier},
     write_rate_limit::WriteRateLimiterState,
-    public_rate_limit::PublicRateLimiterState,
-    admin_invitation_rate_limit::{AdminInvitationRateLimiterState, check_admin_invitation_rate_limit},
 };
 
 static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -1403,14 +1405,14 @@ async fn rotate_publication(
         .rotate_publication(session.user.id, view_id)
         .await
         .map_err(map_shared_view_error)?;
-    
+
     tracing::info!(
         user_id = session.user.id,
         view_id,
         error_code = "publication_token_rotated",
         "public view publication token rotated"
     );
-    
+
     Ok(Json(publication))
 }
 
@@ -2788,17 +2790,31 @@ mod tests {
     use axum::http::Request;
     use axum::middleware;
     use axum::routing::get;
-    use tower::ServiceExt;
     use std::net::SocketAddr;
+    use tower::ServiceExt;
 
-    fn make_public_limiter(max_requests: u32, window_seconds: i64, now: i64) -> PublicRateLimiterState {
-        let limiter = crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
-        PublicRateLimiterState { limiter: std::sync::Arc::new(limiter) }
+    fn make_public_limiter(
+        max_requests: u32,
+        window_seconds: i64,
+        now: i64,
+    ) -> PublicRateLimiterState {
+        let limiter =
+            crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
+        PublicRateLimiterState {
+            limiter: std::sync::Arc::new(limiter),
+        }
     }
 
-    fn make_admin_limiter(max_requests: u32, window_seconds: i64, now: i64) -> AdminInvitationRateLimiterState {
-        let limiter = crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
-        AdminInvitationRateLimiterState { limiter: std::sync::Arc::new(limiter) }
+    fn make_admin_limiter(
+        max_requests: u32,
+        window_seconds: i64,
+        now: i64,
+    ) -> AdminInvitationRateLimiterState {
+        let limiter =
+            crate::rate_limiter::FixedWindowRateLimiter::new_at(max_requests, window_seconds, now);
+        AdminInvitationRateLimiterState {
+            limiter: std::sync::Arc::new(limiter),
+        }
     }
 
     fn make_session(user_id: i64, is_superadmin: bool) -> AuthenticatedSession {
@@ -2806,7 +2822,9 @@ mod tests {
         let token = secret_key.generate_token();
         let csrf_token = secret_key.generate_csrf_token(&token).expose().to_owned();
         AuthenticatedSession::new_for_test(
-            user_id, token, csrf_token,
+            user_id,
+            token,
+            csrf_token,
             ActiveUser {
                 id: user_id,
                 email: "test@example.com".into(),
@@ -2814,7 +2832,9 @@ mod tests {
                 status: "active",
                 is_superadmin,
             },
-            1000, 1000, 4600,
+            1000,
+            1000,
+            4600,
         )
     }
 
@@ -2837,17 +2857,22 @@ mod tests {
         let limiter = make_public_limiter(2, 60, 1000);
 
         // Build app with public rate limiter middleware applied to a simple handler.
-        let app = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter.clone(),
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
 
         for i in 0..2 {
             let request = make_request("GET", "/test");
             let response = app.clone().oneshot(request).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "request {} should be allowed", i + 1);
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "request {} should be allowed",
+                i + 1
+            );
         }
 
         let request = make_request("GET", "/test");
@@ -2864,37 +2889,43 @@ mod tests {
         let limiter = make_public_limiter(1, 60, 1000);
 
         // Exhaust limit for IP 127.0.0.1.
-        let app1 = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app1 = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter.clone(),
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
         let mut request1 = make_request("GET", "/test");
-        request1.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
+        request1
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
         let response1 = app1.oneshot(request1).await.unwrap();
         assert_eq!(response1.status(), StatusCode::OK);
 
-        let app1_blocked = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app1_blocked = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter.clone(),
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
         let mut request1_blocked = make_request("GET", "/test");
-        request1_blocked.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
+        request1_blocked
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8080))));
         let response1_blocked = app1_blocked.oneshot(request1_blocked).await.unwrap();
         assert_eq!(response1_blocked.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // IP 127.0.0.2 should have independent limit.
-        let app2 = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app2 = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter,
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
         let mut request2 = make_request("GET", "/test");
-        request2.extensions_mut().insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 2], 8080))));
+        request2
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 2], 8080))));
         let response2 = app2.oneshot(request2).await.unwrap();
 
         assert_eq!(response2.status(), StatusCode::OK);
@@ -2941,22 +2972,22 @@ mod tests {
     async fn test_public_endpoint_retry_after_header() {
         let limiter = make_public_limiter(1, 60, 1000);
 
-        let app1 = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app1 = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter.clone(),
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
         let request1 = make_request("GET", "/test");
         let response1 = app1.oneshot(request1).await.unwrap();
         assert_eq!(response1.status(), StatusCode::OK);
 
-        let app2 = Router::new()
-            .route("/test", get(|| async { "ok" }))
-            .layer(middleware::from_fn_with_state(
+        let app2 = Router::new().route("/test", get(|| async { "ok" })).layer(
+            middleware::from_fn_with_state(
                 limiter,
                 crate::public_rate_limit::public_rate_limit_middleware,
-            ));
+            ),
+        );
         let request2 = make_request("GET", "/test");
         let response2 = app2.oneshot(request2).await.unwrap();
 
@@ -2967,7 +2998,10 @@ mod tests {
             .get("x-retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(
+            retry_after.is_some(),
+            "x-retry-after header should be present"
+        );
         assert!(retry_after.unwrap() > 0, "retry_after should be positive");
     }
 
@@ -2990,7 +3024,10 @@ mod tests {
             .get("x-retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<i64>().ok());
-        assert!(retry_after.is_some(), "x-retry-after header should be present");
+        assert!(
+            retry_after.is_some(),
+            "x-retry-after header should be present"
+        );
         assert!(retry_after.unwrap() > 0, "retry_after should be positive");
     }
 }

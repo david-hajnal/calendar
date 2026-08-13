@@ -4,9 +4,9 @@
 // They provide the MCP server with access to user data, calendar data,
 // and grant management without exposing the database directly.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -209,9 +209,9 @@ fn validate_mcp_api_key(headers: &axum::http::HeaderMap) -> Result<(), (StatusCo
         .get("x-mcp-api-key")
         .ok_or((StatusCode::UNAUTHORIZED, "missing API key"))?;
 
-    let api_key_str = api_key.to_str().map_err(|_| {
-        (StatusCode::UNAUTHORIZED, "invalid API key encoding")
-    })?;
+    let api_key_str = api_key
+        .to_str()
+        .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid API key encoding"))?;
 
     let expected = std::env::var("MCP_INTERNAL_API_KEY").unwrap_or_default();
     if expected.is_empty() || api_key_str == expected {
@@ -238,10 +238,7 @@ pub async fn token_exchange(
     }
 
     if params.subject_token.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "missing subject_token".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "missing subject_token".to_string()));
     }
 
     // Generate a short-lived internal access token.
@@ -260,16 +257,17 @@ pub async fn get_user_status(
     State(pool): State<SqlitePool>,
     Path(user_id): Path<i64>,
 ) -> Result<Json<UserStatusResponse>, (StatusCode, String)> {
-    let user = sqlx::query_as::<_, (i64, String)>(
-        "SELECT id, status FROM users WHERE id = ?"
-    )
-    .bind(user_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let user = sqlx::query_as::<_, (i64, String)>("SELECT id, status FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match user {
-        Some((id, status)) => Ok(Json(UserStatusResponse { user_id: id, status })),
+        Some((id, status)) => Ok(Json(UserStatusResponse {
+            user_id: id,
+            status,
+        })),
         None => Err((StatusCode::NOT_FOUND, "user not found".to_string())),
     }
 }
@@ -288,7 +286,7 @@ pub async fn list_calendars_for_mcp(
          SELECT c.id, c.name, c.description, ca.role 
          FROM calendars c 
          JOIN calendar_acl ca ON c.id = ca.calendar_id 
-         WHERE ca.user_id = ?"
+         WHERE ca.user_id = ?",
     )
     .bind(user_id)
     .bind(user_id)
@@ -315,7 +313,7 @@ pub async fn get_calendar_role(
     Path((calendar_id, user_id)): Path<(i64, i64)>,
 ) -> Result<Json<CalendarRoleResponse>, (StatusCode, String)> {
     let role = sqlx::query_as::<_, (String,)>(
-        "SELECT role FROM calendar_acl WHERE calendar_id = ? AND user_id = ?"
+        "SELECT role FROM calendar_acl WHERE calendar_id = ? AND user_id = ?",
     )
     .bind(calendar_id)
     .bind(user_id)
@@ -344,20 +342,29 @@ pub async fn get_event(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match event {
-        Some((id, cal_id, title, description, location, status, event_kind, start_utc, end_utc, version)) => {
-            Ok(Json(EventInfoResponse {
-                id,
-                calendar_id: cal_id,
-                title,
-                description,
-                location,
-                status,
-                event_kind,
-                start_utc: start_utc.map(|t| t.to_string()),
-                end_utc: end_utc.map(|t| t.to_string()),
-                version,
-            }))
-        }
+        Some((
+            id,
+            cal_id,
+            title,
+            description,
+            location,
+            status,
+            event_kind,
+            start_utc,
+            end_utc,
+            version,
+        )) => Ok(Json(EventInfoResponse {
+            id,
+            calendar_id: cal_id,
+            title,
+            description,
+            location,
+            status,
+            event_kind,
+            start_utc: start_utc.map(|t| t.to_string()),
+            end_utc: end_utc.map(|t| t.to_string()),
+            version,
+        })),
         None => Err((StatusCode::NOT_FOUND, "event not found".to_string())),
     }
 }
@@ -380,20 +387,33 @@ pub async fn search_events(
 
     let response: Vec<EventInfoResponse> = events
         .into_iter()
-        .map(|(id, cal_id, title, description, location, status, event_kind, start_utc, end_utc, version)| {
-            EventInfoResponse {
+        .map(
+            |(
                 id,
-                calendar_id: cal_id,
+                cal_id,
                 title,
                 description,
                 location,
                 status,
                 event_kind,
-                start_utc: start_utc.map(|t| t.to_string()),
-                end_utc: end_utc.map(|t| t.to_string()),
+                start_utc,
+                end_utc,
                 version,
-            }
-        })
+            )| {
+                EventInfoResponse {
+                    id,
+                    calendar_id: cal_id,
+                    title,
+                    description,
+                    location,
+                    status,
+                    event_kind,
+                    start_utc: start_utc.map(|t| t.to_string()),
+                    end_utc: end_utc.map(|t| t.to_string()),
+                    version,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(SearchEventsResponse {
@@ -450,14 +470,13 @@ pub async fn update_event(
     Json(payload): Json<UpdateEventPayload>,
 ) -> Result<Json<EventInfoResponse>, (StatusCode, String)> {
     // Check version.
-    let current_version: Option<i64> = sqlx::query_scalar(
-        "SELECT version FROM events WHERE id = ? AND calendar_id = ?"
-    )
-    .bind(event_id)
-    .bind(calendar_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let current_version: Option<i64> =
+        sqlx::query_scalar("SELECT version FROM events WHERE id = ? AND calendar_id = ?")
+            .bind(event_id)
+            .bind(calendar_id)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match current_version {
         Some(v) if v != payload.version => {
@@ -548,16 +567,23 @@ pub async fn get_delete_intent(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match intent {
-        Some((id, _user_id, _client_id, event_id, calendar_id, event_version, confirmation_state, expires_at)) => {
-            Ok(Json(DeleteIntentResponse {
-                intent_id: id,
-                event_id,
-                calendar_id,
-                event_version,
-                expires_at,
-                confirmation_state,
-            }))
-        }
+        Some((
+            id,
+            _user_id,
+            _client_id,
+            event_id,
+            calendar_id,
+            event_version,
+            confirmation_state,
+            expires_at,
+        )) => Ok(Json(DeleteIntentResponse {
+            intent_id: id,
+            event_id,
+            calendar_id,
+            event_version,
+            expires_at,
+            confirmation_state,
+        })),
         None => Err((StatusCode::NOT_FOUND, "delete intent not found".to_string())),
     }
 }
@@ -576,7 +602,10 @@ pub async fn commit_delete_intent(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if result.rows_affected() == 0 {
-        Err((StatusCode::CONFLICT, "delete intent already committed or not found".to_string()))
+        Err((
+            StatusCode::CONFLICT,
+            "delete intent already committed or not found".to_string(),
+        ))
     } else {
         Ok(StatusCode::OK)
     }
@@ -598,25 +627,42 @@ pub async fn get_mcp_grants(
 
     let response: Vec<McpGrantResponse> = grants
         .into_iter()
-        .map(|(id, user_id, client_id, calendar_ids, avail, titles, details, create, update, delete, created_at, last_used, expires, revoked)| {
-            let calendars: Vec<i64> = serde_json::from_str(&calendar_ids).unwrap_or_default();
-            McpGrantResponse {
-                grant_id: id,
+        .map(
+            |(
+                id,
                 user_id,
-                oauth_client_id: client_id,
-                allowed_calendar_ids: calendars,
-                allow_availability: avail != 0,
-                allow_event_titles: titles != 0,
-                allow_event_details: details != 0,
-                allow_create: create != 0,
-                allow_update: update != 0,
-                allow_delete: delete != 0,
+                client_id,
+                calendar_ids,
+                avail,
+                titles,
+                details,
+                create,
+                update,
+                delete,
                 created_at,
-                last_used_at: last_used,
-                expires_at: expires,
-                revoked_at: revoked,
-            }
-        })
+                last_used,
+                expires,
+                revoked,
+            )| {
+                let calendars: Vec<i64> = serde_json::from_str(&calendar_ids).unwrap_or_default();
+                McpGrantResponse {
+                    grant_id: id,
+                    user_id,
+                    oauth_client_id: client_id,
+                    allowed_calendar_ids: calendars,
+                    allow_availability: avail != 0,
+                    allow_event_titles: titles != 0,
+                    allow_event_details: details != 0,
+                    allow_create: create != 0,
+                    allow_update: update != 0,
+                    allow_delete: delete != 0,
+                    created_at,
+                    last_used_at: last_used,
+                    expires_at: expires,
+                    revoked_at: revoked,
+                }
+            },
+        )
         .collect();
 
     Ok(Json(response))

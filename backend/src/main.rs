@@ -1,5 +1,6 @@
 use commoncal_backend::{
     admin::AdminService,
+    admin_invitation_rate_limit::AdminInvitationRateLimiterState,
     backup::{Aes256GcmEncryptor, BackupCommand, BackupService, RestoreCommand, RestoreService},
     bootstrap::{BootstrapCommand, InitialSuperadminBootstrap},
     calendar::CalendarService,
@@ -16,13 +17,12 @@ use commoncal_backend::{
     invitations::InvitationConsumer,
     login::{FixedWindowLoginRateLimiter, LoginService},
     notification::NotificationWorker,
-    rate_limiter::FixedWindowRateLimiter,
-    write_rate_limit::WriteRateLimiterState,
     public_rate_limit::PublicRateLimiterState,
-    admin_invitation_rate_limit::AdminInvitationRateLimiterState,
+    rate_limiter::FixedWindowRateLimiter,
     security::SecretKey,
     sessions::{SessionManager, SessionSecurityConfig},
     shared_view::SharedViewService,
+    write_rate_limit::WriteRateLimiterState,
 };
 use std::{
     net::SocketAddr,
@@ -185,32 +185,94 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add MCP internal API routes (separate router with its own state).
     let db_pool = database.clone();
     let mcp_router = axum::Router::new()
-        .route("/internal/token-exchange", axum::routing::post(commoncal_backend::mcp_internal::token_exchange))
-        .route("/internal/mcp/users/:user_id/status", axum::routing::get(commoncal_backend::mcp_internal::get_user_status))
-        .route("/internal/mcp/users/:user_id/calendars", axum::routing::get(commoncal_backend::mcp_internal::list_calendars_for_mcp))
-        .route("/internal/mcp/calendars/:calendar_id/role/:user_id", axum::routing::get(commoncal_backend::mcp_internal::get_calendar_role))
-        .route("/internal/mcp/calendars/:calendar_id/events/:event_id", axum::routing::get(commoncal_backend::mcp_internal::get_event))
-        .route("/internal/mcp/calendars/:calendar_id/events/search", axum::routing::get(commoncal_backend::mcp_internal::search_events))
-        .route("/internal/mcp/events/:calendar_id", axum::routing::post(commoncal_backend::mcp_internal::create_event))
-        .route("/internal/mcp/events/:calendar_id/:event_id", axum::routing::patch(commoncal_backend::mcp_internal::update_event))
-        .route("/internal/mcp/delete-intents", axum::routing::post(commoncal_backend::mcp_internal::create_delete_intent))
-        .route("/internal/mcp/delete-intents/:intent_id", axum::routing::get(commoncal_backend::mcp_internal::get_delete_intent))
-        .route("/internal/mcp/delete-intents/:intent_id/commit", axum::routing::post(commoncal_backend::mcp_internal::commit_delete_intent))
-        .route("/internal/mcp/mcp-grants", axum::routing::get(commoncal_backend::mcp_internal::get_mcp_grants))
-        .route("/internal/mcp/idempotency/:operation_id", axum::routing::get(commoncal_backend::mcp_internal::check_idempotency))
-        .route("/internal/mcp/idempotency", axum::routing::post(commoncal_backend::mcp_internal::record_idempotency))
-        .route("/api/v1/calendars/:calendar_id/reminders", axum::routing::post(commoncal_backend::mcp_internal::create_reminder))
+        .route(
+            "/internal/token-exchange",
+            axum::routing::post(commoncal_backend::mcp_internal::token_exchange),
+        )
+        .route(
+            "/internal/mcp/users/:user_id/status",
+            axum::routing::get(commoncal_backend::mcp_internal::get_user_status),
+        )
+        .route(
+            "/internal/mcp/users/:user_id/calendars",
+            axum::routing::get(commoncal_backend::mcp_internal::list_calendars_for_mcp),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/role/:user_id",
+            axum::routing::get(commoncal_backend::mcp_internal::get_calendar_role),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/events/:event_id",
+            axum::routing::get(commoncal_backend::mcp_internal::get_event),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/events/search",
+            axum::routing::get(commoncal_backend::mcp_internal::search_events),
+        )
+        .route(
+            "/internal/mcp/events/:calendar_id",
+            axum::routing::post(commoncal_backend::mcp_internal::create_event),
+        )
+        .route(
+            "/internal/mcp/events/:calendar_id/:event_id",
+            axum::routing::patch(commoncal_backend::mcp_internal::update_event),
+        )
+        .route(
+            "/internal/mcp/delete-intents",
+            axum::routing::post(commoncal_backend::mcp_internal::create_delete_intent),
+        )
+        .route(
+            "/internal/mcp/delete-intents/:intent_id",
+            axum::routing::get(commoncal_backend::mcp_internal::get_delete_intent),
+        )
+        .route(
+            "/internal/mcp/delete-intents/:intent_id/commit",
+            axum::routing::post(commoncal_backend::mcp_internal::commit_delete_intent),
+        )
+        .route(
+            "/internal/mcp/mcp-grants",
+            axum::routing::get(commoncal_backend::mcp_internal::get_mcp_grants),
+        )
+        .route(
+            "/internal/mcp/idempotency/:operation_id",
+            axum::routing::get(commoncal_backend::mcp_internal::check_idempotency),
+        )
+        .route(
+            "/internal/mcp/idempotency",
+            axum::routing::post(commoncal_backend::mcp_internal::record_idempotency),
+        )
+        .route(
+            "/api/v1/calendars/:calendar_id/reminders",
+            axum::routing::post(commoncal_backend::mcp_internal::create_reminder),
+        )
         .with_state(db_pool);
     router = router.merge(mcp_router);
 
     // Add McpGrant management routes (frontend-facing).
     let db_pool = database.clone();
     let mcp_grant_router = axum::Router::new()
-        .route("/api/v1/mcp-grants", axum::routing::get(commoncal_backend::mcp_grant_management::list_mcp_grants))
-        .route("/api/v1/mcp-grants", axum::routing::post(commoncal_backend::mcp_grant_management::create_mcp_grant))
-        .route("/api/v1/mcp-grants/:id", axum::routing::patch(commoncal_backend::mcp_grant_management::update_mcp_grant))
-        .route("/api/v1/mcp-grants/:id", axum::routing::delete(commoncal_backend::mcp_grant_management::revoke_mcp_grant))
-        .route("/api/v1/mcp-grants/:id/resend", axum::routing::post(commoncal_backend::mcp_grant_management::resend_mcp_grant_confirmation))
+        .route(
+            "/api/v1/mcp-grants",
+            axum::routing::get(commoncal_backend::mcp_grant_management::list_mcp_grants),
+        )
+        .route(
+            "/api/v1/mcp-grants",
+            axum::routing::post(commoncal_backend::mcp_grant_management::create_mcp_grant),
+        )
+        .route(
+            "/api/v1/mcp-grants/:id",
+            axum::routing::patch(commoncal_backend::mcp_grant_management::update_mcp_grant),
+        )
+        .route(
+            "/api/v1/mcp-grants/:id",
+            axum::routing::delete(commoncal_backend::mcp_grant_management::revoke_mcp_grant),
+        )
+        .route(
+            "/api/v1/mcp-grants/:id/resend",
+            axum::routing::post(
+                commoncal_backend::mcp_grant_management::resend_mcp_grant_confirmation,
+            ),
+        )
         .with_state(db_pool);
     router = router.merge(mcp_grant_router);
 
@@ -328,11 +390,13 @@ async fn run_seed(
 
     // Allow seed in production only when DEFAULT_ADMIN_PASSWORD is set.
     if config.environment == Environment::Production
-        && std::env::var("DEFAULT_ADMIN_PASSWORD").ok().filter(|v| !v.is_empty()).is_none()
+        && std::env::var("DEFAULT_ADMIN_PASSWORD")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_none()
     {
         return Err(
-            "seed command is not allowed in production without DEFAULT_ADMIN_PASSWORD"
-                .into(),
+            "seed command is not allowed in production without DEFAULT_ADMIN_PASSWORD".into(),
         );
     }
 

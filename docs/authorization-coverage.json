@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "suite": "backend/tests/authorization_regression.rs",
+  "principals": [
+    "owner", "manager", "editor", "viewer", "free_busy_viewer", "unrelated",
+    "suspended", "superadmin_without_acl"
+  ],
+  "endpointFamilies": {
+    "calendar": true,
+    "event": true,
+    "acl": true,
+    "view": true,
+    "feed": true,
+    "notification": true
+  },
+  "adversarialCases": [
+    "calendar identifier substitution",
+    "event-to-calendar mismatch",
+    "public token on authenticated endpoints",
+    "non-leaking denial responses"
+  ],
+  "missingAuthorizationRegression": {
+    "test": "missing_calendar_acl_is_denied_before_any_endpoint_can_authorize"
+  }
+}

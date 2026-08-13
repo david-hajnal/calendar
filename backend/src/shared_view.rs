@@ -753,6 +753,7 @@ struct PublicViewResolutionRecord {
     display_timezone: String,
     expires_at: i64,
     #[allow(dead_code)]
+    #[allow(unused_variables)]
     revoked_at: Option<i64>,
     view_id: i64,
     owner_user_id: i64,

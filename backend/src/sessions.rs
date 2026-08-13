@@ -296,6 +296,7 @@ pub struct AuthenticatedSession {
 
 impl AuthenticatedSession {
     #[allow(dead_code)]
+    #[allow(unused_variables)]
     pub(crate) fn new_for_test(
         id: i64,
         token: SecretToken,

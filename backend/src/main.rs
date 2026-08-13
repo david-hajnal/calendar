@@ -136,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     );
     let external_feed_service = ExternalFeedService::new(database.clone(), secret_key.clone());
-    let shared_view_service = SharedViewService::new_with_key(database, secret_key);
+    let shared_view_service = SharedViewService::new_with_key(database.clone(), secret_key);
 
     let write_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
         None
@@ -163,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
+    let mut router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
         readiness,
         invitation_consumer,
         login_service,
@@ -181,6 +181,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         public_rate_limiter,
         admin_rate_limiter,
     );
+
+    // Add MCP internal API routes (separate router with its own state).
+    let db_pool = database.clone();
+    let mcp_router = axum::Router::new()
+        .route("/internal/token-exchange", axum::routing::post(commoncal_backend::mcp_internal::token_exchange))
+        .route("/internal/mcp/users/:user_id/status", axum::routing::get(commoncal_backend::mcp_internal::get_user_status))
+        .route("/internal/mcp/users/:user_id/calendars", axum::routing::get(commoncal_backend::mcp_internal::list_calendars_for_mcp))
+        .route("/internal/mcp/calendars/:calendar_id/role/:user_id", axum::routing::get(commoncal_backend::mcp_internal::get_calendar_role))
+        .route("/internal/mcp/calendars/:calendar_id/events/:event_id", axum::routing::get(commoncal_backend::mcp_internal::get_event))
+        .route("/internal/mcp/calendars/:calendar_id/events/search", axum::routing::get(commoncal_backend::mcp_internal::search_events))
+        .route("/internal/mcp/events/:calendar_id", axum::routing::post(commoncal_backend::mcp_internal::create_event))
+        .route("/internal/mcp/events/:calendar_id/:event_id", axum::routing::patch(commoncal_backend::mcp_internal::update_event))
+        .route("/internal/mcp/delete-intents", axum::routing::post(commoncal_backend::mcp_internal::create_delete_intent))
+        .route("/internal/mcp/delete-intents/:intent_id", axum::routing::get(commoncal_backend::mcp_internal::get_delete_intent))
+        .route("/internal/mcp/delete-intents/:intent_id/commit", axum::routing::post(commoncal_backend::mcp_internal::commit_delete_intent))
+        .route("/internal/mcp/mcp-grants", axum::routing::get(commoncal_backend::mcp_internal::get_mcp_grants))
+        .route("/internal/mcp/idempotency/:operation_id", axum::routing::get(commoncal_backend::mcp_internal::check_idempotency))
+        .route("/internal/mcp/idempotency", axum::routing::post(commoncal_backend::mcp_internal::record_idempotency))
+        .route("/api/v1/calendars/:calendar_id/reminders", axum::routing::post(commoncal_backend::mcp_internal::create_reminder))
+        .with_state(db_pool);
+    router = router.merge(mcp_router);
+
+    // Add McpGrant management routes (frontend-facing).
+    let db_pool = database.clone();
+    let mcp_grant_router = axum::Router::new()
+        .route("/api/v1/mcp-grants", axum::routing::get(commoncal_backend::mcp_grant_management::list_mcp_grants))
+        .route("/api/v1/mcp-grants", axum::routing::post(commoncal_backend::mcp_grant_management::create_mcp_grant))
+        .route("/api/v1/mcp-grants/:id", axum::routing::patch(commoncal_backend::mcp_grant_management::update_mcp_grant))
+        .route("/api/v1/mcp-grants/:id", axum::routing::delete(commoncal_backend::mcp_grant_management::revoke_mcp_grant))
+        .route("/api/v1/mcp-grants/:id/resend", axum::routing::post(commoncal_backend::mcp_grant_management::resend_mcp_grant_confirmation))
+        .with_state(db_pool);
+    router = router.merge(mcp_grant_router);
+
     let frontend_directory =
         std::env::var("FRONTEND_DIR").unwrap_or_else(|_| "/app/frontend".into());
 

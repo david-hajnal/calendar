@@ -213,7 +213,7 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
 }
 
 function AuthenticatedShell() {
-  const { state, api, logout, reloadSession } = useAuth();
+  const { state, api, reloadSession } = useAuth();
   const location = useLocation();
 
   if (state.status === "loading") return <main className="app-page app-page--state" aria-busy="true"><section className="state-card"><p className="app-message app-message--status" role="status">Loading your session…</p></section></main>;

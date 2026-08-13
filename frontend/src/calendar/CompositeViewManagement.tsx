@@ -67,12 +67,12 @@ function calendar(value: unknown): Calendar | null {
   };
 }
 
-function parsePublication(value: unknown): Publication | null {
+function parsePublication(value: unknown, fallbackToken?: string): Publication | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.projection !== "string" || typeof raw.display_timezone !== "string" || typeof raw.expires_at !== "number" || typeof raw.version !== "number") return null;
   return {
-    token: typeof raw.token === "string" ? raw.token : "",
+    token: typeof raw.token === "string" ? raw.token : (fallbackToken ?? ""),
     projection: raw.projection as Publication["projection"],
     display_timezone: raw.display_timezone,
     expires_at: raw.expires_at,
@@ -129,18 +129,6 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     });
   };
 
-  const saveCalendars = () => {
-    if (!selectedView) return;
-    const entries = Object.entries(calendarColors).filter(([calId]) => selectedView.calendars.some((c) => c.calendar_id === Number(calId)));
-    const calendarsPayload = entries.map(([calendar_id, color]) => {
-      const existing = selectedView.calendars.find((c) => c.calendar_id === Number(calendar_id));
-      return { calendar_id: Number(calendar_id), position: existing ? existing.position : 0, color };
-    }).sort((a, b) => a.position - b.position);
-    api.request(`/api/v1/views/${selectedView.id}/calendars`, { method: "PUT", body: JSON.stringify({ calendars: calendarsPayload }) }).then((res) => {
-      if (res.ok) res.json().then((value) => { const updated = compositeView(value); if (updated) { setSelectedView(updated); setViews((prev) => prev.map((v) => v.id === updated.id ? updated : v)); } });
-    });
-  };
-
   const publishView = () => {
     if (!selectedView) return;
     const expires_at = expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1_000) : undefined;
@@ -153,7 +141,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     if (!selectedView || !publication) return;
     const expires_at = expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1_000) : publication.expires_at;
     api.request(`/api/v1/views/${selectedView.id}/publication`, { method: "PATCH", body: JSON.stringify({ projection: detailLevel, display_timezone: "UTC", expires_at }) }).then((res) => {
-      if (res.ok) res.json().then((value) => { const pub = parsePublication(value); if (pub) setPublication(pub); });
+      if (res.ok) res.json().then((value) => { const pub = parsePublication(value, publication.token); if (pub) setPublication(pub); });
     });
   };
 

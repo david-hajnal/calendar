@@ -165,7 +165,7 @@ describe("routing", () => {
   });
 
   it("shows the composite view management page at /shared", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/auth/session") {
         return new Response(JSON.stringify(session), { status: 200 });

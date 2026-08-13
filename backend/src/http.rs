@@ -53,6 +53,7 @@ use crate::{
     notification::NotificationService,
     public_rate_limit::PublicRateLimiterState,
     security::SessionCookieBuilder,
+    // rate_limiter types used in tests only
     sessions::{AuthenticatedSession, SessionError, SessionManager},
     shared_view::{
         PublicViewConfiguration, PublicViewProjection, SharedViewCalendarInput, SharedViewError,

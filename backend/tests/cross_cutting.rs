@@ -459,7 +459,7 @@ async fn version_conflict_includes_current_version() {
                 .header("sec-fetch-site", "same-origin")
                 .header("x-csrf-token", csrf.expose())
                 .body(Body::from(
-                    r##"{{"name":"X","color":"#000000","default_timezone":"UTC","default_event_visibility":"private","version":0}}"##.to_string()
+                    r##"{"name":"X","color":"#000000","default_timezone":"UTC","default_event_visibility":"private","version":0}"##.to_string()
                 ))
                 .unwrap(),
         )

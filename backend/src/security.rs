@@ -57,6 +57,7 @@ impl SecretKey {
     }
 
     #[allow(dead_code)]
+    #[allow(unused_variables)]
     fn apply_secret_stream(&self, nonce: &[u8], bytes: &mut [u8]) {
         for (counter, chunk) in bytes.chunks_mut(32).enumerate() {
             let mut mac =

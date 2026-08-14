@@ -1,10 +1,9 @@
-# The chart is intentionally single-replica because SQLite is stored on one PVC.
 replicaCount: 1
 
 image:
-  repository: commoncal
+  repository: ghcr.io/david-hajnal/calendar-core
   pullPolicy: IfNotPresent
-  tag: ""
+  tag: latest
 
 imagePullSecrets: []
 nameOverride: ""
@@ -37,23 +36,23 @@ service:
   type: ClusterIP
   port: 80
 
-domain: commoncal.example.com
+domain: cal.hajnal.space
 
 ingress:
   enabled: true
   className: traefik
-  annotations: {}
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
   hosts:
     - host: {{ .Values.domain }}
       paths:
         - path: /
           pathType: Prefix
-  tls: []
-  # Example TLS configuration:
-  # tls:
-  #   - secretName: commoncal-tls
-  #     hosts:
-  #       - commoncal.example.com
+  tls:
+    - secretName: commoncal-tls
+      hosts:
+        - {{ .Values.domain }}
 
 persistence:
   accessModes:
@@ -65,8 +64,6 @@ persistence:
 config:
   appOrigin: https://{{ .Values.domain }}
 
-# This Secret is deliberately not created by the chart. Create it separately,
-# for example: kubectl create secret generic commoncal-session --from-literal=SESSION_SECRET=...
 existingSecret:
   name: commoncal-session
   sessionSecretKey: SESSION_SECRET
@@ -84,9 +81,20 @@ terminationGracePeriodSeconds: 30
 networkPolicy:
   enabled: true
   ingress:
-    # k3s deploys Traefik in kube-system by default. Override this selector
-    # when using an ingress controller in a different namespace.
     from:
       - namespaceSelector:
           matchLabels:
             kubernetes.io/metadata.name: kube-system
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    size: 5Gi

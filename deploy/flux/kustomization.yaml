@@ -1,0 +1,20 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: commoncal-core
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: commoncal
+  targetNamespace: commoncal
+  path: ./deploy/flux/overlays/production
+  prune: true
+  wait: true
+  timeout: 10m
+  images:
+    - name: ghcr.io/david-hajnal/calendar-core
+      newName: ghcr.io/david-hajnal/calendar-core
+    - name: ghcr.io/david-hajnal/calendar-mcp
+      newName: ghcr.io/david-hajnal/calendar-mcp

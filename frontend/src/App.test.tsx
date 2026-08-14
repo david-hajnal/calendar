@@ -98,7 +98,7 @@ describe("authentication pages", () => {
     );
     renderAt("/login", fetcher);
 
-    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "unknown@example.test" } });
+    fireEvent.change(screen.getByRole("textbox", { name: /Email address/ }), { target: { value: "unknown@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Check your email for a login link if the account is eligible.");

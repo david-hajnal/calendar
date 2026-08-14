@@ -93,6 +93,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
   const [loading, setLoading] = useState(true);
   const [calendarsLoaded, setCalendarsLoaded] = useState(false);
   const [pendingCalendarId, setPendingCalendarId] = useState<number | null>(null);
+  const [unsavedCalendarChanges, setUnsavedCalendarChanges] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -162,6 +163,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     setSelectedView(updated);
     setCalendarColors((prev) => ({ ...prev, [calendarId]: cal.color }));
     setViews((prev) => prev.map((v) => v.id === updated.id ? updated : v));
+    setUnsavedCalendarChanges(true);
   };
 
   const removeCalendar = (calendarId: number) => {
@@ -171,6 +173,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     setSelectedView(updated);
     setCalendarColors((prev) => { const next = { ...prev }; delete next[calendarId]; return next; });
     setViews((prev) => prev.map((v) => v.id === updated.id ? updated : v));
+    setUnsavedCalendarChanges(true);
   };
 
   const moveCalendar = (calendarId: number, direction: "up" | "down") => {
@@ -186,11 +189,19 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     const updated = { ...selectedView, calendars: newCalendars };
     setSelectedView(updated);
     setViews((prev) => prev.map((v) => v.id === updated.id ? updated : v));
+    setUnsavedCalendarChanges(true);
+  };
+
+  const saveCalendars = () => {
+    if (!selectedView) return;
+    api.request(`/api/v1/views/${selectedView.id}/calendars`, { method: "PUT", body: JSON.stringify({ calendars: selectedView.calendars.map((c) => ({ calendar_id: c.calendar_id, position: c.position, color: calendarColors[c.calendar_id] || c.color })) }) }).then((res) => {
+      if (res.ok) res.json().then((value) => { const updated = compositeView(value); if (updated) { setSelectedView(updated); setViews((prev) => prev.map((v) => v.id === updated.id ? updated : v)); setUnsavedCalendarChanges(false); } });
+    });
   };
 
   const isPublished = (view: CompositeView) => publication && publication.token && view.calendars.length > 0;
 
-  const sortedCalendars = calendars.filter((c) => !c.archived).sort((a, b) => a.name.localeCompare(b.name));
+  const sortedCalendars = calendars.filter((c) => !c.archived && c.access === "details").sort((a, b) => a.name.localeCompare(b.name));
   const selectedCalendars = selectedView ? [...selectedView.calendars].sort((a, b) => a.position - b.position) : [];
 
   const availableCalendars = sortedCalendars.filter((c) => !selectedCalendars.some((sc) => sc.calendar_id === c.id));
@@ -204,7 +215,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
           <span className="material-symbols-outlined" style={{ fontSize: "48px", color: "var(--color-on-surface-variant)" }}>view_agenda</span>
           <h2 className="typography-headline-md" style={{ color: "var(--color-on-surface)", margin: "0.75rem 0 0.5rem" }}>No composite views yet.</h2>
           <p className="typography-body-sm" style={{ color: "var(--color-on-surface-variant)", margin: "0 0 1rem" }}>Create your first composite view to combine multiple calendars.</p>
-          <button type="button" className="btn btn--primary" onClick={() => { setSelectedView({ id: 0, owner_user_id: 0, name: "", version: 0, created_at: 0, updated_at: 0, calendars: [] }); setEditingName(""); setCalendarColors({}); setPublication(null); setDetailLevel("full_details"); setExpiresAt(""); }}>New composite view</button>
+          <button type="button" className="btn btn--primary" onClick={() => { setSelectedView({ id: 0, owner_user_id: 0, name: "", version: 0, created_at: 0, updated_at: 0, calendars: [] }); setEditingName(""); setCalendarColors({}); setPublication(null); setDetailLevel("full_details"); setExpiresAt(""); if (!calendarsLoaded) fetchCalendars(); }}>New composite view</button>
         </div> : <ul role="list" aria-label="Composite views" className="composite-view-management__list-items">
           {views.map((view) => <li key={view.id} className={`composite-view-management__card ${selectedView?.id === view.id ? "composite-view-management__card--active" : ""}`}>
             <div className="composite-view-management__card-content">
@@ -260,6 +271,9 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
                   </li>;
                 })}
               </ul>}
+              {unsavedCalendarChanges && <div className="composite-view-management__save-bar">
+                <button type="button" className="btn btn--primary btn--sm" onClick={saveCalendars}>Save view calendars</button>
+              </div>}
               {availableCalendars.length > 0 && <div className="composite-view-management__add-calendar">
                 <select aria-label="Add calendar" className="composite-view-management__select" onChange={(e) => { if (e.target.value) { setPendingCalendarId(Number(e.target.value)); e.target.value = ""; } }}>
                   <option value="">Add calendar</option>

@@ -72,7 +72,7 @@ function roleLabel(role: string): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDenied, triggerRef }: { api: ApiClient; calendar: Calendar; onClose: () => void; onCalendarChanged: (calendar: Calendar) => void; onAccessDenied: () => void; triggerRef: React.RefObject<HTMLButtonElement | null> }) {
+function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDenied, triggerEl }: { api: ApiClient; calendar: Calendar; onClose: () => void; onCalendarChanged: (calendar: Calendar) => void; onAccessDenied: () => void; triggerEl: HTMLButtonElement | null }) {
   const [entries, setEntries] = useState<CalendarAclEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState("");
@@ -284,12 +284,13 @@ function CalendarFormModal({ editing, settings, setSettings, onSave, onCancel, s
   </div>;
 }
 
-function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete }: {
+function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete, triggerRef }: {
   calendar: Calendar;
   onEdit: () => void;
   onShare: () => void;
   onArchive: () => void;
   onDelete?: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const archived = !!calendar.archived;
   const color = calendar.color || "#3b82f6";
@@ -311,7 +312,7 @@ function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete }: {
           {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={onEdit} aria-label={`Edit ${calendar.name ?? "calendar"}`} title="Edit">
             <span className="material-symbols-outlined">edit</span>
           </button>}
-          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={onShare} aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} title="Sharing">
+          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={(e) => { triggerRef.current = e.currentTarget; onShare(); }} aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} title="Sharing">
             <span className="material-symbols-outlined">group</span>
           </button>}
         </div>
@@ -433,8 +434,9 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
     <div className="calendar-grid">
       {activeCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
         onEdit={() => openEdit(calendar)}
-        onShare={() => { setSharing(calendar); queueMicrotask(() => shareTrigger.current?.focus()); }}
+        onShare={() => { setSharing(calendar); }}
         onArchive={() => void setArchived(calendar, true)}
+        triggerRef={shareTrigger}
       />)}
     </div>
 
@@ -442,8 +444,9 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
     <div className="calendar-grid">
       {archivedCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
         onEdit={() => openEdit(calendar)}
-        onShare={() => { setSharing(calendar); queueMicrotask(() => shareTrigger.current?.focus()); }}
+        onShare={() => { setSharing(calendar); }}
         onArchive={() => void setArchived(calendar, false)}
+        triggerRef={shareTrigger}
         onDelete={() => void deleteCalendar(calendar)}
       />)}
     </div>
@@ -458,6 +461,6 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
       </button>
     </div>}
 
-    {sharing && <SharingDialog api={api} calendar={sharing} onClose={() => setSharing(null)} onCalendarChanged={(calendar) => { replace(calendar); setSharing(calendar); }} onAccessDenied={() => { void refreshAfterAccessChange(); }} triggerRef={shareTrigger} />}
+    {sharing && <SharingDialog api={api} calendar={sharing} onClose={() => setSharing(null)} onCalendarChanged={(calendar) => { replace(calendar); setSharing(calendar); }} onAccessDenied={() => { void refreshAfterAccessChange(); }} triggerEl={shareTrigger.current} />}
   </section>;
 }

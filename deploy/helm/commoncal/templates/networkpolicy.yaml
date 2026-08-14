@@ -11,6 +11,20 @@ spec:
       {{- include "commoncal.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 443
+    - ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
   ingress:
     - ports:
         - protocol: TCP

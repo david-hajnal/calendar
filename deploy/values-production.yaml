@@ -1,0 +1,82 @@
+# Production values for commoncal - override with --set or values files
+# Usage: helm upgrade --install commoncal ./deploy/helm/commoncal -f values-production.yaml --namespace production
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/david-hajnal/calendar-core
+  pullPolicy: IfNotPresent
+  # tag: ""  # defaults to Chart.appVersion
+
+service:
+  type: ClusterIP
+  port: 80
+
+domain: cal.hajnal.space
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  hosts:
+    - host: cal.hajnal.space
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: commoncal-tls
+      hosts:
+        - cal.hajnal.space
+
+persistence:
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  storageClass: ""
+  annotations: {}
+
+config:
+  appOrigin: https://cal.hajnal.space
+
+# Secret created externally:
+# kubectl create secret generic commoncal-session \
+#   --from-literal=SESSION_SECRET=<your-secret> \
+#   --from-literal=BACKUP_ENCRYPTION_KEY_HEX=<your-key> \
+#   -n production
+existingSecret:
+  name: commoncal-session
+  sessionSecretKey: SESSION_SECRET
+  backupEncryptionKeyHex: BACKUP_ENCRYPTION_KEY_HEX
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+terminationGracePeriodSeconds: 30
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    size: 5Gi
+
+networkPolicy:
+  enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system

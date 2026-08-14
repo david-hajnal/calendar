@@ -1,6 +1,9 @@
 backend/target/
 frontend/dist/
 node_modules/
+
+# Local env files
+deploy/.env
 *.tsbuildinfo
 e2e/test-results/
 e2e/playwright-report/

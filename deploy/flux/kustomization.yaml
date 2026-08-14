@@ -18,3 +18,5 @@ spec:
       newName: ghcr.io/david-hajnal/calendar-core
     - name: ghcr.io/david-hajnal/calendar-mcp
       newName: ghcr.io/david-hajnal/calendar-mcp
+  dependsOn:
+    - name: flux-system

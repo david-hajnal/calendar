@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "commoncal.fullname" . }}
+  name: {{ include "commoncal-mcp.fullname" . }}
   labels:
-    {{- include "commoncal.labels" . | nindent 4 }}
+    {{- include "commoncal-mcp.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -26,7 +26,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "commoncal.fullname" $ }}
+                name: {{ include "commoncal-mcp.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}

@@ -27,6 +27,13 @@ fi
 NAMESPACE="${NAMESPACE:-production}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load .env file if it exists
+if [[ -f "$DEPLOY_DIR/.env" ]]; then
+  set -a
+  source "$DEPLOY_DIR/.env"
+  set +a
+fi
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"

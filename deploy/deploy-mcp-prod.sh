@@ -15,12 +15,19 @@
 
 set -euo pipefail
 
+# Load .env file if it exists
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$DEPLOY_DIR/.env" ]]; then
+  set -a
+  source "$DEPLOY_DIR/.env"
+  set +a
+fi
+
 # Fail fast if required env vars are missing
 : "${CALENDAR_API_URL:?ERROR: CALENDAR_API_URL is required. Export it: export CALENDAR_API_URL=http://commoncal:3000/api}"
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"
-DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal-mcp"
 VALUES_FILE="$DEPLOY_DIR/values-mcp-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"

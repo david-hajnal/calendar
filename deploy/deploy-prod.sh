@@ -81,7 +81,6 @@ helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
   --reset-values
-  --wait
   --values "$VALUES_FILE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
@@ -98,5 +97,13 @@ if ((dry_run)); then
 fi
 
 helm "${helm_args[@]}"
+
+if ((!dry_run)); then
+  echo "==> Waiting for the $RELEASE StatefulSet rollout..."
+  kubectl rollout status statefulset \
+    --selector "app.kubernetes.io/instance=$RELEASE" \
+    --namespace "$NAMESPACE" \
+    --timeout=15m
+fi
 
 echo "==> Done. Release: $RELEASE, Namespace: $NAMESPACE"

@@ -68,7 +68,12 @@ assert_helm_argument commoncal
 assert_helm_argument "$repository_root/deploy/helm/commoncal"
 assert_helm_argument "$repository_root/deploy/values-production.yaml"
 assert_helm_argument --reset-values
-assert_helm_argument --wait
+assert_no_helm_argument --wait
+
+if ! grep -F -- 'rollout status statefulset --selector app.kubernetes.io/instance=commoncal --namespace production --timeout=15m' "$fixture/kubectl.log" >/dev/null; then
+  echo "core deploy should wait for the StatefulSet rollout" >&2
+  exit 1
+fi
 
 DRY_RUN=0 run_deploy >/dev/null
 if grep -Fx -- --dry-run "$fixture/helm.log" >/dev/null; then

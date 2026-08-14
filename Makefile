@@ -43,6 +43,6 @@ check: check-no-yarn ci-script-test deploy-script-test backend-check backend-tes
 # Production deployment. Requires:
 #   SESSION_SECRET        - session encryption key
 #   BACKUP_ENCRYPTION_KEY_HEX - hex-encoded backup encryption key
-# Optional: IMAGE_TAG, DOMAIN, NAMESPACE, HELM_RELEASE_NAME, DRY_RUN=1
+# Required: IMAGE_TAG. Optional: DOMAIN, NAMESPACE, HELM_RELEASE_NAME, DRY_RUN=1
 deploy:
 	deploy/deploy-prod.sh

@@ -80,6 +80,8 @@ echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
+  --reset-values
+  --wait
   --values "$VALUES_FILE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"

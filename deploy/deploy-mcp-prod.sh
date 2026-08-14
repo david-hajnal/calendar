@@ -65,6 +65,8 @@ echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
+  --reset-values
+  --wait
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"

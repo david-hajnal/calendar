@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/david-hajnal/calendar-core
   pullPolicy: IfNotPresent
-  # tag: ""  # defaults to Chart.appVersion
+  # tag is supplied from deploy/.env by deploy-prod.sh
 
 service:
   type: ClusterIP

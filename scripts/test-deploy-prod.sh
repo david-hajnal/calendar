@@ -67,6 +67,8 @@ assert_helm_argument upgrade
 assert_helm_argument commoncal
 assert_helm_argument "$repository_root/deploy/helm/commoncal"
 assert_helm_argument "$repository_root/deploy/values-production.yaml"
+assert_helm_argument --reset-values
+assert_helm_argument --wait
 
 DRY_RUN=0 run_deploy >/dev/null
 if grep -Fx -- --dry-run "$fixture/helm.log" >/dev/null; then
@@ -127,4 +129,6 @@ PATH="$fixture/bin:$PATH" \
   "$env_deploy_dir/deploy-mcp-prod.sh" >/dev/null
 assert_helm_argument image.tag=from-dot-env
 assert_helm_argument domain=calendar.example.test
+assert_helm_argument --reset-values
+assert_helm_argument --wait
 assert_no_helm_argument 'ingress.hosts[0].host=calendar.example.test'

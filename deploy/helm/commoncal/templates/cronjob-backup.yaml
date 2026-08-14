@@ -20,7 +20,7 @@ spec:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
             - name: backup
-              image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+              image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command:
                 - /usr/local/bin/commoncal-backend

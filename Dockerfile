@@ -18,7 +18,7 @@ RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates busybox-static \
+    && apt-get install -y --no-install-recommends ca-certificates busybox-static sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system commoncal \
     && useradd --system --gid commoncal --home-dir /app --shell /usr/sbin/nologin commoncal \

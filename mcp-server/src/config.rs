@@ -166,6 +166,10 @@ impl Config {
                 errors.push(ConfigError::new(
                     "MCP_OAUTH_ISSUER must not contain placeholder domain 'commoncal.tld'",
                 ));
+            } else if raw.oauth_issuer.starts_with("http://") {
+                errors.push(ConfigError::new(
+                    "MCP_OAUTH_ISSUER must use HTTPS in production",
+                ));
             }
 
             if raw.internal_api_base.is_empty() {
@@ -207,6 +211,12 @@ impl Config {
             if raw.public_resource_url.as_ref().map_or(true, |u| u.is_empty()) {
                 errors.push(ConfigError::new(
                     "MCP_PUBLIC_RESOURCE_URL is required in production",
+                ));
+            }
+
+            if raw.database_path.as_os_str().is_empty() {
+                errors.push(ConfigError::new(
+                    "MCP_DATABASE_PATH is required in production",
                 ));
             }
         }
@@ -312,6 +322,7 @@ pub fn current_time_secs() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn set_env(name: &str, val: &str) {
         unsafe { env::set_var(name, val) };
@@ -330,6 +341,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_env_default_app_env() {
         let orig = env::var("APP_ENV").ok();
         remove_env("APP_ENV");
@@ -347,6 +359,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_env_production() {
         set_env("APP_ENV", "production");
         let raw = Config::parse_env();
@@ -355,16 +368,27 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_missing_oauth_issuer() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
         set_env("APP_ENV", "production");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("MCP_OAUTH_ISSUER")));
         remove_env("APP_ENV");
+        remove_env("MCP_DATABASE_PATH");
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_placeholder_oauth_issuer() {
+        remove_env("MCP_OAUTH_ISSUER");
         set_env("APP_ENV", "production");
         set_env("MCP_OAUTH_ISSUER", "https://auth.commoncal.tld");
         let raw = Config::parse_env();
@@ -375,16 +399,46 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_production_missing_api_key() {
+    #[serial]
+    fn test_validate_production_oauth_issuer_http_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
         set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "http://auth.example.com");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("HTTPS")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_missing_api_key() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("MCP_INTERNAL_API_KEY")));
         remove_env("APP_ENV");
+        remove_env("MCP_DATABASE_PATH");
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_placeholder_api_key() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
         set_env("APP_ENV", "production");
         set_env("MCP_INTERNAL_API_KEY", "mcp-internal-dev-key");
         let raw = Config::parse_env();
@@ -395,7 +449,15 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_placeholder_secret() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
         set_env("APP_ENV", "production");
         set_env("MCP_SESSION_SECRET", "mcp-session-dev-secret-change-in-production");
         let raw = Config::parse_env();
@@ -406,6 +468,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_placeholder_api_base() {
         set_env("APP_ENV", "production");
         set_env("MCP_INTERNAL_API_BASE", "https://commoncal-core.internal");
@@ -417,6 +480,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_development_accepts_defaults() {
         let orig = remove_env_safe("APP_ENV");
         let raw = Config::parse_env();
@@ -428,6 +492,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_missing_bind_address() {
         set_env("APP_ENV", "production");
         set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
@@ -436,6 +501,7 @@ mod tests {
         set_env("MCP_SESSION_SECRET", "real-secret-12345");
         set_env("MCP_DOMAIN", "mcal.example.com");
         set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         remove_env("BIND_ADDRESS");
         let raw = Config::parse_env();
         let result = Config::validate(raw);
@@ -447,10 +513,19 @@ mod tests {
         remove_env("MCP_SESSION_SECRET");
         remove_env("MCP_DOMAIN");
         remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_bind_address_malformed() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("BIND_ADDRESS");
         set_env("APP_ENV", "production");
         set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
         set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
@@ -473,14 +548,19 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_missing_mcp_domain() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
         set_env("APP_ENV", "production");
         set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
         set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
         set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
         set_env("MCP_SESSION_SECRET", "real-secret-12345");
-        remove_env("MCP_DOMAIN");
-        remove_env("MCP_PUBLIC_RESOURCE_URL");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("MCP_DOMAIN")));
@@ -489,9 +569,12 @@ mod tests {
         remove_env("MCP_INTERNAL_API_BASE");
         remove_env("MCP_INTERNAL_API_KEY");
         remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
     }
 
     #[test]
+    #[serial]
     fn test_validate_production_missing_public_resource_url() {
         set_env("APP_ENV", "production");
         set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
@@ -512,6 +595,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_bind_address_valid() {
         let addr: SocketAddr = "0.0.0.0:3001".parse().unwrap();
         assert_eq!(addr.ip().to_string(), "0.0.0.0");
@@ -519,8 +603,41 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn test_validate_production_missing_database_path() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("MCP_DATABASE_PATH")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+    }
+
+    #[test]
+    #[serial]
     fn test_redacted_debug_excludes_secrets() {
         let orig = remove_env_safe("APP_ENV");
+        remove_env_safe("MCP_DATABASE_PATH");
         let raw = Config::parse_env();
         let config = Config::validate(raw).unwrap();
         let debug_str = format!("{:?}", config);

@@ -7,7 +7,9 @@ describe("Vite development server", () => {
   it("proxies API requests to the local backend", async () => {
     const { default: config } = await import("./vite.config.js");
     const devConfig = typeof config === "function" ? await Promise.resolve(config({ mode: "development", command: "serve" })) : config;
-    const proxyTarget = devConfig.server?.proxy?.["/api"]?.target;
+    const proxyValue = devConfig.server?.proxy;
+    const proxyEntry = typeof proxyValue === "object" ? proxyValue["/api"] : undefined;
+    const proxyTarget = typeof proxyEntry === "object" && proxyEntry !== null && "target" in proxyEntry ? (proxyEntry as { target?: string }).target : undefined;
     if (proxyTarget) {
       expect(proxyTarget).toBe("http://127.0.0.1:3000");
     }

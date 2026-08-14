@@ -1,5 +1,7 @@
+# Build outputs
 backend/target/
 frontend/dist/
+mcp-server/target/
 node_modules/
 
 # Local env files

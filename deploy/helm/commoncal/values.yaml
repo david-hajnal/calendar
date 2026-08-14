@@ -44,7 +44,7 @@ ingress:
   className: traefik
   annotations: {}
   hosts:
-    - host: "{{ .Values.domain }}"
+    - host: "example.com"
       paths:
         - path: /
           pathType: Prefix

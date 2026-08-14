@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# Fail fast if required env vars are missing
+: "${SESSION_SECRET:?ERROR: SESSION_SECRET is required. Export it: export SESSION_SECRET=\$(openssl rand -hex 32)}"
+: "${BACKUP_ENCRYPTION_KEY_HEX:?ERROR: BACKUP_ENCRYPTION_KEY_HEX is required. Export it: export BACKUP_ENCRYPTION_KEY_HEX=\$(openssl rand -hex 32)}"
+
 NAMESPACE="${NAMESPACE:-production}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$(cd "$(dirname "$0")" && pwd)/helm/commoncal"
@@ -23,19 +27,6 @@ DOMAIN="${DOMAIN:-cal.hajnal.space}"
 MCP_DOMAIN="${MCP_DOMAIN:-$DOMAIN}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
-
-# Validate required secrets
-if [ -z "${SESSION_SECRET:-}" ]; then
-  echo "ERROR: SESSION_SECRET is not set" >&2
-  echo "Export it: export SESSION_SECRET=\$(openssl rand -hex 32)" >&2
-  exit 1
-fi
-
-if [ -z "${BACKUP_ENCRYPTION_KEY_HEX:-}" ]; then
-  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX is not set" >&2
-  echo "Export it: export BACKUP_ENCRYPTION_KEY_HEX=\$(openssl rand -hex 32)" >&2
-  exit 1
-fi
 
 # Create or update the secret
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."

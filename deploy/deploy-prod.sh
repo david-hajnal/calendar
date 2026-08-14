@@ -81,8 +81,7 @@ helm_args=(
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"
   --set-string "ingress.tls[0].hosts[0]=$DOMAIN"
   --set-string existingSecret.name=commoncal-session
-  --wait
-  --timeout=10m
+  --timeout=15m
 )
 
 if ((dry_run)); then

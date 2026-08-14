@@ -67,7 +67,6 @@ helm_args=(
   --namespace "$NAMESPACE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
-  --set-string "ingress.hosts[0].host=$DOMAIN"
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"
   --set-string "ingress.tls[0].hosts[0]=$DOMAIN"
   --set-string "env.CALENDAR_API_URL=$CALENDAR_API_URL"

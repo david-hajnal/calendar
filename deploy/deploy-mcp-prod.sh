@@ -63,24 +63,10 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" ]]; then
   exit 1
 fi
 
-# Build and deploy Docker image if SERVER is specified
-if [[ -n "$SERVER" ]]; then
-  echo "==> Building MCP Docker image..."
-  docker build -f "$ROOT_DIR/mcp-server/Dockerfile" -t "calendar-mcp:$IMAGE_TAG" "$ROOT_DIR/mcp-server"
-  
-  echo "==> Saving image to tar..."
-  IMAGE_TAR="/tmp/calendar-mcp-${IMAGE_TAG}.tar"
-  docker save "calendar-mcp:$IMAGE_TAG" -o "$IMAGE_TAR"
-  
-  echo "==> Copying image to server $SERVER..."
-  scp "$IMAGE_TAR" "root@${SERVER}:/tmp/calendar-mcp-${IMAGE_TAG}.tar"
-  
-  echo "==> Loading image on server..."
-  ssh "root@${SERVER}" "sudo ctr images import /tmp/calendar-mcp-${IMAGE_TAG}.tar --snapshotter native && rm /tmp/calendar-mcp-${IMAGE_TAG}.tar"
-  
-  rm -f "$IMAGE_TAR"
-  echo "==> Image deployed to server"
-fi
+# Build MCP Docker image
+echo "==> Building MCP Docker image '$IMAGE_TAG'..."
+docker build -f "$ROOT_DIR/mcp-server/Dockerfile" -t "calendar-mcp:$IMAGE_TAG" "$ROOT_DIR/mcp-server"
+echo "==> Image built successfully"
 
 # Deploy with Helm
 echo "==> Deploying $RELEASE to $NAMESPACE..."

@@ -69,24 +69,10 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" || ! -f "$VALUES_FILE" ]]; then
   exit 1
 fi
 
-# Build and deploy Docker image if SERVER is specified
-if [[ -n "$SERVER" ]]; then
-  echo "==> Building Docker image..."
-  docker build -t "commoncal:$IMAGE_TAG" "$ROOT_DIR"
-  
-  echo "==> Saving image to tar..."
-  IMAGE_TAR="/tmp/commoncal-${IMAGE_TAG}.tar"
-  docker save "commoncal:$IMAGE_TAG" -o "$IMAGE_TAR"
-  
-  echo "==> Copying image to server $SERVER..."
-  scp "$IMAGE_TAR" "root@${SERVER}:/tmp/commoncal-${IMAGE_TAG}.tar"
-  
-  echo "==> Loading image on server..."
-  ssh "root@${SERVER}" "sudo ctr images import /tmp/commoncal-${IMAGE_TAG}.tar --snapshotter native && rm /tmp/commoncal-${IMAGE_TAG}.tar"
-  
-  rm -f "$IMAGE_TAR"
-  echo "==> Image deployed to server"
-fi
+# Build Docker image
+echo "==> Building Docker image '$IMAGE_TAG'..."
+docker build -t "commoncal:$IMAGE_TAG" "$ROOT_DIR"
+echo "==> Image built successfully"
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
 kubectl create secret generic commoncal-session \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \

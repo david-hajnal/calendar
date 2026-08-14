@@ -63,7 +63,7 @@ persistence:
   annotations: {}
 
 config:
-  appOrigin: "https://{{ .Values.domain }}"
+  appOrigin: "https://example.com"
 
 # This Secret is deliberately not created by the chart. Create it separately,
 # for example: kubectl create secret generic commoncal-session --from-literal=SESSION_SECRET=...

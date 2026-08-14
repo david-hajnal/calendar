@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
 - gotk-components.yaml
 - gotk-sync.yaml
+- image-repository-core.yaml
+- image-repository-mcp.yaml
+- image-policy-core.yaml
+- image-policy-mcp.yaml
+- image-update-core.yaml
+- image-update-mcp.yaml

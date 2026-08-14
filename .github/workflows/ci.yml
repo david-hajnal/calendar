@@ -58,3 +58,28 @@ jobs:
 
       - name: Build frontend
         run: pnpm --dir frontend build
+
+  deploy-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Run deploy validation
+        run: sh scripts/validate-deploy.sh
+
+      - name: Check no mutable tags in production
+        run: |
+          if grep -rn 'tag:.*latest' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then
+            echo "ERROR: Found 'latest' tag in production manifests"
+            exit 1
+          fi
+          if grep -rn 'tag:.*"main"' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then
+            echo "ERROR: Found 'main' tag in production manifests"
+            exit 1
+          fi
+        shell: bash

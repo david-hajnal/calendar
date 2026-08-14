@@ -39,18 +39,11 @@ fi
 
 # Create or update the secret
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
-if kubectl get secret commoncal-session -n "$NAMESPACE" &>/dev/null; then
-  kubectl patch secret commoncal-session -n "$NAMESPACE" \
-    --type=json \
-    -p="$(jq -n --arg s "$SESSION_SECRET" --arg b "$BACKUP_ENCRYPTION_KEY_HEX" \
-      '{data: {SESSION_SECRET: ($s | @base64), BACKUP_ENCRYPTION_KEY_HEX: ($b | @base64)}}')" \
-    -n "$NAMESPACE"
-else
-  kubectl create secret generic commoncal-session \
-    --from-literal=SESSION_SECRET="$SESSION_SECRET" \
-    --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
-    -n "$NAMESPACE"
-fi
+kubectl create secret generic commoncal-session \
+  --from-literal=SESSION_SECRET="$SESSION_SECRET" \
+  --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
+  -n "$NAMESPACE" \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 # Build image
 echo "==> Building image..."

@@ -34,8 +34,8 @@ async fn test_dpop_proof_validation() {
 /// Integration test: InternalClient creates correctly.
 #[tokio::test]
 async fn test_internal_client_creation() {
-    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string());
-    assert_eq!(client.api_base(), "https://api.commoncal.tld");
+    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string()).unwrap();
+    assert_eq!(client.api_base(), "https://api.commoncal.tld/");
     assert_eq!(client.api_key(), "test-key");
 }
 

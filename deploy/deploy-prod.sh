@@ -7,7 +7,7 @@
 #   IMAGE_TAG                   - Published container image tag
 #
 # Optional env vars:
-#   DOMAIN                      - Production domain (default: cal.hajnal.space)
+#   CORE_DOMAIN / DOMAIN        - Production core domain (default: cal.hajnal.space)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal)
 #   NAMESPACE                   - Kubernetes namespace (default: production)
@@ -38,6 +38,7 @@ NAMESPACE="${NAMESPACE:-production}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
+CORE_DOMAIN="${CORE_DOMAIN:-$DOMAIN}"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 

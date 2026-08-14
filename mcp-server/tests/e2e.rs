@@ -265,8 +265,8 @@ async fn test_reminder_set_flow() {
 /// E2E test: InternalClient builds correct URLs.
 #[tokio::test]
 async fn test_internal_client_urls() {
-    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string());
-    assert_eq!(client.api_base(), "https://api.commoncal.tld");
+    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string()).unwrap();
+    assert_eq!(client.api_base(), "https://api.commoncal.tld/");
     assert_eq!(client.api_key(), "test-key");
 }
 

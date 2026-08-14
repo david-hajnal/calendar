@@ -6,7 +6,7 @@
 #   IMAGE_TAG         - Published container image tag
 #
 # Optional env vars:
-#   DOMAIN                      - Production domain (default: cal.hajnal.space)
+#   MCP_DOMAIN                  - Production MCP domain (default: mcal.hajnal.space)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal-mcp)
 #   NAMESPACE                   - Kubernetes namespace (default: commoncal)
@@ -30,7 +30,7 @@ NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal-mcp"
 VALUES_FILE="$DEPLOY_DIR/values-mcp-production.yaml"
-DOMAIN="${DOMAIN:-cal.hajnal.space}"
+MCP_DOMAIN="${MCP_DOMAIN:-mcal.hajnal.space}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 case "${DRY_RUN:-0}" in
@@ -68,9 +68,9 @@ helm_args=(
   --reset-values
   --wait
   --set-string image.tag="$IMAGE_TAG"
-  --set-string domain="$DOMAIN"
+  --set-string domain="$MCP_DOMAIN"
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"
-  --set-string "ingress.tls[0].hosts[0]=$DOMAIN"
+  --set-string "ingress.tls[0].hosts[0]=$MCP_DOMAIN"
   --set-string "env.CALENDAR_API_URL=$CALENDAR_API_URL"
   --timeout=15m
 )

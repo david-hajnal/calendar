@@ -20,11 +20,11 @@ pub struct Gateway {
 }
 
 impl Gateway {
-    pub fn new(config: Config, db_pool: SqlitePool) -> Self {
+    pub fn new(config: Config, db_pool: SqlitePool) -> Result<Self, Vec<crate::config::ConfigError>> {
         let internal_client = InternalClient::new(
             config.internal_api_base.clone(),
             config.internal_api_key.clone(),
-        );
+        ).map_err(|e| vec![e])?;
 
         let rate_limiter = if config.rate_limit_enabled {
             Arc::new(RateLimiter::new())
@@ -32,12 +32,12 @@ impl Gateway {
             Arc::new(RateLimiter::disabled())
         };
 
-        Self {
+        Ok(Self {
             config,
             db_pool,
             internal_client,
             rate_limiter,
-        }
+        })
     }
 
     /// Extract the OAuth bearer token from the request Authorization header.
@@ -71,8 +71,8 @@ impl Gateway {
         &self,
         token: &str,
     ) -> Result<TokenValidationResult, axum::http::Response<axum::body::Body>> {
-        let resource = &self.config.oauth_issuer;
-        let result = oauth::validate_access_token(token, resource, resource)
+        let resource = &self.config.public_resource_url;
+        let result = oauth::validate_access_token(token, &self.config.oauth_issuer, resource)
             .await
             .map_err(|e| {
                 tracing::warn!(error = %e, "token validation failed");

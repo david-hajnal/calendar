@@ -13,6 +13,28 @@
       "properties": {
         "size": { "type": "string", "minLength": 1 }
       }
+    },
+    "existingSecret": {
+      "type": "object",
+      "description": "Kubernetes Secret containing MCP_INTERNAL_API_KEY and MCP_SESSION_SECRET.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "bindAddress": {
+      "type": "string",
+      "description": "Address and port to bind on.",
+      "minLength": 1
+    },
+    "mcpDomain": {
+      "type": "string",
+      "description": "The public MCP domain name.",
+      "minLength": 1
+    },
+    "publicResourceUrl": {
+      "type": "string",
+      "description": "The public MCP resource URL for OAuth.",
+      "minLength": 1
     }
   }
 }

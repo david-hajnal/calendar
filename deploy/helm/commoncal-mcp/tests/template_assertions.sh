@@ -39,7 +39,7 @@ grep -q 'claimName: commoncal-mcp-data' "$rendered"
 grep -q 'mountPath: /app/data' "$rendered"
 grep -q 'containerPort: 3001' "$rendered"
 grep -q 'mountPath: /app/tmp' "$rendered"
-grep -q 'host: "cal.hajnal.space"' "$rendered"
+grep -q 'host: "mcp.example.com"' "$rendered"
 grep -q 'path: "/mcp"' "$rendered"
 
 if helm template commoncal-mcp "$chart_dir" --set replicaCount=2 >/dev/null 2>&1; then

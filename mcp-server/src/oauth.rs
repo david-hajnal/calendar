@@ -139,7 +139,7 @@ pub async fn validate_access_token(
     // Build validation rules.
     let mut validation = Validation::new(alg_from_jwk(&jwk)?);
     validation.set_issuer(&[issuer]);
-    let audience = extract_audience(&jwk)?;
+    let audience = extract_audience(resource);
     validation.set_audience(&[&audience]);
     validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
     validation.leeway = 30;
@@ -357,12 +357,9 @@ fn alg_from_jwk(jwk: &Jwk) -> Result<Algorithm, TokenError> {
     }
 }
 
-/// Extract the audience from the token claims.
-fn extract_audience(jwk: &Jwk) -> Result<String, TokenError> {
-    // The audience is determined by the JWKS issuer, not the token.
-    // Return a placeholder — real audience extraction happens in validate_access_token.
-    let _ = jwk;
-    Ok("commoncal-mcp".to_string())
+/// Extract the audience from the configured resource URL.
+fn extract_audience(resource_url: &str) -> String {
+    resource_url.to_string()
 }
 
 /// Parse auth strength from the token claim.

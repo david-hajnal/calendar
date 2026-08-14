@@ -99,8 +99,8 @@ function LoginRequestPage() {
       {submitted ? (
         <div className="auth-card__success">
           <span className="material-symbols-outlined fill" style={{ fontSize: '48px', color: 'var(--color-on-tertiary-container)' }}>check_circle</span>
-          <p className="typography-body-lg" style={{ margin: '0.75rem 0 0.25rem', color: 'var(--color-on-surface)' }}>Check your email</p>
-          <p className="typography-body-md" style={{ margin: 0, color: 'var(--color-on-surface-variant)' }}>We sent a link to <strong style={{ color: 'var(--color-on-surface)', fontWeight: 500 }}>{email}</strong></p>
+          <p role="status" className="typography-body-lg" style={{ margin: '0.75rem 0 0.25rem', color: 'var(--color-on-surface)' }}>Check your email for a login link if the account is eligible.</p>
+          <p className="typography-body-md" style={{ margin: 0, color: 'var(--color-on-surface-variant)' }}>We sent a link to your email.</p>
           <button type="button" className="app-button" style={{ marginTop: '1rem', fontSize: '0.8125rem', color: 'var(--color-primary)' }} onClick={() => { setSubmitted(false); setEmail(""); setError(null); }}>Try a different email</button>
         </div>
       ) : (
@@ -205,7 +205,7 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
       {result === "loading" && <p className="app-message app-message--status" role="status">Completing sign-in…</p>}
       {result === "success" && <div className="auth-card__success">
         <span className="material-symbols-outlined fill" style={{ fontSize: '48px', color: 'var(--color-on-tertiary-container)' }}>check_circle</span>
-        <p className="typography-body-lg" style={{ margin: '0.75rem 0 0.25rem', color: 'var(--color-on-surface)' }}>{success}</p>
+        <p className="app-message app-message--success" style={{ margin: '0.75rem 0 0.25rem', color: 'var(--color-on-surface)' }}>{success}</p>
       </div>}
       {result === "failure" && <p className="app-message app-message--error" role="alert">{failure}</p>}
     </section>
@@ -213,7 +213,7 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
 }
 
 function AuthenticatedShell() {
-  const { state, api, reloadSession } = useAuth();
+  const { state, api, reloadSession, logout } = useAuth();
   const location = useLocation();
 
   if (state.status === "loading") return <main className="app-page app-page--state" aria-busy="true"><section className="state-card"><p className="app-message app-message--status" role="status">Loading your session…</p></section></main>;
@@ -241,7 +241,10 @@ function AuthenticatedShell() {
       <div className="app-header__actions">
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Notifications"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span></button>
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Settings"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
-        <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}</div>
+        <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}<span className="avatar__name">{name}</span><span className="avatar__email">{state.session.user.email}</span></div>
+        <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Sign out" onClick={() => void logout()}>
+          <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
+        </button>
       </div>
     </header>
     {/* Mobile bottom nav */}

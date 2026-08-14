@@ -51,19 +51,22 @@ describe("CompositeViewManagement", () => {
     const request = vi.fn()
       .mockResolvedValueOnce(response([current]))
       .mockResolvedValueOnce(response([work, family, busyOnly]))
+      .mockResolvedValueOnce(response({ token: "pub", projection: "full_details", display_timezone: "UTC", expires_at: 1_800_000_000, revoked: false, version: 1 }))
       .mockResolvedValueOnce(response({ ...current, name: "Updated", version: 2 }))
       .mockResolvedValueOnce(response({ ...current, name: "Updated", version: 3, calendars: [{ calendar_id: 2, position: 0, color: "#abcdef" }, { calendar_id: 1, position: 1, color: "#123456" }] }));
     renderManager(request);
     fireEvent.click(await screen.findByRole("button", { name: "Edit Week" }));
+
+    await screen.findByText("Family");
 
     fireEvent.change(screen.getByLabelText("View name"), { target: { value: "Updated" } });
     fireEvent.click(screen.getByRole("button", { name: "Save view name" }));
     await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/views/8", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Updated" }) })));
 
     fireEvent.change(screen.getByLabelText("Color for Family"), { target: { value: "#abcdef" } });
-    fireEvent.click(screen.getByRole("button", { name: "Move Work up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move Family up" }));
     fireEvent.click(screen.getByRole("button", { name: "Save view calendars" }));
-    await waitFor(() => expect(request).toHaveBeenCalledWith("/api/v1/views/8/calendars", expect.objectContaining({ method: "PUT", body: JSON.stringify({ calendars: [{ calendar_id: 2, position: 0, color: "#abcdef" }, { calendar_id: 1, position: 1, color: "#123456" }] }) })));
+    await waitFor(() => expect(request).toHaveBeenLastCalledWith("/api/v1/views/8/calendars", expect.objectContaining({ method: "PUT", body: JSON.stringify({ calendars: [{ calendar_id: 2, position: 0, color: "#abcdef" }, { calendar_id: 1, position: 1, color: "#123456" }] }) })));
   });
 
   it("publishes a view with its chosen detail level and expiration, then displays and rotates its public link", async () => {

@@ -22,7 +22,7 @@ set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-production}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
-CHART_DIR="$(cd "$(dirname "$0")" && pwd)/helm/commoncal"
+CHART_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helm/commoncal"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 MCP_DOMAIN="${MCP_DOMAIN:-$DOMAIN}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"

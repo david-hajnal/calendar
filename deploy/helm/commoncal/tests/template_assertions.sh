@@ -33,10 +33,11 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/templates/statefulset.yaml" 'valueFrom:'
   require_source "$chart_dir/templates/statefulset.yaml" 'name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}'
   require_source "$chart_dir/templates/statefulset.yaml" 'key: {{ required "existingSecret.sessionSecretKey is required" .Values.existingSecret.sessionSecretKey }}'
+  require_source "$chart_dir/templates/statefulset.yaml" 'required "image.tag is required" .Values.image.tag'
   exit 0
 fi
 
-helm template commoncal "$chart_dir" > "$rendered"
+helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag > "$rendered"
 
 grep -q 'replicas: 1' "$rendered"
 grep -q 'runAsNonRoot: true' "$rendered"
@@ -79,6 +80,7 @@ grep -q 'kind: PersistentVolumeClaim' "$rendered"
 grep -q 'kind: Service' "$rendered"
 grep -q 'kind: Ingress' "$rendered"
 grep -q 'kind: NetworkPolicy' "$rendered"
+grep -q 'image: "commoncal:test-image-tag"' "$rendered"
 grep -q 'policyTypes:' "$rendered"
 grep -q 'port: http' "$rendered"
 grep -q 'kubernetes.io/metadata.name: kube-system' "$rendered"
@@ -88,7 +90,7 @@ if grep -q 'kind: HorizontalPodAutoscaler' "$rendered"; then
   exit 1
 fi
 
-if helm template commoncal "$chart_dir" --set replicaCount=2 >/dev/null 2>&1; then
+if helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag --set replicaCount=2 >/dev/null 2>&1; then
   echo 'replicaCount=2 should be rejected by values schema' >&2
   exit 1
 fi

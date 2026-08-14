@@ -3,6 +3,7 @@ set -eu
 
 repository_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 deploy_script="$repository_root/deploy/deploy-prod.sh"
+mcp_deploy_script="$repository_root/deploy/deploy-mcp-prod.sh"
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 
@@ -23,12 +24,19 @@ cat >"$fixture/bin/helm" <<'EOF'
 printf '%s\n' "$@" >"$HELM_LOG"
 EOF
 
-chmod +x "$fixture/bin/kubectl" "$fixture/bin/helm"
+cat >"$fixture/bin/docker" <<'EOF'
+#!/bin/sh
+echo 'deploy scripts must not invoke docker' >&2
+exit 99
+EOF
+
+chmod +x "$fixture/bin/kubectl" "$fixture/bin/helm" "$fixture/bin/docker"
 
 run_deploy() {
   PATH="$fixture/bin:$PATH" \
     SESSION_SECRET=test-session-secret \
     BACKUP_ENCRYPTION_KEY_HEX="${BACKUP_ENCRYPTION_KEY_HEX:-0000000000000000000000000000000000000000000000000000000000000000}" \
+    IMAGE_TAG="${IMAGE_TAG:-test-image-tag}" \
     KUBECTL_LOG="$fixture/kubectl.log" \
     HELM_LOG="$fixture/helm.log" \
     "$deploy_script"
@@ -88,3 +96,25 @@ if BACKUP_ENCRYPTION_KEY_HEX=not-a-valid-key run_deploy >/dev/null 2>&1; then
   echo "expected invalid backup encryption key to fail" >&2
   exit 1
 fi
+
+unset DRY_RUN
+env_deploy_dir="$fixture/deploy"
+cp -R "$repository_root/deploy" "$env_deploy_dir"
+cat >"$env_deploy_dir/.env" <<'EOF'
+SESSION_SECRET=env-session-secret
+BACKUP_ENCRYPTION_KEY_HEX=1111111111111111111111111111111111111111111111111111111111111111
+CALENDAR_API_URL=http://commoncal:3000/api
+IMAGE_TAG=from-dot-env
+EOF
+
+PATH="$fixture/bin:$PATH" \
+  KUBECTL_LOG="$fixture/kubectl.log" \
+  HELM_LOG="$fixture/helm.log" \
+  "$env_deploy_dir/deploy-prod.sh" >/dev/null
+assert_helm_argument image.tag=from-dot-env
+
+PATH="$fixture/bin:$PATH" \
+  KUBECTL_LOG="$fixture/kubectl.log" \
+  HELM_LOG="$fixture/helm.log" \
+  "$env_deploy_dir/deploy-mcp-prod.sh" >/dev/null
+assert_helm_argument image.tag=from-dot-env

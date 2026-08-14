@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Deploy commoncal to production with secrets from environment variables.
 #
-# Required env vars:
+# Required env vars (loaded from deploy/.env when present):
 #   SESSION_SECRET              - encryption key for sessions
 #   BACKUP_ENCRYPTION_KEY_HEX   - hex-encoded backup encryption key
+#   IMAGE_TAG                   - Published container image tag
 #
 # Optional env vars:
 #   DOMAIN                      - Production domain (default: cal.hajnal.space)
-#   IMAGE_TAG                   - Docker image tag (default: latest)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal)
 #   NAMESPACE                   - Kubernetes namespace (default: production)
@@ -15,17 +15,6 @@
 
 set -euo pipefail
 
-# Fail fast if required env vars are missing
-: "${SESSION_SECRET:?ERROR: SESSION_SECRET is required. Export it: export SESSION_SECRET=\$(openssl rand -hex 32)}"
-: "${BACKUP_ENCRYPTION_KEY_HEX:?ERROR: BACKUP_ENCRYPTION_KEY_HEX is required. Export it: export BACKUP_ENCRYPTION_KEY_HEX=\$(openssl rand -hex 32)}"
-
-if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{64}$ ]]; then
-  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must contain exactly 64 hexadecimal characters" >&2
-  exit 1
-fi
-
-NAMESPACE="${NAMESPACE:-production}"
-RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load .env file if it exists
@@ -34,13 +23,23 @@ if [[ -f "$DEPLOY_DIR/.env" ]]; then
   source "$DEPLOY_DIR/.env"
   set +a
 fi
+
+# Fail fast if required env vars are missing
+: "${SESSION_SECRET:?ERROR: SESSION_SECRET is required. Set it in $DEPLOY_DIR/.env or export it}"
+: "${BACKUP_ENCRYPTION_KEY_HEX:?ERROR: BACKUP_ENCRYPTION_KEY_HEX is required. Set it in $DEPLOY_DIR/.env or export it}"
+: "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
+
+if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{64}$ ]]; then
+  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must contain exactly 64 hexadecimal characters" >&2
+  exit 1
+fi
+
+NAMESPACE="${NAMESPACE:-production}"
+RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
-IMAGE_TAG="${IMAGE_TAG:-main}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
-SERVER="${SERVER:-}"
-ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 case "${DRY_RUN:-0}" in
   0|"")
@@ -69,10 +68,6 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" || ! -f "$VALUES_FILE" ]]; then
   exit 1
 fi
 
-# Build Docker image
-echo "==> Building Docker image '$IMAGE_TAG'..."
-docker build -t "commoncal:$IMAGE_TAG" "$ROOT_DIR"
-echo "==> Image built successfully"
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
 kubectl create secret generic commoncal-session \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \

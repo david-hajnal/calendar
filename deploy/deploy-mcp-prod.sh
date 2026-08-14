@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # Deploy commoncal-mcp to production with secrets from environment variables.
 #
-# Required env vars:
+# Required env vars (loaded from deploy/.env when present):
 #   CALENDAR_API_URL  - URL of the commoncal API
+#   IMAGE_TAG         - Published container image tag
 #
 # Optional env vars:
 #   DOMAIN                      - Production domain (default: cal.hajnal.space)
-#   IMAGE_TAG                   - Docker image tag (default: main)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal-mcp)
 #   NAMESPACE                   - Kubernetes namespace (default: commoncal)
-#   SERVER                      - Remote server IP for image loading
 #   DRY_RUN                     - set to "1" for --dry-run
 
 set -euo pipefail
@@ -24,17 +23,15 @@ if [[ -f "$DEPLOY_DIR/.env" ]]; then
 fi
 
 # Fail fast if required env vars are missing
-: "${CALENDAR_API_URL:?ERROR: CALENDAR_API_URL is required. Export it: export CALENDAR_API_URL=http://commoncal:3000/api}"
+: "${CALENDAR_API_URL:?ERROR: CALENDAR_API_URL is required. Set it in $DEPLOY_DIR/.env or export it}"
+: "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal-mcp"
 VALUES_FILE="$DEPLOY_DIR/values-mcp-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
-IMAGE_TAG="${IMAGE_TAG:-main}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
-SERVER="${SERVER:-}"
-ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 case "${DRY_RUN:-0}" in
   0|"")
@@ -63,18 +60,12 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" ]]; then
   exit 1
 fi
 
-# Build MCP Docker image
-echo "==> Building MCP Docker image '$IMAGE_TAG'..."
-docker build -f "$ROOT_DIR/mcp-server/Dockerfile" -t "calendar-mcp:$IMAGE_TAG" "$ROOT_DIR/mcp-server"
-echo "==> Image built successfully"
-
 # Deploy with Helm
 echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
   --set-string image.tag="$IMAGE_TAG"
-  --set-string image.repository="commoncal/calendar-mcp"
   --set-string domain="$DOMAIN"
   --set-string "ingress.hosts[0].host=$DOMAIN"
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"

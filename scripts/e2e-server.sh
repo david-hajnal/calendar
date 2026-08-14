@@ -6,7 +6,7 @@ mkdir -p "$e2e_state_dir"
 : > "$e2e_state_dir/outbox.ndjson"
 rm -f "$e2e_state_dir/commoncal.sqlite" "$e2e_state_dir/commoncal.sqlite-shm" "$e2e_state_dir/commoncal.sqlite-wal"
 
-pnpm --dir frontend build
+corepack enable && pnpm --dir frontend build
 APP_ENV=development \
 SESSION_SECRET="${E2E_SESSION_SECRET:-commoncal-e2e-session-secret}" \
 BIND_ADDRESS="${E2E_BIND_ADDRESS:-127.0.0.1:3100}" \

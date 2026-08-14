@@ -26,7 +26,7 @@ services:
       - VITE_PROXY_TARGET=http://app:3000
     ports:
       - "5173:5173"
-    command: sh -c "npm install -g pnpm@9.12.3 && CONFIRM_MODULES_PURGE=false pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"
+    command: sh -c "corepack install pnpm@9.12.3 && CONFIRM_MODULES_PURGE=false pnpm install --frozen-lockfile && pnpm dev --host 0.0.0.0"
     depends_on:
       - app
 

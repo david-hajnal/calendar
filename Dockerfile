@@ -5,7 +5,6 @@ WORKDIR /build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/ frontend/
 RUN corepack enable && pnpm install --frozen-lockfile
-COPY frontend frontend
 RUN pnpm --filter @commoncal/frontend build && \
     test -d /build/frontend/dist/assets && \
     test -f /build/frontend/dist/index.html || (echo "Frontend build produced no output" && exit 1)

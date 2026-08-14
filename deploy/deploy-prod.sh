@@ -32,6 +32,8 @@ VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
+SERVER="${SERVER:-}"
+ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 case "${DRY_RUN:-0}" in
   0|"")
@@ -60,7 +62,24 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" || ! -f "$VALUES_FILE" ]]; then
   exit 1
 fi
 
-# Create or update the secret
+# Build and deploy Docker image if SERVER is specified
+if [[ -n "$SERVER" ]]; then
+  echo "==> Building Docker image..."
+  docker build -t "commoncal:$IMAGE_TAG" "$ROOT_DIR"
+  
+  echo "==> Saving image to tar..."
+  IMAGE_TAR="/tmp/commoncal-${IMAGE_TAG}.tar"
+  docker save "commoncal:$IMAGE_TAG" -o "$IMAGE_TAR"
+  
+  echo "==> Copying image to server $SERVER..."
+  scp "$IMAGE_TAR" "root@${SERVER}:/tmp/commoncal-${IMAGE_TAG}.tar"
+  
+  echo "==> Loading image on server..."
+  ssh "root@${SERVER}" "sudo ctr images import /tmp/commoncal-${IMAGE_TAG}.tar --snapshotter native && rm /tmp/commoncal-${IMAGE_TAG}.tar"
+  
+  rm -f "$IMAGE_TAR"
+  echo "==> Image deployed to server"
+fi
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
 kubectl create secret generic commoncal-session \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \

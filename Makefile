@@ -1,4 +1,4 @@
-.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test e2e frontend-build frontend-test lint validate-authorization-coverage
+.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test deploy-script-test e2e frontend-build frontend-test lint validate-authorization-coverage
 
 all: check
 
@@ -35,7 +35,10 @@ check-no-yarn:
 ci-script-test:
 	sh scripts/test-check-no-yarn-lock.sh
 
-check: check-no-yarn ci-script-test backend-check backend-test authorization-regression frontend-test lint frontend-build
+deploy-script-test:
+	sh scripts/test-deploy-prod.sh
+
+check: check-no-yarn ci-script-test deploy-script-test backend-check backend-test authorization-regression frontend-test lint frontend-build
 
 # Production deployment. Requires:
 #   SESSION_SECRET        - session encryption key

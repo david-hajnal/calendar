@@ -45,12 +45,6 @@ kubectl create secret generic commoncal-session \
   -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# Build image
-echo "==> Building image..."
-IMAGE="ghcr.io/david-hajnal/calendar-core:$IMAGE_TAG"
-docker build -t "$IMAGE" .
-docker push "$IMAGE"
-
 # Deploy with Helm
 echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm upgrade --install "$RELEASE" "$CHART_DIR" \

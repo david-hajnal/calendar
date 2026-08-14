@@ -36,3 +36,10 @@ ci-script-test:
 	sh scripts/test-check-no-yarn-lock.sh
 
 check: check-no-yarn ci-script-test backend-check backend-test authorization-regression frontend-test lint frontend-build
+
+# Production deployment. Requires:
+#   SESSION_SECRET        - session encryption key
+#   BACKUP_ENCRYPTION_KEY_HEX - hex-encoded backup encryption key
+# Optional: IMAGE_TAG, DOMAIN, NAMESPACE, HELM_RELEASE_NAME, DRY_RUN=1
+deploy:
+	deploy/deploy-prod.sh

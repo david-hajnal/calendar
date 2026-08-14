@@ -22,12 +22,14 @@ spec:
       http:
         paths:
           {{- range .Values.ingress.hosts }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          {{- range .paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | default "Prefix" | quote }}
             backend:
               service:
                 name: {{ include "commoncal-mcp.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
+          {{- end }}
           {{- end }}
 {{- end }}

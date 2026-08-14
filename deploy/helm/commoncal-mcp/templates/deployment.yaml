@@ -6,6 +6,8 @@ metadata:
     {{- include "commoncal-mcp.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "commoncal-mcp.selectorLabels" . | nindent 6 }}
@@ -43,7 +45,7 @@ spec:
             {{- end }}
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 3001
               protocol: TCP
           startupProbe:
             tcpSocket:
@@ -63,8 +65,13 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            - name: data
+              mountPath: /app/data
             - name: tmp
-              mountPath: /tmp
+              mountPath: /app/tmp
       volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "commoncal-mcp.fullname" . }}-data
         - name: tmp
           emptyDir: {}

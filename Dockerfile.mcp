@@ -4,6 +4,7 @@ FROM rust:1-bookworm AS backend-build
 WORKDIR /build/mcp-server
 COPY mcp-server/Cargo.toml mcp-server/Cargo.lock ./
 COPY mcp-server/src ./src
+COPY mcp-server/migrations ./migrations
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime

@@ -1,0 +1,22 @@
+# Flux image update automation for calendar-core
+# Commits selected image tag changes back to Git
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageUpdateAutomation
+metadata:
+  name: image-update-core
+  namespace: flux-system
+spec:
+  gitRepositoryRef:
+    name: flux-system
+  push:
+    type: github
+    branch: main
+  commitTemplate: "chore(deploy): update core image to {{ .Tag }}"
+  commitMessageTemplate: "chore(deploy): update core image to {{ .Tag }}"
+  interval: 2m0s
+  update:
+    path: ./deploy/flux/overlays/production
+  policy:
+    imageNames:
+      - name: image-policy-core

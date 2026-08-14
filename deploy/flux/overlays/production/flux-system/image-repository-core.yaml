@@ -1,0 +1,10 @@
+# Flux image repository for calendar-core
+---
+apiVersion: image.toolkit.fluxcd.io/v1beta2
+kind: ImageRepository
+metadata:
+  name: image-repository-core
+  namespace: flux-system
+spec:
+  image: ghcr.io/david-hajnal/calendar-core
+  provider: ghcr

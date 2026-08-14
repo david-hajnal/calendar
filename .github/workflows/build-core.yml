@@ -3,11 +3,22 @@ name: Build core image
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
   contents: read
   packages: write
+
+# Skip builds triggered by ImageUpdateAutomation commits that only change deploy/flux/
+if: |
+  github.event_name == 'push' &&
+  (
+    github.event.head_commit.msg != 'chore(deploy): update image tags' ||
+    contains(github.event.head_commit.modified, 'Dockerfile') ||
+    contains(github.event.head_commit.modified, 'backend/') ||
+    contains(github.event.head_commit.modified, 'mcp-server/')
+  )
 
 jobs:
   build:
@@ -32,9 +43,9 @@ jobs:
         with:
           images: ghcr.io/david-hajnal/calendar-core
           tags: |
-            type=sha,prefix=
-            type=ref,event=branch
             type=semver,pattern={{version}}
+            type=sha,format=long,prefix=sha-
+            type=ref,event=branch
 
       - name: Build and push
         uses: docker/build-push-action@v5

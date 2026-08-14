@@ -49,6 +49,13 @@ assert_helm_argument() {
   fi
 }
 
+assert_no_helm_argument() {
+  if grep -Fx -- "$1" "$fixture/helm.log" >/dev/null; then
+    echo "unexpected Helm argument: $1" >&2
+    exit 1
+  fi
+}
+
 run_deploy >/dev/null
 
 if grep -Fx '' "$fixture/helm.log" >/dev/null; then
@@ -114,7 +121,10 @@ PATH="$fixture/bin:$PATH" \
 assert_helm_argument image.tag=from-dot-env
 
 PATH="$fixture/bin:$PATH" \
+  DOMAIN=calendar.example.test \
   KUBECTL_LOG="$fixture/kubectl.log" \
   HELM_LOG="$fixture/helm.log" \
   "$env_deploy_dir/deploy-mcp-prod.sh" >/dev/null
 assert_helm_argument image.tag=from-dot-env
+assert_helm_argument domain=calendar.example.test
+assert_no_helm_argument 'ingress.hosts[0].host=calendar.example.test'

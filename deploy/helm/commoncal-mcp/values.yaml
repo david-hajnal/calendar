@@ -43,7 +43,8 @@ persistence:
   storageClass: ""
   annotations: {}
 
-domain: cal.hajnal.space
+domain: mcp.example.com
+bindAddress: "0.0.0.0:3001"
 
 ingress:
   enabled: true
@@ -52,14 +53,16 @@ ingress:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
   hosts:
-    - host: cal.hajnal.space
+    - host: mcp.example.com
       paths:
         - path: /mcp
           pathType: Prefix
+        - path: /.well-known/oauth-protected-resource
+          pathType: Exact
   tls:
     - secretName: commoncal-tls
       hosts:
-        - cal.hajnal.space
+        - mcp.example.com
 
 resources:
   requests:
@@ -78,6 +81,9 @@ networkPolicy:
       - namespaceSelector:
           matchLabels:
             kubernetes.io/metadata.name: kube-system
+
+existingSecret:
+  name: ""
 
 env:
   CALENDAR_API_URL: http://commoncal:3000/api

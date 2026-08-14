@@ -37,14 +37,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer().json())
         .init();
 
-    let config = Config::from_env()?;
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(errors) => {
+            for e in &errors {
+                eprintln!("CONFIG ERROR: {}", e);
+            }
+            std::process::exit(1);
+        }
+    };
     run(config).await
 }
 
 async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = connect_and_migrate(&config.database_path.to_string_lossy()).await?;
 
-    let gateway = Gateway::new(config.clone(), db_pool);
+    let gateway = Gateway::new(config.clone(), db_pool)
+        .map_err(|e| format!("Gateway initialization failed: {:?}", e))?;
 
     let router = Router::new()
         .route("/health/live", get(health_live))
@@ -56,7 +65,7 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 async move {
                     let meta =
                         crate::config::OauthProtectedResourceMetadata::new(
-                            "https://mcp.commoncal.tld/",
+                            &config.public_resource_url,
                             &issuer,
                         );
                     (

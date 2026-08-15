@@ -83,7 +83,9 @@ networkPolicy:
             kubernetes.io/metadata.name: kube-system
 
 existingSecret:
-  name: ""
+  name: commoncal-mcp-secrets
+  apiKeyKeyName: mcp-internal-api-key
+  sessionSecretKeyName: mcp-session-secret
 
 env:
   MCP_INTERNAL_API_BASE: http://commoncal-core:3000

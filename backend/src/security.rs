@@ -165,12 +165,14 @@ impl SecretKey {
 
 #[allow(dead_code)]
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
-            == 0
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (a, b) in left.iter().zip(right.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,6 +181,7 @@ pub enum TokenDomain {
     Login,
     PublicView,
     Session,
+    Caldav,
 }
 
 impl TokenDomain {
@@ -188,6 +191,7 @@ impl TokenDomain {
             Self::Login => b"login",
             Self::PublicView => b"public-view",
             Self::Session => b"session",
+            Self::Caldav => b"caldav",
         }
     }
 }

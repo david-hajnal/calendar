@@ -11,6 +11,7 @@ pub mod event;
 pub mod external_feed;
 pub mod http;
 pub mod ics;
+pub mod ics_generator;
 pub mod ics_http;
 pub mod identity;
 pub mod invitations;

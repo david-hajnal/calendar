@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import type { Fetcher } from "./auth/api";
+import type { Session } from "./auth/session";
 
 const user = { id: 7, email: "person@example.test", display_name: "Person", is_superadmin: false };
 function makeSession(overrides?: Partial<Session>) {
@@ -161,10 +162,18 @@ describe("authentication pages", () => {
 
 describe("routing", () => {
   it("shows the default calendar view at /dashboard", async () => {
+    let calendarsResolved = false;
     const fetcher = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/auth/session") {
         return new Response(JSON.stringify(makeSession()), { status: 200 });
+      }
+      if (url === "/api/v1/calendars") {
+        // Delay calendar resolution so the loading state is visible
+        if (!calendarsResolved) {
+          calendarsResolved = true;
+          await new Promise((r) => setTimeout(r, 50));
+        }
       }
       return new Response(JSON.stringify([]), { status: 200 });
     });

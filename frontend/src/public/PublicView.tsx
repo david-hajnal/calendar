@@ -11,6 +11,7 @@ export interface PublicViewMetadata {
   projection: "full_details" | "title_and_time" | "free_busy";
   display_timezone: string;
   expires_at: number;
+  caldav_url?: string | null;
 }
 
 export interface PublicEvent {
@@ -43,7 +44,7 @@ function metadata(value: unknown): PublicViewMetadata | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.name !== "string" || typeof raw.display_timezone !== "string" || typeof raw.expires_at !== "number" || !["full_details", "title_and_time", "free_busy"].includes(String(raw.projection))) return null;
-  return { name: raw.name, projection: raw.projection as PublicViewMetadata["projection"], display_timezone: raw.display_timezone, expires_at: raw.expires_at };
+  return { name: raw.name, projection: raw.projection as PublicViewMetadata["projection"], display_timezone: raw.display_timezone, expires_at: raw.expires_at, caldav_url: typeof raw.caldav_url === "string" ? raw.caldav_url : null };
 }
 
 async function publicJson<T>(fetcher: Fetcher, path: string, parse: (value: unknown) => T | null): Promise<T> {
@@ -170,6 +171,10 @@ export function PublicViewPage({ token, fetcher = fetch, now = defaultNow }: { t
         </p>
       </div>
           <div className="public-view__header-controls">
+        {view.caldav_url && <a href={view.caldav_url} target="_blank" rel="noreferrer" className="public-view__subscribe-btn" aria-label="Subscribe to Apple Calendar">
+          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>calendar_today</span>
+          Subscribe in Apple Calendar
+        </a>}
         <div className="segmented-control" role="tablist" aria-label="View mode">
           <button type="button" role="button" aria-pressed={mode === "month"} aria-label="Month view" className={`segmented-control__button ${mode === "month" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("month")}>Month view</button>
           <button type="button" role="button" aria-pressed={mode === "agenda"} aria-label="Agenda view" className={`segmented-control__button ${mode === "agenda" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("agenda")}>Agenda view</button>

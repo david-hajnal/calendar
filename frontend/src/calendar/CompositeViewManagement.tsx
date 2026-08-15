@@ -29,6 +29,8 @@ interface Publication {
   expires_at: number;
   revoked: boolean;
   version: number;
+  caldav_enabled?: boolean;
+  caldav_url?: string | null;
 }
 
 function compositeView(value: unknown): CompositeView | null {
@@ -78,6 +80,8 @@ function parsePublication(value: unknown, fallbackToken?: string): Publication |
     expires_at: raw.expires_at,
     revoked: raw.revoked === true,
     version: raw.version,
+    caldav_enabled: raw.caldav_enabled === true,
+    caldav_url: typeof raw.caldav_url === "string" ? raw.caldav_url : null,
   };
 }
 
@@ -88,6 +92,7 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
   const [editingName, setEditingName] = useState("");
   const [calendarColors, setCalendarColors] = useState<Record<number, string>>({});
   const [publication, setPublication] = useState<Publication | null>(null);
+  const [caldavEnabled, setCaldavEnabled] = useState(false);
   const [detailLevel, setDetailLevel] = useState<"full_details" | "title_and_time" | "free_busy">("full_details");
   const [expiresAt, setExpiresAt] = useState("");
   const [loading, setLoading] = useState(true);
@@ -119,8 +124,8 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     setCalendarColors(colors);
     if (!calendarsLoaded) fetchCalendars();
     api.request(`/api/v1/views/${view.id}/publication`).then((res) => {
-      if (res.ok) res.json().then((value) => { const pub = parsePublication(value); if (pub) { setPublication(pub); setDetailLevel(pub.projection); setExpiresAt(pub.expires_at ? new Date(pub.expires_at * 1000).toISOString().slice(0, 16) : ""); } else { setPublication(null); } });
-    }).catch(() => setPublication(null));
+      if (res.ok) res.json().then((value) => { const pub = parsePublication(value); if (pub) { setPublication(pub); setDetailLevel(pub.projection); setExpiresAt(pub.expires_at ? new Date(pub.expires_at * 1000).toISOString().slice(0, 16) : ""); setCaldavEnabled(pub.caldav_enabled ?? false); } else { setPublication(null); setCaldavEnabled(false); } });
+    }).catch(() => { setPublication(null); setCaldavEnabled(false); });
   }, [api, calendarsLoaded, fetchCalendars]);
 
   const saveName = () => {
@@ -150,6 +155,14 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
     if (!selectedView) return;
     api.request(`/api/v1/views/${selectedView.id}/publication/rotate`, { method: "POST" }).then((res) => {
       if (res.ok) res.json().then((value) => { const pub = parsePublication(value); if (pub) setPublication(pub); });
+    });
+  };
+
+  const toggleCaldav = () => {
+    if (!selectedView || !publication) return;
+    const newEnabled = !caldavEnabled;
+    api.request(`/api/v1/views/${selectedView.id}/publication`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ projection: detailLevel, display_timezone: "UTC", expires_at: publication.expires_at, caldav_enabled: newEnabled }) }).then((res) => {
+      if (res.ok) res.json().then((value) => { const pub = parsePublication(value, publication.token); if (pub) { setPublication(pub); setCaldavEnabled(pub.caldav_enabled ?? false); } });
     });
   };
 
@@ -306,6 +319,13 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
                 <a href={`/public/views/${publication.token}`} role="link" aria-label="Current public link" className="composite-view-management__public-link">{window.location.origin}/public/views/{publication.token}</a>
                 <button type="button" className="btn btn--primary btn--sm" onClick={savePublication}>Save publication</button>
                 <button type="button" className="btn btn--secondary btn--sm" onClick={rotateLink}>Rotate public link</button>
+                <div className="composite-view-management__caldav-section">
+                  <label className="composite-view-management__caldav-label">
+                    <input type="checkbox" checked={caldavEnabled} onChange={toggleCaldav} />
+                    <span>Apple Calendar (CalDAV)</span>
+                  </label>
+                  {caldavEnabled && publication.caldav_url && <a href={publication.caldav_url} target="_blank" rel="noreferrer" className="composite-view-management__caldav-link">Subscribe via webcal://</a>}
+                </div>
               </div>}
             </div>
           </div>

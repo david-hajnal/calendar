@@ -640,6 +640,7 @@ fn build_application_router(state: ApplicationState) -> Router {
                 "/api/v1/public/views/:token/events",
                 get(list_public_view_events),
             )
+            .route("/api/v1/public/views/:token/feed.ics", get(feed_ics))
             .layer(middleware::from_fn(public_response_headers));
         if let Some(limiter) = state.public_rate_limiter.clone() {
             public = public.layer(middleware::from_fn_with_state(
@@ -711,6 +712,10 @@ fn build_application_router(state: ApplicationState) -> Router {
                     get(read_event).patch(update_event).delete(delete_event),
                 )
                 .route(
+                    "/api/v1/calendars/:calendar_id/events/:event_id/add-to-calendar",
+                    get(add_to_calendar),
+                )
+                .route(
                     "/api/v1/calendars/:calendar_id/events/:event_id/occurrences/:recurrence_id",
                     axum::routing::patch(update_event_occurrence)
                         .delete(delete_event_occurrence),
@@ -718,15 +723,16 @@ fn build_application_router(state: ApplicationState) -> Router {
                 .route(
                     "/api/v1/calendars/:calendar_id/events/:event_id/occurrences/:recurrence_id/following",
                     axum::routing::patch(update_this_and_following),
+                )
+                .route(
+                    "/api/v1/events/export-ics",
+                    post(export_ics),
                 );
         }
         if state.notification_service.is_some() {
             protected = protected
                 .route("/api/v1/notifications", get(list_notifications))
-                .route(
-                    "/api/v1/notifications/unread-count",
-                    get(unread_count),
-                )
+                .route("/api/v1/notifications/unread-count", get(unread_count))
                 .route(
                     "/api/v1/notifications/mark-all-read",
                     post(mark_all_notifications_read),
@@ -980,7 +986,9 @@ async fn unread_count(
         .unread_count(session.user.id)
         .await
         .map_err(|_| ApiError::internal())?;
-    Ok(Json(UnreadCountResponse { unread_count: count }))
+    Ok(Json(UnreadCountResponse {
+        unread_count: count,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -1574,6 +1582,56 @@ async fn list_public_view_events(
     Ok(Json(events))
 }
 
+async fn feed_ics(
+    State(state): State<ApplicationState>,
+    Path(token): Path<String>,
+    Query(query): Query<EventFeedQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let from = query.from.ok_or_else(ApiError::bad_request)?;
+    let to = query.to.ok_or_else(ApiError::bad_request)?;
+    let event_service = state
+        .event_service
+        .as_ref()
+        .ok_or_else(ApiError::service_unavailable)?;
+    let events = state
+        .shared_view_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .caldav_events(
+            event_service,
+            &token,
+            EventRange {
+                start_utc: from,
+                end_utc: to,
+                start_date: unix_date(from),
+                end_date: unix_exclusive_end_date(to),
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            SharedViewError::NotFound => ApiError::not_found(),
+            SharedViewError::Event(err) => map_event_error(err),
+            _ => ApiError::internal(),
+        })?;
+    let ics = crate::ics_generator::project_events_to_ics("CommonCal", &events);
+    let body = ics.serialize();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/calendar; charset=utf-8"),
+    );
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache"),
+    );
+    Ok((headers, body))
+}
+
+#[derive(Deserialize)]
+struct EventFeedQuery {
+    from: Option<i64>,
+    to: Option<i64>,
+}
+
 async fn public_response_headers(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().remove(SET_COOKIE);
@@ -1745,6 +1803,152 @@ async fn delete_event(
         .await
         .map_err(map_event_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn add_to_calendar(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path((calendar_id, event_id)): Path<(i64, i64)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let event = state
+        .event_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .get(
+            session.user.id,
+            session.user.is_superadmin,
+            calendar_id,
+            event_id,
+        )
+        .await
+        .map_err(map_event_error)?;
+    let ics_event = crate::ics_generator::IcsEvent {
+        uid: format!("commoncal:{}:{}", calendar_id, event_id),
+        summary: event.title.clone().unwrap_or_default(),
+        description: event.description.clone(),
+        location: event.location.clone(),
+        status: Some(event.status).map(|s| match s {
+            "tentative" => "TENTATIVE".to_string(),
+            "confirmed" => "CONFIRMED".to_string(),
+            "cancelled" => "CANCELLED".to_string(),
+            _ => "CONFIRMED".to_string(),
+        }),
+        timing: match (
+            &event.start_utc,
+            &event.end_utc,
+            &event.start_date,
+            &event.end_date,
+        ) {
+            (Some(start_utc), Some(end_utc), None, None) => {
+                crate::ics_generator::IcsTiming::Timed {
+                    start_utc: *start_utc,
+                    end_utc: *end_utc,
+                    tzid: event.timezone.clone(),
+                }
+            }
+            (None, None, Some(start_date), Some(end_date)) => {
+                crate::ics_generator::IcsTiming::AllDay {
+                    start_date: start_date.clone(),
+                    end_date: end_date.clone(),
+                }
+            }
+            _ => return Err(ApiError::bad_request()),
+        },
+        dtstamp: event.created_at.unwrap_or(0),
+        sequence: event.version.unwrap_or(1) as u64,
+    };
+    let mut calendar = crate::ics_generator::IcsCalendar::new("CommonCal".to_string());
+    calendar.add_event(ics_event);
+    let body = calendar.serialize();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/calendar; charset=utf-8"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"event.ics\""),
+    );
+    Ok((headers, body))
+}
+
+async fn export_ics(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(request): Json<ExportIcsRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let event_service = state
+        .event_service
+        .ok_or_else(ApiError::service_unavailable)?;
+    let mut calendar = crate::ics_generator::IcsCalendar::new("CommonCal Export".to_string());
+    for event_ref in &request.event_ids {
+        let event = event_service
+            .get(
+                session.user.id,
+                session.user.is_superadmin,
+                event_ref.calendar_id,
+                event_ref.event_id,
+            )
+            .await
+            .map_err(map_event_error)?;
+        let ics_event = crate::ics_generator::IcsEvent {
+            uid: format!("commoncal:{}:{}", event_ref.calendar_id, event_ref.event_id),
+            summary: event.title.clone().unwrap_or_default(),
+            description: event.description.clone(),
+            location: event.location.clone(),
+            status: Some(event.status).map(|s| match s {
+                "tentative" => "TENTATIVE".to_string(),
+                "confirmed" => "CONFIRMED".to_string(),
+                "cancelled" => "CANCELLED".to_string(),
+                _ => "CONFIRMED".to_string(),
+            }),
+            timing: match (
+                &event.start_utc,
+                &event.end_utc,
+                &event.start_date,
+                &event.end_date,
+            ) {
+                (Some(start_utc), Some(end_utc), None, None) => {
+                    crate::ics_generator::IcsTiming::Timed {
+                        start_utc: *start_utc,
+                        end_utc: *end_utc,
+                        tzid: event.timezone.clone(),
+                    }
+                }
+                (None, None, Some(start_date), Some(end_date)) => {
+                    crate::ics_generator::IcsTiming::AllDay {
+                        start_date: start_date.clone(),
+                        end_date: end_date.clone(),
+                    }
+                }
+                _ => continue,
+            },
+            dtstamp: event.created_at.unwrap_or(0),
+            sequence: event.version.unwrap_or(1) as u64,
+        };
+        calendar.add_event(ics_event);
+    }
+    let body = calendar.serialize();
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/calendar; charset=utf-8"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"export.ics\""),
+    );
+    Ok((headers, body))
+}
+
+#[derive(Deserialize)]
+struct ExportIcsRequest {
+    event_ids: Vec<EventReference>,
+}
+
+#[derive(Deserialize)]
+struct EventReference {
+    calendar_id: i64,
+    event_id: i64,
 }
 
 async fn update_event_occurrence(

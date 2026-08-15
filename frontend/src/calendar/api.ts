@@ -59,6 +59,8 @@ export interface IssuedPublicView extends PublicViewConfiguration {
   token: string;
   revoked: boolean;
   version: number;
+  caldav_enabled?: boolean;
+  caldav_url?: string | null;
 }
 
 export type EventStatus = "tentative" | "confirmed" | "cancelled";

@@ -5,7 +5,10 @@ import { App } from "./App";
 import type { Fetcher } from "./auth/api";
 
 const user = { id: 7, email: "person@example.test", display_name: "Person", is_superadmin: false };
-const session = { user, created_at: 1, last_seen_at: 2, expires_at: 3 };
+function makeSession(overrides?: Partial<Session>) {
+  return { user, csrf_token: "test-csrf", created_at: 1, last_seen_at: 2, expires_at: 3, ...overrides };
+}
+const session = makeSession();
 
 function renderAt(path: string, fetcher: Fetcher) {
   window.history.replaceState({}, "", path);
@@ -158,7 +161,13 @@ describe("authentication pages", () => {
 
 describe("routing", () => {
   it("shows the default calendar view at /dashboard", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(session), { status: 200 }));
+    const fetcher = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/session") {
+        return new Response(JSON.stringify(makeSession()), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
     renderAt("/dashboard", fetcher);
 
     expect(await screen.findByText("Loading calendars…")).toBeInTheDocument();
@@ -178,10 +187,16 @@ describe("routing", () => {
   });
 
   it("navigates to /shared when clicking Composite views button", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(session), { status: 200 }));
+    const fetcher = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/session") {
+        return new Response(JSON.stringify(makeSession()), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
     renderAt("/calendars", fetcher);
 
-    await screen.findByRole("heading", { name: "CommonCal" });
+    await screen.findByText("CommonCal");
     fireEvent.click(screen.getByRole("button", { name: "Composite views" }));
 
     expect(window.location.pathname).toBe("/shared");

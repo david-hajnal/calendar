@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type { ApiClient } from "../auth/api";
 import { CalendarApiError, createEvent, listExpandedEvents, updateEvent, type EventPayload, type EventProjection } from "./api";
@@ -31,6 +31,22 @@ function rangeFor(view: CalendarView, date: Date) {
 }
 function formatRange(view: CalendarView, date: Date) { return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", ...(view === "day" ? { day: "numeric" } : {}) }).format(date); }
 
+function eventTop(event: EventProjection): number | null {
+  if (event.event_kind === "all_day" || event.start_utc == null) return null;
+  const d = new Date(event.start_utc * 1000);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function eventHeight(event: EventProjection): number {
+  if (event.event_kind === "all_day" || event.start_utc == null || event.end_utc == null) return 60;
+  return Math.max((event.end_utc - event.start_utc) / 60, 15);
+}
+
+function currentTimeTop(): number {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
 function payload(draft: Draft): EventPayload {
   return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(new Date(draft.start).getTime() / 1000), end_utc: Math.floor(new Date(draft.end).getTime() / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
 }
@@ -44,6 +60,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<EventProjection | null>(null);
   const [editing, setEditing] = useState<EventProjection | "new" | null>(null);
+  const [slotHighlight, setSlotHighlight] = useState<{ dayIndex: number; hour: number } | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const firstWritable = calendars.find(writable)?.id ?? calendars[0]?.id ?? 0;
   const [draft, setDraft] = useState<Draft>(() => ({ title: "", start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), calendarId: firstWritable, recurrenceRule: "" }));
   const range = useMemo(() => rangeFor(view, date), [view, date]);
@@ -61,6 +79,14 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   }, [api, range.from, range.to, visibleCalendarIds, visibleCalendarKey]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  useEffect(() => {
+    if ((view === "day" || view === "week") && gridRef.current) {
+      const now = new Date();
+      const top = now.getHours() * 60 + now.getMinutes() - 200;
+      gridRef.current.scrollTop = Math.max(0, top);
+    }
+  }, [view]);
   const displayed = events.filter((event) => visible.has(event.calendar_id)).sort((a, b) => eventTime(a) - eventTime(b));
   const calendarFor = (event: EventProjection) => calendars.find((calendar) => calendar.id === event.calendar_id);
 
@@ -68,6 +94,29 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     const start = Math.floor(date.getTime() / 1000) + 9 * 3600;
     setDraft({ title: "", start: inputTime(start), end: inputTime(start + 3600), calendarId: calendars.find(writable)?.id ?? 0, recurrenceRule: "" });
     setEditing("new"); setSelected(null); setError(null);
+  }
+
+  function slotDate(dayIndex: number, hour: number, view: CalendarView): Date {
+    if (view === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, 0);
+    const weekStart = startOfDay(date);
+    const monday = addDays(weekStart, -weekStart.getDay());
+    return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + dayIndex, hour, 0);
+  }
+
+  function onSlotClick(dayIndex: number, hour: number, view: CalendarView) {
+    const start = slotDate(dayIndex, hour, view);
+    const end = new Date(start);
+    end.setHours(end.getHours() + 1);
+    setDraft({
+      title: "",
+      start: inputTime(Math.floor(start.getTime() / 1000)),
+      end: inputTime(Math.floor(end.getTime() / 1000)),
+      calendarId: calendars.find(writable)?.id ?? 0,
+      recurrenceRule: "",
+    });
+    setEditing("new");
+    setSelected(null);
+    setError(null);
   }
   function openEdit(event: EventProjection) {
     if (!editable(event, calendarFor(event)) || event.start_utc === undefined || event.end_utc === undefined) return;
@@ -208,7 +257,95 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
             </ul>
           </>
         )}
-        {view !== "month" && <ul role="list" aria-label={view === "agenda" ? "Agenda" : undefined} className={`event-ui__${view}`}>{displayed.map(renderEvent)}</ul>}
+        {view === "day" && (
+          <div ref={gridRef} className="event-ui__day" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY}>
+            <div className="event-ui__time-column">
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={h} className="event-ui__time-label">
+                  <span>{h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}</span>
+                </div>
+              ))}
+            </div>
+            <div className="event-ui__day-column" onMouseLeave={() => setSlotHighlight(null)}>
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={h} className="event-ui__hour-row" onClick={() => onSlotClick(0, h, "day")} onMouseEnter={() => setSlotHighlight({ dayIndex: 0, hour: h })} />
+              ))}
+              {displayed.filter((e) => e.event_kind !== "all_day" && eventTop(e) !== null).map((event) => {
+                const top = eventTop(event)!;
+                const height = eventHeight(event);
+                const cal = calendarFor(event);
+                const accentColor = cal?.color || "var(--color-primary)";
+                const bgColor = `${accentColor}1a`;
+                return (
+                  <div
+                    key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
+                    className="event-ui__event-block"
+                    style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor }}
+                    onClick={() => openEdit(event)}
+                  >
+                    <button type="button" className="event-chip__text" draggable={false} onClick={() => openEdit(event)}>
+                      {title(event)}
+                    </button>
+                  </div>
+                );
+              })}
+              <div className="event-ui__current-time" style={{ top: `${currentTimeTop()}px` }} />
+              {slotHighlight && <div className="event-ui__slot-highlight" style={{ top: `${slotHighlight.hour * 60}px` }} />}
+            </div>
+          </div>
+        )}
+        {view === "week" && (
+          <div ref={gridRef} className="event-ui__week" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY}>
+            <div className="event-ui__time-column">
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={h} className="event-ui__time-label">
+                  <span>{h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}</span>
+                </div>
+              ))}
+            </div>
+            {Array.from({ length: 7 }, (_, dayIndex) => {
+              const dayEvents = displayed.filter((e) => {
+                if (e.event_kind === "all_day" || e.start_utc == null) return false;
+                const d = new Date(e.start_utc * 1000);
+                const weekStart = startOfDay(date);
+                const monday = addDays(weekStart, -weekStart.getDay());
+                const dayDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + dayIndex);
+                return startOfDay(d).getTime() === dayDate.getTime();
+              });
+              return (
+                <div key={dayIndex} className="event-ui__week-day-column">
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <div key={h} className="event-ui__week-hour-row" onClick={() => onSlotClick(dayIndex, h, "week")} />
+                  ))}
+                  {dayEvents.map((event) => {
+                    const top = eventTop(event)!;
+                    const height = eventHeight(event);
+                    const cal = calendarFor(event);
+                    const accentColor = cal?.color || "var(--color-primary)";
+                    const bgColor = `${accentColor}1a`;
+                    return (
+                      <div
+                        key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
+                        className="event-ui__event-block"
+                        style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor }}
+                        onClick={() => openEdit(event)}
+                      >
+                        <button type="button" className="event-chip__text" draggable={false} onClick={() => openEdit(event)}>
+                          {title(event)}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div className="event-ui__current-time" style={{ top: `${currentTimeTop()}px` }} />
+                  {slotHighlight && slotHighlight.dayIndex === dayIndex && (
+                    <div className="event-ui__slot-highlight" style={{ top: `${slotHighlight.hour * 60}px` }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {view === "agenda" && <ul role="list" aria-label="Agenda" className="event-ui__agenda">{displayed.map(renderEvent)}</ul>}
         {displayed.length === 0 && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '2rem 0' }}>No events in this range.</p>}
       </section>
     }

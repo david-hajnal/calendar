@@ -10,7 +10,7 @@ import { listCalendars } from "./calendar/api";
 import type { Calendar } from "./calendar/CalendarManagement";
 import { PublicViewPage } from "./public/PublicView";
 import { NotificationDropdown } from "./notification/NotificationDropdown";
-import { listNotifications, markAsRead } from "./notification/api";
+import { listNotifications } from "./notification/api";
 import { DevLoginPage } from "./dev-login";
 import { useTheme } from "./theme/themeContext";
 
@@ -236,7 +236,6 @@ function AuthenticatedShell() {
   const lastNotifsRef = useRef<number[]>([]);
 
   useEffect(() => {
-    let interval: number | undefined;
     void (async () => {
       try {
         const notifs = await listNotifications(api);
@@ -255,7 +254,7 @@ function AuthenticatedShell() {
         // polling error — will retry next tick
       }
     })();
-    interval = window.setInterval(async () => {
+    const interval = window.setInterval(async () => {
       try {
         const notifs = await listNotifications(api);
         const ids = notifs.map((n) => n.id);

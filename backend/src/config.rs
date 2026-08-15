@@ -166,6 +166,12 @@ impl AppConfig {
             ));
         }
 
+        let password_login_enabled = if environment == Environment::Production {
+            password_login_enabled
+        } else {
+            true
+        };
+
         Ok(Self {
             environment,
             bind_address,

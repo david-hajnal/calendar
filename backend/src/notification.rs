@@ -568,17 +568,17 @@ impl NotificationService {
         let start_date = chrono::Utc
             .timestamp_opt(self.now, 0)
             .single()
-            .unwrap()
+            .ok_or_else(|| sqlx::Error::Protocol("invalid now timestamp".into()))?
             .date_naive()
             .format("%F")
             .to_string();
         let end_date = chrono::Utc
             .timestamp_opt(self.now + self.horizon, 0)
             .single()
-            .unwrap()
+            .ok_or_else(|| sqlx::Error::Protocol("invalid now + horizon timestamp".into()))?
             .date_naive()
             .succ_opt()
-            .unwrap()
+            .ok_or_else(|| sqlx::Error::Protocol("date overflow".into()))?
             .format("%F")
             .to_string();
         let occurrences = service
@@ -616,12 +616,21 @@ impl NotificationService {
         }
         Ok(())
     }
-    pub async fn set_event_reminder(&self, user: i64, event_id: i64, calendar_id: i64, reminder_minutes: i64) -> Result<String, sqlx::Error> {
+    pub async fn set_event_reminder(
+        &self,
+        user: i64,
+        event_id: i64,
+        _calendar_id: i64,
+        reminder_minutes: i64,
+    ) -> Result<String, sqlx::Error> {
         if reminder_minutes <= 0 || reminder_minutes > 10080 {
-            return Err(sqlx::Error::Protocol("reminder_minutes must be between 1 and 10080".into()));
+            return Err(sqlx::Error::Protocol(
+                "reminder_minutes must be between 1 and 10080".into(),
+            ));
         }
         let preference = NotificationPreference::new(reminder_minutes, "UTC");
-        self.set_preference(user, PreferenceScope::Event(event_id), preference).await?;
+        self.set_preference(user, PreferenceScope::Event(event_id), preference)
+            .await?;
         let reminder_id = uuid::Uuid::new_v4().to_string();
         Ok(reminder_id)
     }
@@ -635,7 +644,11 @@ impl NotificationService {
             .await?;
         Ok(())
     }
-    pub async fn get_event_reminder(&self, user: i64, event_id: i64) -> Result<Option<i64>, sqlx::Error> {
+    pub async fn get_event_reminder(
+        &self,
+        user: i64,
+        event_id: i64,
+    ) -> Result<Option<i64>, sqlx::Error> {
         let row = sqlx::query_as::<_, PreferenceRow>("SELECT reminder_minutes, timezone, enabled FROM notification_preferences WHERE user_id = ? AND event_id = ? AND calendar_id IS NULL LIMIT 1")
             .bind(user)
             .bind(event_id)

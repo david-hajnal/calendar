@@ -13,6 +13,8 @@ use crate::{
     security::{SecretKey, SecretToken, TokenDomain},
 };
 
+use std::io::Write;
+
 const PUBLIC_TOKEN_PREFIX_LENGTH: usize = 8;
 const MAX_PUBLIC_EVENTS: usize = 1_000;
 
@@ -423,6 +425,128 @@ impl SharedViewService {
         Ok(())
     }
 
+    pub async fn generate_caldav_token(
+        &self,
+        actor_user_id: i64,
+        view_id: i64,
+    ) -> Result<String, SharedViewError> {
+        let token = self.token_key.generate_token();
+        let hash = self.token_key.hash_token(TokenDomain::Caldav, &token);
+        let now = (self.clock)();
+        let result = sqlx::query(
+            "UPDATE public_view_links
+             SET caldav_token_hash = ?, caldav_enabled = 1, version = version + 1, updated_at = ?
+             WHERE view_id = ? AND EXISTS(
+                 SELECT 1 FROM shared_views
+                 WHERE id = ? AND owner_user_id = ?
+             )",
+        )
+        .bind(hash.as_bytes().as_slice())
+        .bind(now)
+        .bind(view_id)
+        .bind(view_id)
+        .bind(actor_user_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(SharedViewError::NotFound);
+        }
+        Ok(token.expose().to_owned())
+    }
+
+    pub async fn revoke_caldav_token(
+        &self,
+        actor_user_id: i64,
+        view_id: i64,
+    ) -> Result<(), SharedViewError> {
+        let now = (self.clock)();
+        let result = sqlx::query(
+            "UPDATE public_view_links
+             SET caldav_token_hash = NULL, caldav_enabled = 0, version = version + 1, updated_at = ?
+             WHERE view_id = ? AND EXISTS(
+                 SELECT 1 FROM shared_views
+                 WHERE id = ? AND owner_user_id = ?
+             )",
+        )
+        .bind(now)
+        .bind(view_id)
+        .bind(view_id)
+        .bind(actor_user_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(SharedViewError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn set_caldav_enabled(
+        &self,
+        actor_user_id: i64,
+        view_id: i64,
+        enabled: bool,
+    ) -> Result<PublicViewManagementProjection, SharedViewError> {
+        let now = (self.clock)();
+        if enabled {
+            let has_token: Option<bool> = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM public_view_links WHERE view_id = ? AND caldav_token_hash IS NOT NULL)",
+            )
+            .bind(view_id)
+            .fetch_one(&self.pool)
+            .await?;
+            if !has_token.unwrap_or(false) {
+                let token = self.token_key.generate_token();
+                let hash = self.token_key.hash_token(TokenDomain::Caldav, &token);
+                sqlx::query(
+                    "UPDATE public_view_links
+                     SET caldav_token_hash = ?, caldav_enabled = 1, version = version + 1, updated_at = ?
+                     WHERE view_id = ? AND EXISTS(
+                         SELECT 1 FROM shared_views
+                         WHERE id = ? AND owner_user_id = ?
+                     )",
+                )
+                .bind(hash.as_bytes().as_slice())
+                .bind(now)
+                .bind(view_id)
+                .bind(view_id)
+                .bind(actor_user_id)
+                .execute(&self.pool)
+                .await?;
+            } else {
+                sqlx::query(
+                    "UPDATE public_view_links
+                     SET caldav_enabled = 1, version = version + 1, updated_at = ?
+                     WHERE view_id = ? AND EXISTS(
+                         SELECT 1 FROM shared_views
+                         WHERE id = ? AND owner_user_id = ?
+                     )",
+                )
+                .bind(now)
+                .bind(view_id)
+                .bind(view_id)
+                .bind(actor_user_id)
+                .execute(&self.pool)
+                .await?;
+            }
+        } else {
+            sqlx::query(
+                "UPDATE public_view_links
+                 SET caldav_token_hash = NULL, caldav_enabled = 0, version = version + 1, updated_at = ?
+                 WHERE view_id = ? AND EXISTS(
+                     SELECT 1 FROM shared_views
+                     WHERE id = ? AND owner_user_id = ?
+                 )",
+            )
+            .bind(now)
+            .bind(view_id)
+            .bind(view_id)
+            .bind(actor_user_id)
+            .execute(&self.pool)
+            .await?;
+        }
+        self.publication(actor_user_id, view_id).await
+    }
+
     pub async fn public_metadata(
         &self,
         encoded_token: &str,
@@ -433,6 +557,29 @@ impl SharedViewService {
             projection: resolved.projection,
             display_timezone: resolved.display_timezone,
             expires_at: resolved.expires_at,
+        })
+    }
+
+    pub async fn public_metadata_with_caldav(
+        &self,
+        encoded_token: &str,
+    ) -> Result<PublicViewMetadataWithCaldav, SharedViewError> {
+        let resolved = self.resolve_publication(encoded_token).await?;
+        let has_caldav: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM public_view_links
+                WHERE view_id = ? AND caldav_enabled = 1 AND caldav_token_hash IS NOT NULL
+             )",
+        )
+        .bind(resolved.view_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(PublicViewMetadataWithCaldav {
+            name: resolved.name,
+            projection: resolved.projection,
+            display_timezone: resolved.display_timezone,
+            expires_at: resolved.expires_at,
+            has_caldav,
         })
     }
 
@@ -459,6 +606,35 @@ impl SharedViewService {
             .collect())
     }
 
+    pub async fn caldav_events(
+        &self,
+        event_service: &EventService,
+        encoded_token: &str,
+        range: EventRange,
+    ) -> Result<Vec<EventProjection>, SharedViewError> {
+        let resolved = self.resolve_caldav_publication(encoded_token).await?;
+        let has_caldav: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM public_view_links
+                WHERE view_id = ? AND caldav_enabled = 1 AND caldav_token_hash IS NOT NULL
+             )",
+        )
+        .bind(resolved.view_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !has_caldav {
+            return Err(SharedViewError::NotFound);
+        }
+        self.events(
+            event_service,
+            resolved.owner_user_id,
+            false,
+            resolved.view_id,
+            range,
+        )
+        .await
+    }
+
     async fn publication(
         &self,
         actor_user_id: i64,
@@ -469,7 +645,9 @@ impl SharedViewService {
                     public_view_links.display_timezone,
                     public_view_links.expires_at,
                     public_view_links.revoked_at,
-                    public_view_links.version
+                    public_view_links.version,
+                    public_view_links.caldav_enabled,
+                    public_view_links.caldav_token_hash
              FROM public_view_links
              JOIN shared_views ON shared_views.id = public_view_links.view_id
              WHERE public_view_links.view_id = ? AND shared_views.owner_user_id = ?",
@@ -524,6 +702,44 @@ impl SharedViewService {
             projection: record.projection.parse()?,
             display_timezone: record.display_timezone,
             expires_at: record.expires_at,
+        })
+    }
+
+    async fn resolve_caldav_publication(
+        &self,
+        encoded_token: &str,
+    ) -> Result<ResolvedCaldavView, SharedViewError> {
+        let token =
+            SecretToken::parse(encoded_token.to_owned()).ok_or(SharedViewError::NotFound)?;
+        let record = sqlx::query_as::<_, CaldavResolutionRecord>(
+            "SELECT public_view_links.caldav_token_hash,
+                    public_view_links.expires_at,
+                    shared_views.id AS view_id,
+                    shared_views.owner_user_id,
+                    shared_views.name
+             FROM public_view_links
+             JOIN shared_views ON shared_views.id = public_view_links.view_id
+             WHERE public_view_links.caldav_token_hash IS NOT NULL
+             LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(SharedViewError::NotFound)?;
+        let expected = record
+            .caldav_token_hash
+            .as_slice()
+            .try_into()
+            .map(crate::security::TokenHash::from_bytes)
+            .map_err(|_| SharedViewError::NotFound)?;
+        let token_matches = self
+            .token_key
+            .verify_token(TokenDomain::Caldav, &token, &expected);
+        if (self.clock)() >= record.expires_at || !token_matches {
+            return Err(SharedViewError::NotFound);
+        }
+        Ok(ResolvedCaldavView {
+            view_id: record.view_id,
+            owner_user_id: record.owner_user_id,
         })
     }
 
@@ -678,6 +894,8 @@ pub struct PublicViewManagementProjection {
     pub expires_at: i64,
     pub revoked: bool,
     pub version: i64,
+    pub caldav_enabled: bool,
+    pub caldav_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -686,6 +904,15 @@ pub struct PublicViewMetadata {
     pub projection: PublicViewProjection,
     pub display_timezone: String,
     pub expires_at: i64,
+}
+
+#[derive(Serialize)]
+pub struct PublicViewMetadataWithCaldav {
+    pub name: String,
+    pub projection: PublicViewProjection,
+    pub display_timezone: String,
+    pub expires_at: i64,
+    pub has_caldav: bool,
 }
 
 #[derive(Serialize)]
@@ -730,18 +957,28 @@ struct PublicViewManagementRecord {
     expires_at: i64,
     revoked_at: Option<i64>,
     version: i64,
+    caldav_enabled: i64,
+    caldav_token_hash: Option<Vec<u8>>,
 }
 
 impl TryFrom<PublicViewManagementRecord> for PublicViewManagementProjection {
     type Error = SharedViewError;
 
     fn try_from(record: PublicViewManagementRecord) -> Result<Self, Self::Error> {
+        let caldav_enabled = record.caldav_enabled == 1;
+        let caldav_url = if caldav_enabled && record.caldav_token_hash.is_some() {
+            Some(format!("webcal://{}", "[REDACTED_TOKEN]"))
+        } else {
+            None
+        };
         Ok(Self {
             projection: record.projection.parse()?,
             display_timezone: record.display_timezone,
             expires_at: record.expires_at,
             revoked: record.revoked_at.is_some(),
             version: record.version,
+            caldav_enabled,
+            caldav_url,
         })
     }
 }
@@ -767,6 +1004,20 @@ struct ResolvedPublicView {
     projection: PublicViewProjection,
     display_timezone: String,
     expires_at: i64,
+}
+
+struct ResolvedCaldavView {
+    view_id: i64,
+    owner_user_id: i64,
+}
+
+#[derive(FromRow)]
+struct CaldavResolutionRecord {
+    caldav_token_hash: Vec<u8>,
+    expires_at: i64,
+    view_id: i64,
+    owner_user_id: i64,
+    name: String,
 }
 
 fn validate_public_configuration(
@@ -876,7 +1127,9 @@ mod tests {
                     revoked_at INTEGER,
                     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
                     created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
+                    updated_at INTEGER NOT NULL,
+                    caldav_token_hash BLOB,
+                    caldav_enabled INTEGER DEFAULT 0 CHECK (caldav_enabled IN (0, 1))
                 )",
             )
             .execute(&pool)

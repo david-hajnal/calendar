@@ -98,7 +98,8 @@ impl Gateway {
         request: axum::http::Request<axum::body::Body>,
     ) -> axum::http::Response<axum::body::Body> {
         // Parse the MCP protocol message from the request body.
-        let body_bytes = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+        // Limit body size to 1MB to prevent memory exhaustion DoS.
+        let body_bytes = match axum::body::to_bytes(request.into_body(), 1024 * 1024).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!(error = %e, "failed to read request body");

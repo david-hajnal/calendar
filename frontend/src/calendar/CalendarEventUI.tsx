@@ -370,7 +370,11 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       {selected.description && <div className="event-ui__detail-description">
         <p className="typography-body-md">{selected.description}</p>
       </div>}
-      <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} eventStartUtc={selected.start_utc || 0} />
+      {editable(selected, calendarFor(selected)) && <button type="button" className="app-button" style={{ fontSize: '0.8125rem', marginTop: '0.5rem' }} onClick={() => window.open(`/api/v1/calendars/${selected.calendar_id}/events/${selected.id}/add-to-calendar`, '_blank')}>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle' }}>calendar_add_on</span>
+        Add to Apple Calendar
+      </button>}
+      <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} />
     </aside>}
     {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
       <div className="event-ui__editor-header">
@@ -413,7 +417,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
 
 const PRESET_MINUTES = [5, 15, 30, 60];
 
-function ReminderRow({ api, calendarId, eventId, eventTitle, eventStartUtc }: { api: ApiClient; calendarId: number; eventId: number; eventTitle: string; eventStartUtc: number }) {
+function ReminderRow({ api, calendarId, eventId, eventTitle }: { api: ApiClient; calendarId: number; eventId: number; eventTitle: string }) {
   const [activeMinutes, setActiveMinutes] = useState<number | null>(null);
   const [customMinutes, setCustomMinutes] = useState("");
   const [loading, setLoading] = useState(false);

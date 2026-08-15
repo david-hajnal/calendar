@@ -68,11 +68,6 @@ export function NotificationDropdown({ api, onPermissionRequest }: { api: ApiCli
     await refresh();
   };
 
-  const handleMarkRead = async (id: number) => {
-    await markAsRead(api, id);
-    await refresh();
-  };
-
   const handleDismiss = async (id: number) => {
     await markAsRead(api, id);
     setNotifications((prev) => (prev ? prev.filter((n) => n.id !== id) : []));

@@ -163,6 +163,116 @@ async fn test_config_current_time() {
     assert!(now < 2000000000);
 }
 
+/// Integration test: Protected-resource metadata derives resource URL correctly.
+#[tokio::test]
+async fn test_protected_resource_metadata_resource_url() {
+    let meta = mcp_server::config::OauthProtectedResourceMetadata::new(
+        "https://mcal.hajnal.space/mcp",
+        "https://auth.cal.hajnal.space",
+        true,
+    );
+    assert_eq!(meta.resource, "https://mcal.hajnal.space/mcp");
+    assert_eq!(
+        meta.resource_metadata,
+        Some("https://mcal.hajnal.space/.well-known/oauth-protected-resource".to_string())
+    );
+    assert_eq!(
+        meta.authorization_servers,
+        vec!["https://auth.cal.hajnal.space"]
+    );
+    assert!(meta.dpop_bound_access_tokens);
+}
+
+/// Integration test: Protected-resource metadata sets dpop_bound_access_tokens=false when no DPoP key.
+#[tokio::test]
+async fn test_protected_resource_metadata_dpop_unsupported() {
+    let meta = mcp_server::config::OauthProtectedResourceMetadata::new(
+        "https://mcal.hajnal.space/mcp",
+        "https://auth.cal.hajnal.space",
+        false,
+    );
+    assert!(!meta.dpop_bound_access_tokens);
+}
+
+/// Integration test: Config rejects MCP_PUBLIC_RESOURCE_URL with placeholder domain.
+#[test]
+fn test_config_rejects_placeholder_in_resource_url() {
+    use mcp_server::config::{AppEnv, Config, RawConfig};
+
+    let raw = RawConfig {
+        app_env: AppEnv::Production,
+        oauth_issuer: "https://auth.example.com".into(),
+        internal_api_base: "https://api.example.com".into(),
+        internal_api_key: "real-key-12345".into(),
+        session_secret: "real-secret-12345".into(),
+        database_path: "/tmp/test.db".into(),
+        mcp_domain: Some("mcal.example.com".into()),
+        public_resource_url: Some("https://mcp.commoncal.tld/mcp".into()),
+        bind_address: "127.0.0.1:3001".parse().unwrap(),
+        dpop_key_path: None,
+        rate_limit_enabled: true,
+        tracing_level: "info".into(),
+    };
+
+    let errors = Config::validate(raw).unwrap_err();
+    assert!(errors.iter().any(|e| e.message.contains("placeholder")));
+}
+
+/// Integration test: Config rejects MCP_PUBLIC_RESOURCE_URL with HTTP.
+#[test]
+fn test_config_rejects_http_resource_url() {
+    use mcp_server::config::{AppEnv, Config, RawConfig};
+
+    let raw = RawConfig {
+        app_env: AppEnv::Production,
+        oauth_issuer: "https://auth.example.com".into(),
+        internal_api_base: "https://api.example.com".into(),
+        internal_api_key: "real-key-12345".into(),
+        session_secret: "real-secret-12345".into(),
+        database_path: "/tmp/test.db".into(),
+        mcp_domain: Some("mcal.example.com".into()),
+        public_resource_url: Some("http://mcal.example.com/mcp".into()),
+        bind_address: "127.0.0.1:3001".parse().unwrap(),
+        dpop_key_path: None,
+        rate_limit_enabled: true,
+        tracing_level: "info".into(),
+    };
+
+    let errors = Config::validate(raw).unwrap_err();
+    assert!(errors.iter().any(|e| e.message.contains("HTTPS")));
+}
+
+/// Integration test: Config rejects MCP_PUBLIC_RESOURCE_URL with credentials.
+#[test]
+fn test_config_rejects_credentials_in_resource_url() {
+    use mcp_server::config::{AppEnv, Config, RawConfig};
+
+    let raw = RawConfig {
+        app_env: AppEnv::Production,
+        oauth_issuer: "https://auth.example.com".into(),
+        internal_api_base: "https://api.example.com".into(),
+        internal_api_key: "real-key-12345".into(),
+        session_secret: "real-secret-12345".into(),
+        database_path: "/tmp/test.db".into(),
+        mcp_domain: Some("mcal.example.com".into()),
+        public_resource_url: Some("https://user:pass@mcal.example.com/mcp".into()),
+        bind_address: "127.0.0.1:3001".parse().unwrap(),
+        dpop_key_path: None,
+        rate_limit_enabled: true,
+        tracing_level: "info".into(),
+    };
+
+    let errors = Config::validate(raw).unwrap_err();
+    assert!(errors.iter().any(|e| e.message.contains("credentials")));
+}
+
+/// Integration test: OAuth extract_audience returns the resource URL as-is.
+#[test]
+fn test_oauth_extract_audience() {
+    let audience = mcp_server::oauth::extract_audience("https://mcal.hajnal.space/mcp");
+    assert_eq!(audience, "https://mcal.hajnal.space/mcp");
+}
+
 /// Integration test: mcp_grant current_time_secs returns valid timestamp.
 #[tokio::test]
 async fn test_grant_current_time() {

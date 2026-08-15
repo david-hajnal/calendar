@@ -85,6 +85,10 @@ grep -q 'policyTypes:' "$rendered"
 grep -q 'port: http' "$rendered"
 grep -q 'kubernetes.io/metadata.name: kube-system' "$rendered"
 
+# Verify the sqlite-console deny-all NetworkPolicy exists and selects only console pods
+grep -q 'name: sqlite-console-deny-all' "$rendered"
+grep -q 'commoncal.io/role: sqlite-console' "$rendered"
+
 if grep -q 'kind: HorizontalPodAutoscaler' "$rendered"; then
   echo 'the SQLite chart must not render a HorizontalPodAutoscaler' >&2
   exit 1

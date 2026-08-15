@@ -22,9 +22,14 @@ function ToggleButton() {
 describe("ThemeProvider", () => {
   beforeEach(() => {
     vi.stubGlobal("matchMedia", vi.fn().mockImplementation(() => ({
+      media: "(prefers-color-scheme: dark)",
       matches: false,
+      onchange: null,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
     })));
   });
 
@@ -42,9 +47,14 @@ describe("ThemeProvider", () => {
 
   it("renders with dark theme when system prefers dark", () => {
     vi.mocked(window.matchMedia).mockImplementation(() => ({
+      media: "(prefers-color-scheme: dark)",
       matches: true,
+      onchange: null,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
     }));
     render(<ThemeProvider><ThemeDisplay /></ThemeProvider>);
     expect(screen.getByTestId("theme")).toHaveTextContent("system:dark");

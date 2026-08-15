@@ -146,12 +146,7 @@ pub fn project_events_to_ics(view_name: &str, events: &[EventProjection]) -> Ics
             }
             _ => continue,
         };
-        let uid = format!(
-            "{}:{}:{}",
-            0,
-            event.id,
-            event.recurrence_id.unwrap_or(0).to_string()
-        );
+        let uid = format!("{}:{}:{}", 0, event.id, event.recurrence_id.unwrap_or(0));
         let recurrence_id = event.recurrence_date.as_deref().unwrap_or("");
         let uid = if !recurrence_id.is_empty() {
             format!("{}:{}", uid, recurrence_id)

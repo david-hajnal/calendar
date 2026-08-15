@@ -13,8 +13,6 @@ use crate::{
     security::{SecretKey, SecretToken, TokenDomain},
 };
 
-use std::io::Write;
-
 const PUBLIC_TOKEN_PREFIX_LENGTH: usize = 8;
 const MAX_PUBLIC_EVENTS: usize = 1_000;
 
@@ -1017,6 +1015,7 @@ struct CaldavResolutionRecord {
     expires_at: i64,
     view_id: i64,
     owner_user_id: i64,
+    #[allow(dead_code)]
     name: String,
 }
 

@@ -38,8 +38,8 @@ NAMESPACE="${NAMESPACE:-production}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
-CORE_DOMAIN="${CORE_DOMAIN:-$DOMAIN}"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
+CORE_DOMAIN="${CORE_DOMAIN:-$DOMAIN}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 case "${DRY_RUN:-0}" in

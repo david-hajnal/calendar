@@ -176,9 +176,13 @@ impl Config {
                 errors.push(ConfigError::new(
                     "MCP_INTERNAL_API_BASE is required in production",
                 ));
-            } else if raw.internal_api_base.contains("commoncal-core.internal") {
+            } else             if raw.internal_api_base.contains("commoncal-core.internal") {
                 errors.push(ConfigError::new(
                     "MCP_INTERNAL_API_BASE must not contain placeholder domain 'commoncal-core.internal'",
+                ));
+            } else if raw.internal_api_base.starts_with("http://") {
+                errors.push(ConfigError::new(
+                    "MCP_INTERNAL_API_BASE must use HTTPS in production",
                 ));
             }
 
@@ -217,6 +221,12 @@ impl Config {
             if raw.database_path.as_os_str().is_empty() {
                 errors.push(ConfigError::new(
                     "MCP_DATABASE_PATH is required in production",
+                ));
+            }
+
+            if !raw.rate_limit_enabled {
+                errors.push(ConfigError::new(
+                    "MCP_RATE_LIMIT_ENABLED must be '1' in production",
                 ));
             }
         }
@@ -481,6 +491,36 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_validate_production_api_base_http_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "http://commoncal-core:3000");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("HTTPS")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+    }
+
+    #[test]
+    #[serial]
     fn test_validate_development_accepts_defaults() {
         let orig = remove_env_safe("APP_ENV");
         let raw = Config::parse_env();
@@ -502,6 +542,7 @@ mod tests {
         set_env("MCP_DOMAIN", "mcal.example.com");
         set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
         remove_env("BIND_ADDRESS");
         let raw = Config::parse_env();
         let result = Config::validate(raw);
@@ -514,6 +555,7 @@ mod tests {
         remove_env("MCP_DOMAIN");
         remove_env("MCP_PUBLIC_RESOURCE_URL");
         remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
     }
 
     #[test]
@@ -600,6 +642,72 @@ mod tests {
         let addr: SocketAddr = "0.0.0.0:3001".parse().unwrap();
         assert_eq!(addr.ip().to_string(), "0.0.0.0");
         assert_eq!(addr.port(), 3001);
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_rate_limit_required() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("MCP_RATE_LIMIT_ENABLED")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_rate_limit_enabled_accepted() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let result = Config::validate(raw);
+        assert!(result.is_ok());
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
     }
 
     #[test]

@@ -86,7 +86,7 @@ impl Config {
             if app_env == AppEnv::Production {
                 String::new()
             } else {
-                "https://auth.commoncal.tld".into()
+                "https://auth.example.com".into()
             }
         });
 
@@ -216,6 +216,38 @@ impl Config {
                 errors.push(ConfigError::new(
                     "MCP_PUBLIC_RESOURCE_URL is required in production",
                 ));
+            } else if let Some(url_str) = &raw.public_resource_url {
+                if let Ok(parsed) = url::Url::parse(url_str) {
+                    if parsed.scheme() != "https" {
+                        errors.push(ConfigError::new(
+                            "MCP_PUBLIC_RESOURCE_URL must use HTTPS in production",
+                        ));
+                    }
+                    if !parsed.username().is_empty() || parsed.password().is_some() {
+                        errors.push(ConfigError::new(
+                            "MCP_PUBLIC_RESOURCE_URL must not contain credentials",
+                        ));
+                    }
+                    if parsed.query().is_some() {
+                        errors.push(ConfigError::new(
+                            "MCP_PUBLIC_RESOURCE_URL must not contain a query string",
+                        ));
+                    }
+                    if parsed.fragment().is_some() {
+                        errors.push(ConfigError::new(
+                            "MCP_PUBLIC_RESOURCE_URL must not contain a fragment",
+                        ));
+                    }
+                    if parsed.host_str().map_or(false, |h| h.contains("commoncal.tld")) {
+                        errors.push(ConfigError::new(
+                            "MCP_PUBLIC_RESOURCE_URL must not contain placeholder domain 'commoncal.tld'",
+                        ));
+                    }
+                } else {
+                    errors.push(ConfigError::new(
+                        format!("MCP_PUBLIC_RESOURCE_URL '{}' is not a valid URL", url_str),
+                    ));
+                }
             }
 
             if raw.database_path.as_os_str().is_empty() {
@@ -301,9 +333,17 @@ pub struct OauthProtectedResourceMetadata {
 }
 
 impl OauthProtectedResourceMetadata {
-    pub fn new(resource_url: &str, auth_issuer: &str) -> Self {
+    pub fn new(resource_url: &str, auth_issuer: &str, dpop_supported: bool) -> Self {
+        let resource_metadata = if resource_url.ends_with("/mcp") || resource_url.ends_with("/mcp/") {
+            let stripped = resource_url.trim_end_matches('/');
+            Some(stripped.replace("/mcp", "/.well-known/oauth-protected-resource"))
+        } else if resource_url.ends_with('/') {
+            Some(format!("{}oauth-protected-resource", resource_url))
+        } else {
+            Some(format!("{}/oauth-protected-resource", resource_url))
+        };
         Self {
-            resource_metadata: None,
+            resource_metadata,
             resource: resource_url.to_string(),
             authorization_servers: vec![auth_issuer.to_string()],
             scopes_supported: vec![
@@ -317,7 +357,7 @@ impl OauthProtectedResourceMetadata {
                 "commoncal.reminder.read".to_string(),
                 "commoncal.reminder.write".to_string(),
             ],
-            dpop_bound_access_tokens: true,
+            dpop_bound_access_tokens: dpop_supported,
         }
     }
 }
@@ -755,5 +795,236 @@ mod tests {
         if let Some(v) = orig {
             set_env("APP_ENV", &v);
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_http_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "http://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("HTTPS")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_credentials_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://user:pass@mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("credentials")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_query_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp?foo=bar");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("query")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_fragment_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp#section");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("fragment")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_placeholder_domain_rejected() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcp.commoncal.tld/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let errors = Config::validate(raw).unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("placeholder")));
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    #[serial]
+    fn test_validate_production_resource_url_valid_accepted() {
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        set_env("APP_ENV", "production");
+        set_env("MCP_OAUTH_ISSUER", "https://auth.example.com");
+        set_env("MCP_INTERNAL_API_BASE", "https://api.example.com");
+        set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
+        set_env("MCP_SESSION_SECRET", "real-secret-12345");
+        set_env("MCP_DOMAIN", "mcal.example.com");
+        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp");
+        set_env("MCP_DATABASE_PATH", "/tmp/test.db");
+        set_env("MCP_RATE_LIMIT_ENABLED", "1");
+        let raw = Config::parse_env();
+        let result = Config::validate(raw);
+        assert!(result.is_ok());
+        remove_env("APP_ENV");
+        remove_env("MCP_OAUTH_ISSUER");
+        remove_env("MCP_INTERNAL_API_BASE");
+        remove_env("MCP_INTERNAL_API_KEY");
+        remove_env("MCP_SESSION_SECRET");
+        remove_env("MCP_DOMAIN");
+        remove_env("MCP_PUBLIC_RESOURCE_URL");
+        remove_env("MCP_DATABASE_PATH");
+        remove_env("MCP_RATE_LIMIT_ENABLED");
+    }
+
+    #[test]
+    fn test_oauth_metadata_generates_resource_metadata_url() {
+        let meta = super::OauthProtectedResourceMetadata::new(
+            "https://mcal.example.com/mcp",
+            "https://auth.example.com",
+            true,
+        );
+        assert_eq!(
+            meta.resource_metadata,
+            Some("https://mcal.example.com/.well-known/oauth-protected-resource".to_string())
+        );
+        assert_eq!(meta.resource, "https://mcal.example.com/mcp");
+        assert_eq!(meta.authorization_servers, vec!["https://auth.example.com"]);
+        assert!(meta.dpop_bound_access_tokens);
+    }
+
+    #[test]
+    fn test_oauth_metadata_dpop_unsupported() {
+        let meta = super::OauthProtectedResourceMetadata::new(
+            "https://mcal.example.com/mcp",
+            "https://auth.example.com",
+            false,
+        );
+        assert!(!meta.dpop_bound_access_tokens);
+    }
+
+    #[test]
+    fn test_oauth_metadata_trailing_slash_resource() {
+        let meta = super::OauthProtectedResourceMetadata::new(
+            "https://mcal.example.com/mcp/",
+            "https://auth.example.com",
+            true,
+        );
+        assert_eq!(
+            meta.resource_metadata,
+            Some("https://mcal.example.com/.well-known/oauth-protected-resource".to_string())
+        );
     }
 }

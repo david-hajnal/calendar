@@ -358,7 +358,7 @@ fn alg_from_jwk(jwk: &Jwk) -> Result<Algorithm, TokenError> {
 }
 
 /// Extract the audience from the configured resource URL.
-fn extract_audience(resource_url: &str) -> String {
+pub fn extract_audience(resource_url: &str) -> String {
     resource_url.to_string()
 }
 

@@ -62,11 +62,13 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             "/.well-known/oauth-protected-resource",
             get(move || {
                 let issuer = config.oauth_issuer.clone();
+                let dpop_supported = config.dpop_key_path.is_some();
                 async move {
                     let meta =
                         crate::config::OauthProtectedResourceMetadata::new(
                             &config.public_resource_url,
                             &issuer,
+                            dpop_supported,
                         );
                     (
                         StatusCode::OK,

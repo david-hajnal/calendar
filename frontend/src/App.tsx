@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import type { Fetcher } from "./auth/api";
 import { AuthProvider, useAuth } from "./auth/session";
+import { ThemeProvider } from "./theme/themeContext";
 import { CalendarManagement } from "./calendar/CalendarManagement";
 import { CalendarEventUI } from "./calendar/CalendarEventUI";
 import { CompositeViewManagement } from "./calendar/CompositeViewManagement";
@@ -10,6 +11,7 @@ import type { Calendar } from "./calendar/CalendarManagement";
 import { PublicViewPage } from "./public/PublicView";
 import { NotificationSurface } from "./notification/NotificationSurface";
 import { DevLoginPage } from "./dev-login";
+import { useTheme } from "./theme/themeContext";
 
 interface ConsumptionResponse {
   csrf_token: string;
@@ -212,6 +214,21 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
   </main>;
 }
 
+function ThemeToggle() {
+  const { resolvedTheme, toggle } = useTheme();
+  const icon = resolvedTheme === "dark" ? "light_mode" : "dark_mode";
+  return (
+    <button
+      className="app-nav__button app-nav__button--quiet"
+      type="button"
+      aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
+      onClick={() => toggle()}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>{icon}</span>
+    </button>
+  );
+}
+
 function AuthenticatedShell() {
   const { state, api, reloadSession, logout } = useAuth();
   const location = useLocation();
@@ -241,6 +258,7 @@ function AuthenticatedShell() {
       <div className="app-header__actions">
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Notifications"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span></button>
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Settings"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
+        <ThemeToggle />
         <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}<span className="avatar__name">{name}</span><span className="avatar__email">{state.session.user.email}</span></div>
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Sign out" onClick={() => void logout()}>
           <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
@@ -307,5 +325,5 @@ export function App({ fetcher }: { fetcher?: Fetcher }) {
   const publicToken = /^\/public\/views\/([^/]+)$/.exec(window.location.pathname)?.[1];
   if (publicToken) return <PublicViewPage token={publicToken} fetcher={fetcher} />;
   const isTokenConsumption = window.location.pathname === "/invitations/consume" || window.location.pathname === "/login/consume" || window.location.pathname === "/dev-login";
-  return <AuthProvider fetcher={fetcher} loadSession={!isTokenConsumption}><AuthRoutes /></AuthProvider>;
+  return <ThemeProvider><AuthProvider fetcher={fetcher} loadSession={!isTokenConsumption}><AuthRoutes /></AuthProvider></ThemeProvider>;
 }

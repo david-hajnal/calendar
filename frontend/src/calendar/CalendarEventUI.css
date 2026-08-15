@@ -225,15 +225,173 @@
 }
 
 /* Agenda/Week/Day views */
-.event-ui__agenda,
-.event-ui__week,
-.event-ui__day {
+.event-ui__agenda {
   list-style: none;
   padding: 0;
   margin: 0.75rem 0;
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
+}
+
+/* Day grid layout */
+.event-ui__day {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  position: relative;
+  background: var(--color-surface-container-lowest);
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-outline-variant);
+}
+
+.event-ui__time-column {
+  padding: 0;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--color-surface);
+}
+
+.event-ui__time-label {
+  height: 60px;
+  position: relative;
+  text-align: right;
+  padding-right: 0.5rem;
+}
+
+.event-ui__time-label span {
+  position: absolute;
+  top: -7px;
+  right: 0;
+  font-size: 0.75rem;
+  color: var(--color-on-surface-variant);
+  background: var(--color-surface);
+  padding: 0 0.25rem;
+}
+
+.event-ui__day-column {
+  position: relative;
+  min-height: 1440px;
+}
+
+.event-ui__hour-row {
+  height: 60px;
+  border-bottom: 1px solid var(--color-outline-variant);
+  position: relative;
+  cursor: pointer;
+}
+
+.event-ui__hour-row:hover {
+  background: var(--color-surface-container-low);
+}
+
+.event-ui__hour-row:hover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px dashed var(--color-primary);
+  border-radius: 2px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.event-ui__event-block {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  overflow: hidden;
+  z-index: 2;
+  cursor: pointer;
+  transition: box-shadow 100ms ease;
+}
+
+.event-ui__event-block:hover {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+/* Week grid layout */
+.event-ui__week {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  position: relative;
+  background: var(--color-surface-container-lowest);
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-outline-variant);
+}
+
+.event-ui__week-day-column {
+  position: relative;
+  min-height: 1440px;
+  border-right: 1px solid var(--color-outline-variant);
+}
+
+.event-ui__week-day-column:last-child {
+  border-right: none;
+}
+
+.event-ui__week-hour-row {
+  height: 60px;
+  border-bottom: 1px solid var(--color-outline-variant);
+  position: relative;
+  cursor: pointer;
+}
+
+.event-ui__week-hour-row:hover {
+  background: var(--color-surface-container-low);
+}
+
+.event-ui__week-hour-row:hover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px dashed var(--color-primary);
+  border-radius: 2px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Slot highlight overlay */
+.event-ui__slot-highlight {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 60px;
+  border: 2px dashed var(--color-primary);
+  border-radius: 4px;
+  background: var(--color-primary-container);
+  opacity: 0.35;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* Current time indicator */
+.event-ui__current-time {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-error);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.event-ui__current-time::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-error);
 }
 
 /* Loading */

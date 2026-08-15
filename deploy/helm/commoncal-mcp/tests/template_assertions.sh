@@ -41,6 +41,11 @@ grep -q 'containerPort: 3001' "$rendered"
 grep -q 'mountPath: /app/tmp' "$rendered"
 grep -q 'host: "mcp.example.com"' "$rendered"
 grep -q 'path: "/mcp"' "$rendered"
+grep -q 'path: "/.well-known/oauth-protected-resource"' "$rendered"
+grep -q 'bindAddress: "0.0.0.0:3001"' "$rendered"
+grep -q 'httpGet:' "$rendered"
+grep -q 'path: /health/ready' "$rendered"
+grep -q 'path: /health/live' "$rendered"
 
 if helm template commoncal-mcp "$chart_dir" --set replicaCount=2 >/dev/null 2>&1; then
   echo 'replicaCount=2 should be rejected for the SQLite deployment' >&2

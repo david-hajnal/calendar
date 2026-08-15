@@ -201,7 +201,7 @@ ImageUpdateAutomation pushes tag update to main
 - Assert `chart.spec.sourceRef.kind: GitRepository`
 - Assert image tag uses flux setter comment
 - Assert all existing values from mcp-helmchart.yaml are preserved
-- Assert `env.CALENDAR_API_URL: http://commoncal-core:3000/api`
+- Assert `env.MCP_INTERNAL_API_BASE: http://commoncal-core:3000`
 
 ### Test: image-repository-valid
 - Assert ImageRepository exists for both core and MCP

@@ -117,7 +117,8 @@ cp -R "$repository_root/deploy" "$env_deploy_dir"
 cat >"$env_deploy_dir/.env" <<'EOF'
 SESSION_SECRET=env-session-secret
 BACKUP_ENCRYPTION_KEY_HEX=1111111111111111111111111111111111111111111111111111111111111111
-CALENDAR_API_URL=http://commoncal:3000/api
+MCP_INTERNAL_API_BASE=http://commoncal-mcp:3000
+MCP_DOMAIN=calendar.example.test
 IMAGE_TAG=from-dot-env
 EOF
 

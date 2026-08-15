@@ -1,4 +1,4 @@
-.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test deploy-script-test e2e frontend-build frontend-test lint validate-authorization-coverage
+.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test deploy-script-test e2e frontend-build frontend-test lint mcp-check mcp-test validate-authorization-coverage
 
 all: check
 
@@ -7,6 +7,12 @@ backend-check:
 
 backend-test:
 	cargo test --manifest-path backend/Cargo.toml --locked
+
+mcp-check:
+	cargo check --manifest-path mcp-server/Cargo.toml --locked
+
+mcp-test:
+	cargo test --manifest-path mcp-server/Cargo.toml --locked
 
 validate-authorization-coverage:
 	sh scripts/validate-authorization-coverage-report.sh
@@ -38,7 +44,7 @@ ci-script-test:
 deploy-script-test:
 	sh scripts/test-deploy-prod.sh
 
-check: check-no-yarn ci-script-test deploy-script-test backend-check backend-test authorization-regression frontend-test lint frontend-build
+check: check-no-yarn ci-script-test backend-check backend-test authorization-regression mcp-check mcp-test frontend-test lint frontend-build deploy-script-test
 
 # Production deployment. Requires:
 #   SESSION_SECRET        - session encryption key

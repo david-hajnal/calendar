@@ -32,6 +32,7 @@ spec:
   values:
     replicaCount: 1
     domain: mcal.hajnal.space
+    bindAddress: "0.0.0.0:3001"
     image:
       # fluxcd/image-automation: tag={{ .Values.image.tag }}
       repository: ghcr.io/david-hajnal/calendar-mcp
@@ -61,8 +62,9 @@ spec:
         memory: 256Mi
     env:
       APP_ENV: production
-      CALENDAR_API_URL: http://commoncal-core:3000/api
+      MCP_INTERNAL_API_BASE: http://commoncal-core:3000
       MCP_DOMAIN: mcal.hajnal.space
       MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp
-      # MCP_OAUTH_ISSUER, MCP_INTERNAL_API_BASE, MCP_INTERNAL_API_KEY,
+      MCP_RATE_LIMIT_ENABLED: "1"
+      # MCP_OAUTH_ISSUER, MCP_INTERNAL_API_KEY,
       # MCP_SESSION_SECRET — set via existingSecret or --set-string at deploy time

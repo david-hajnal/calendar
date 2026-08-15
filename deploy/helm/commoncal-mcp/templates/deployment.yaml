@@ -50,18 +50,21 @@ spec:
               containerPort: 3001
               protocol: TCP
           startupProbe:
-            tcpSocket:
-              port: http
+            httpGet:
+              path: /health/live
+              port: 3001
             failureThreshold: 30
             periodSeconds: 5
           readinessProbe:
-            tcpSocket:
-              port: http
+            httpGet:
+              path: /health/ready
+              port: 3001
             initialDelaySeconds: 2
             periodSeconds: 5
           livenessProbe:
-            tcpSocket:
-              port: http
+            httpGet:
+              path: /health/live
+              port: 3001
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:

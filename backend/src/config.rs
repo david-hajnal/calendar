@@ -84,7 +84,7 @@ impl AppConfig {
             database_path,
             app_origin,
             access_log_level,
-            false,
+            _password_login_enabled,
         )
     }
 

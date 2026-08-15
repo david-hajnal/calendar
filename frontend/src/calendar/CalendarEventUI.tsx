@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 
 import type { ApiClient } from "../auth/api";
 import { CalendarApiError, createEvent, listExpandedEvents, updateEvent, type EventPayload, type EventProjection } from "./api";
+import { setReminder, removeReminder } from "./reminderApi";
 import type { Calendar } from "./CalendarManagement";
 import "./CalendarEventUI.css";
 
@@ -232,6 +233,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       {selected.description && <div className="event-ui__detail-description">
         <p className="typography-body-md">{selected.description}</p>
       </div>}
+      <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} eventStartUtc={selected.start_utc || 0} />
     </aside>}
     {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
       <div className="event-ui__editor-header">
@@ -270,4 +272,121 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>add</span>
     </button>
   </section>;
+}
+
+const PRESET_MINUTES = [5, 15, 30, 60];
+
+function ReminderRow({ api, calendarId, eventId, eventTitle, eventStartUtc }: { api: ApiClient; calendarId: number; eventId: number; eventTitle: string; eventStartUtc: number }) {
+  const [activeMinutes, setActiveMinutes] = useState<number | null>(null);
+  const [customMinutes, setCustomMinutes] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const res = await api.request(`/api/v1/calendars/${calendarId}/events/${eventId}/reminder`);
+        if (active && res.ok) {
+          const data = await res.json() as { reminder_minutes: number };
+          setActiveMinutes(data.reminder_minutes);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { active = false; };
+  }, [api, calendarId, eventId]);
+
+  const handleSet = async (minutes: number) => {
+    setLoading(true);
+    try {
+      await setReminder(api, calendarId, eventId, minutes);
+      setActiveMinutes(minutes);
+      setCustomMinutes("");
+      if ("Notification" in window) {
+        const perm = await Notification.requestPermission();
+        if (perm === "granted") {
+          new Notification(`Reminder set for ${eventTitle}`, { body: `You'll be notified ${minutes} minute${minutes > 1 ? "s" : ""} before the event.`, tag: `reminder-${eventId}` });
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setLoading(true);
+    try {
+      await removeReminder(api, calendarId, eventId);
+      setActiveMinutes(null);
+      setCustomMinutes("");
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCustom = async () => {
+    const mins = parseInt(customMinutes, 10);
+    if (mins >= 1 && mins <= 10080) {
+      await handleSet(mins);
+    }
+  };
+
+  const formatMinutes = (m: number): string => {
+    if (m < 60) return `${m}m`;
+    if (m === 60) return "1h";
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
+    if (mins === 0) return `${hours}h`;
+    return `${hours}h ${mins}m`;
+  };
+
+  return (
+    <div className="event-ui__reminder">
+      <div className="event-ui__reminder-label">
+        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>notifications</span>
+        Reminder
+      </div>
+      {activeMinutes === null ? (
+        <div className="event-ui__reminder-options">
+          {PRESET_MINUTES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className="event-ui__reminder-btn"
+              onClick={() => void handleSet(m)}
+              disabled={loading}
+            >
+              {formatMinutes(m)}
+            </button>
+          ))}
+          <label className="event-ui__reminder-custom">
+            <input
+              type="number"
+              min={1}
+              max={10080}
+              placeholder="custom"
+              value={customMinutes}
+              onChange={(e) => setCustomMinutes(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void handleCustom(); }}
+            />
+          </label>
+        </div>
+      ) : (
+        <div className="event-ui__reminder-active">
+          <span className="event-ui__reminder-active-text">
+            <span className="material-symbols-outlined" style={{ fontSize: '14px', verticalAlign: 'middle' }}>notifications</span>
+            Remind {formatMinutes(activeMinutes)} before
+          </span>
+          <button type="button" className="event-ui__reminder-remove" onClick={handleRemove} disabled={loading}>
+            Remove
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -721,7 +721,20 @@ fn build_application_router(state: ApplicationState) -> Router {
                 );
         }
         if state.notification_service.is_some() {
-            protected = protected.route("/api/v1/notifications", get(list_notifications));
+            protected = protected
+                .route("/api/v1/notifications", get(list_notifications))
+                .route(
+                    "/api/v1/notifications/unread-count",
+                    get(unread_count),
+                )
+                .route(
+                    "/api/v1/notifications/mark-all-read",
+                    post(mark_all_notifications_read),
+                )
+                .route(
+                    "/api/v1/notifications/:notification_id/read",
+                    post(mark_notification_read),
+                );
             // This synchronous delivery trigger exists solely for deterministic local E2E tests.
             // It is deliberately absent from production routers.
             if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
@@ -730,6 +743,12 @@ fn build_application_router(state: ApplicationState) -> Router {
                     post(create_test_notification),
                 );
             }
+        }
+        if state.event_service.is_some() && state.notification_service.is_some() {
+            protected = protected.route(
+                "/api/v1/calendars/:calendar_id/events/:event_id/reminder",
+                post(set_event_reminder),
+            );
         }
         if state.external_feed_service.is_some() {
             protected = protected
@@ -913,6 +932,86 @@ async fn create_test_notification(
         .await
         .map_err(|_| ApiError::not_found())?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize)]
+struct UnreadCountResponse {
+    unread_count: u64,
+}
+
+async fn mark_notification_read(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(notification_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let marked = state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .mark_as_read(session.user.id, notification_id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    if marked {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Ok(StatusCode::NOT_FOUND)
+    }
+}
+
+async fn mark_all_notifications_read(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .mark_all_as_read(session.user.id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unread_count(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+) -> Result<Json<UnreadCountResponse>, ApiError> {
+    let count = state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?
+        .unread_count(session.user.id)
+        .await
+        .map_err(|_| ApiError::internal())?;
+    Ok(Json(UnreadCountResponse { unread_count: count }))
+}
+
+#[derive(Deserialize)]
+struct SetReminderPayload {
+    reminder_minutes: Option<i64>,
+}
+
+async fn set_event_reminder(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path((calendar_id, event_id)): Path<(i64, i64)>,
+    Json(payload): Json<SetReminderPayload>,
+) -> Result<StatusCode, ApiError> {
+    let svc = state
+        .notification_service
+        .ok_or_else(ApiError::service_unavailable)?;
+    match payload.reminder_minutes {
+        Some(minutes) => {
+            let _reminder_id = svc
+                .set_event_reminder(session.user.id, event_id, calendar_id, minutes)
+                .await
+                .map_err(|_| ApiError::internal())?;
+            Ok(StatusCode::CREATED)
+        }
+        None => {
+            svc.remove_event_reminder(session.user.id, event_id)
+                .await
+                .map_err(|_| ApiError::internal())?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+    }
 }
 
 async fn list_external_feeds(

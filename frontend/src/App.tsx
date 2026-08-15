@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { Fetcher } from "./auth/api";
 import { AuthProvider, useAuth } from "./auth/session";
@@ -9,7 +9,8 @@ import { CompositeViewManagement } from "./calendar/CompositeViewManagement";
 import { listCalendars } from "./calendar/api";
 import type { Calendar } from "./calendar/CalendarManagement";
 import { PublicViewPage } from "./public/PublicView";
-import { NotificationSurface } from "./notification/NotificationSurface";
+import { NotificationDropdown } from "./notification/NotificationDropdown";
+import { listNotifications, markAsRead } from "./notification/api";
 import { DevLoginPage } from "./dev-login";
 import { useTheme } from "./theme/themeContext";
 
@@ -232,6 +233,48 @@ function ThemeToggle() {
 function AuthenticatedShell() {
   const { state, api, reloadSession, logout } = useAuth();
   const location = useLocation();
+  const lastNotifsRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    let interval: number | undefined;
+    void (async () => {
+      try {
+        const notifs = await listNotifications(api);
+        const ids = notifs.map((n) => n.id);
+        const newNotifs = notifs.filter((n) => !lastNotifsRef.current.includes(n.id));
+        if ("Notification" in window && newNotifs.length > 0) {
+          const perm = await Notification.requestPermission();
+          if (perm === "granted") {
+            for (const n of newNotifs) {
+              new Notification(n.event_title, { body: `Reminder: ${n.event_title}`, tag: String(n.id) });
+            }
+          }
+        }
+        lastNotifsRef.current = ids;
+      } catch {
+        // polling error — will retry next tick
+      }
+    })();
+    interval = window.setInterval(async () => {
+      try {
+        const notifs = await listNotifications(api);
+        const ids = notifs.map((n) => n.id);
+        const newNotifs = notifs.filter((n) => !lastNotifsRef.current.includes(n.id));
+        if ("Notification" in window && newNotifs.length > 0) {
+          const perm = await Notification.requestPermission();
+          if (perm === "granted") {
+            for (const n of newNotifs) {
+              new Notification(n.event_title, { body: `Reminder: ${n.event_title}`, tag: String(n.id) });
+            }
+          }
+        }
+        lastNotifsRef.current = ids;
+      } catch {
+        // polling error
+      }
+    }, 30000);
+    return () => { if (interval) clearInterval(interval); };
+  }, [api]);
 
   if (state.status === "loading") return <main className="app-page app-page--state" aria-busy="true"><section className="state-card"><p className="app-message app-message--status" role="status">Loading your session…</p></section></main>;
   if (state.status === "error") return <main className="app-page app-page--state"><section className="state-card"><p className="app-message app-message--error" role="alert">We could not load your session.</p><button className="app-button app-button--primary" type="button" onClick={() => void reloadSession()}>Retry</button></section></main>;
@@ -256,7 +299,7 @@ function AuthenticatedShell() {
         <button className={`app-nav__button ${activeTab === "shared" ? "app-nav__button--active" : ""}`} type="button" onClick={() => navigate("/shared")}>Composite views</button>
       </nav>}
       <div className="app-header__actions">
-        <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Notifications"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span></button>
+        <NotificationDropdown api={api} />
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Settings"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
         <ThemeToggle />
         <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}<span className="avatar__name">{name}</span><span className="avatar__email">{state.session.user.email}</span></div>
@@ -281,7 +324,6 @@ function AuthenticatedShell() {
       </button>
     </nav>}
     <div className="app-shell__content">
-      <NotificationSurface api={api} />
       {window.location.pathname === "/calendars" && <CalendarManagement api={api} />}
       {window.location.pathname === "/shared" && <CompositeViewManagement api={api} />}
       {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && <CalendarPage api={api} />}

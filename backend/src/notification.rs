@@ -421,6 +421,36 @@ impl NotificationService {
         .fetch_all(&self.pool)
         .await
     }
+    pub async fn mark_as_read(&self, user: i64, notification_id: i64) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE in_app_notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL",
+        )
+        .bind(self.now)
+        .bind(notification_id)
+        .bind(user)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+    pub async fn mark_all_as_read(&self, user: i64) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE in_app_notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL",
+        )
+        .bind(self.now)
+        .bind(user)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    pub async fn unread_count(&self, user: i64) -> Result<u64, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM in_app_notifications WHERE user_id = ? AND read_at IS NULL",
+        )
+        .bind(user)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count as u64)
+    }
     /// Development test seam: synchronously creates an in-app delivery for an event the user can access.
     pub async fn create_test_delivery(&self, user: i64, event_id: i64) -> Result<(), sqlx::Error> {
         let calendar: i64 = sqlx::query_scalar(
@@ -585,6 +615,33 @@ impl NotificationService {
             }
         }
         Ok(())
+    }
+    pub async fn set_event_reminder(&self, user: i64, event_id: i64, calendar_id: i64, reminder_minutes: i64) -> Result<String, sqlx::Error> {
+        if reminder_minutes <= 0 || reminder_minutes > 10080 {
+            return Err(sqlx::Error::Protocol("reminder_minutes must be between 1 and 10080".into()));
+        }
+        let preference = NotificationPreference::new(reminder_minutes, "UTC");
+        self.set_preference(user, PreferenceScope::Event(event_id), preference).await?;
+        let reminder_id = uuid::Uuid::new_v4().to_string();
+        Ok(reminder_id)
+    }
+    pub async fn remove_event_reminder(&self, user: i64, event_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM notification_preferences WHERE user_id = ? AND event_id = ? AND calendar_id IS NULL").bind(user).bind(event_id).execute(&self.pool).await?;
+        sqlx::query("UPDATE notification_jobs SET state = 'cancelled', updated_at = ? WHERE event_id = ? AND user_id = ? AND state = 'pending'")
+            .bind(self.now)
+            .bind(event_id)
+            .bind(user)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+    pub async fn get_event_reminder(&self, user: i64, event_id: i64) -> Result<Option<i64>, sqlx::Error> {
+        let row = sqlx::query_as::<_, PreferenceRow>("SELECT reminder_minutes, timezone, enabled FROM notification_preferences WHERE user_id = ? AND event_id = ? AND calendar_id IS NULL LIMIT 1")
+            .bind(user)
+            .bind(event_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.reminder_minutes))
     }
 }
 impl PendingNotificationCanceller for NotificationService {

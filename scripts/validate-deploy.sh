@@ -89,6 +89,21 @@ ruby -ryaml -e '
   end
 ' 2>/dev/null || { echo "FAIL: YAML syntax error"; ERRORS=$((ERRORS+1)); }
 
+# 7. Run deploy script tests
+echo ""
+echo "--- Deploy script tests ---"
+if [ -f "scripts/test-sqlite-prod.sh" ]; then
+  sh scripts/test-sqlite-prod.sh || { echo "FAIL: test-sqlite-prod.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: test-sqlite-prod.sh not found"
+fi
+
+if [ -f "scripts/test-deploy-prod.sh" ]; then
+  sh scripts/test-deploy-prod.sh || { echo "FAIL: test-deploy-prod.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: test-deploy-prod.sh not found"
+fi
+
 echo ""
 if [ $ERRORS -gt 0 ]; then
   echo "FAILED: $ERRORS error(s) found"

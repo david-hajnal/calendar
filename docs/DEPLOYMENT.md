@@ -160,3 +160,41 @@ This checks:
 - YAML syntax
 - No mutable tags (latest/main) in production
 - Flux setter comments present
+
+## Ad-hoc SQLite Console
+
+Open a read-only SQLite console on the production database:
+
+```bash
+sudo ./deploy/sqlite-prod.sh
+```
+
+Open a writable console (requires typed confirmation):
+
+```bash
+sudo ./deploy/sqlite-prod.sh --write
+```
+
+### Requirements
+
+- Run from an SSH session on the production server
+- `kubectl` installed and configured with local k3s kubeconfig (`/etc/rancher/k3s/k3s.yaml`)
+- Root access (`sudo`)
+- Interactive terminal (tty)
+
+### Safety
+
+- Read-only is the default
+- Write mode requires typing the pod name exactly to confirm
+- The console pod is automatically cleaned up on exit, Ctrl-C, or after 1 hour
+- Only one console session is allowed at a time
+- The pod has no network connectivity (deny-all NetworkPolicy)
+- The pod runs as non-root UID 1000 with a read-only root filesystem
+- The live database PVC is mounted directly; no database files are copied
+
+### Troubleshooting
+
+- **Pod fails to start**: Check PVC attachment — `kubectl describe pvc <pvc-name> -n commoncal`
+- **Another session active**: `kubectl delete pod commoncal-sqlite-console -n commoncal`
+- **NetworkPolicy missing**: Deploy the Helm chart or create the policy manually
+- **Database not found**: The database file must exist on the core pod before opening a console

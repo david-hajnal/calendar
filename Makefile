@@ -44,7 +44,10 @@ ci-script-test:
 deploy-script-test:
 	sh scripts/test-deploy-prod.sh
 
-check: check-no-yarn ci-script-test backend-check backend-test authorization-regression mcp-check mcp-test frontend-test lint frontend-build deploy-script-test
+sqlite-prod-test:
+	sh scripts/test-sqlite-prod.sh
+
+check: check-no-yarn ci-script-test backend-check backend-test authorization-regression mcp-check mcp-test frontend-test lint frontend-build deploy-script-test sqlite-prod-test
 
 # Production deployment. Requires:
 #   SESSION_SECRET        - session encryption key

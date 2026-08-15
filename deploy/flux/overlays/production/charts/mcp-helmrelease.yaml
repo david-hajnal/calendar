@@ -60,4 +60,9 @@ spec:
         cpu: 500m
         memory: 256Mi
     env:
+      APP_ENV: production
       CALENDAR_API_URL: http://commoncal-core:3000/api
+      MCP_DOMAIN: mcal.hajnal.space
+      MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp
+      # MCP_OAUTH_ISSUER, MCP_INTERNAL_API_BASE, MCP_INTERNAL_API_KEY,
+      # MCP_SESSION_SECRET — set via existingSecret or --set-string at deploy time

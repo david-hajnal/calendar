@@ -2,8 +2,9 @@
 # Deploy commoncal-mcp to production with secrets from environment variables.
 #
 # Required env vars (loaded from deploy/.env when present):
-#   CALENDAR_API_URL  - URL of the commoncal API
-#   IMAGE_TAG         - Published container image tag
+#   CALENDAR_API_URL       - URL of the commoncal API
+#   IMAGE_TAG              - Published container image tag
+#   MCP_INTERNAL_API_BASE  - Internal API base URL
 #
 # Optional env vars:
 #   MCP_DOMAIN                  - Production MCP domain (default: mcal.hajnal.space)
@@ -25,6 +26,7 @@ fi
 # Fail fast if required env vars are missing
 : "${CALENDAR_API_URL:?ERROR: CALENDAR_API_URL is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
+: "${MCP_INTERNAL_API_BASE:?ERROR: MCP_INTERNAL_API_BASE is required. Set it in $DEPLOY_DIR/.env or export it}"
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"
@@ -72,6 +74,7 @@ helm_args=(
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"
   --set-string "ingress.tls[0].hosts[0]=$MCP_DOMAIN"
   --set-string "env.CALENDAR_API_URL=$CALENDAR_API_URL"
+  --set-string "env.MCP_INTERNAL_API_BASE=$MCP_INTERNAL_API_BASE"
   --timeout=15m
 )
 

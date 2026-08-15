@@ -41,6 +41,20 @@ spec:
           env:
             - name: BIND_ADDRESS
               value: {{ .Values.bindAddress | quote }}
+            {{- if .Values.existingSecret.apiKeyNameName }}
+            - name: MCP_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.apiKeyNameName }}
+            {{- end }}
+            {{- if .Values.existingSecret.sessionSecretKeyName }}
+            - name: MCP_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.sessionSecretKeyName }}
+            {{- end }}
             {{- range $key, $val := .Values.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}

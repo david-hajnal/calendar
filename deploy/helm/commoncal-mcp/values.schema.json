@@ -17,8 +17,11 @@
     "existingSecret": {
       "type": "object",
       "description": "Kubernetes Secret containing MCP_INTERNAL_API_KEY and MCP_SESSION_SECRET.",
+      "required": ["name", "apiKeyKeyName", "sessionSecretKeyName"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 }
+        "name": { "type": "string", "minLength": 1 },
+        "apiKeyKeyName": { "type": "string", "minLength": 1 },
+        "sessionSecretKeyName": { "type": "string", "minLength": 1 }
       }
     },
     "bindAddress": {

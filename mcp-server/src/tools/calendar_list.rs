@@ -45,7 +45,9 @@ pub async fn handle(
 
     // Step 2: Check tool permission.
     if !crate::mcp_grant::check_tool_permission(&grant, "availability_find") {
-        return Err(ToolError::Forbidden("calendar_list requires availability permission".to_string()));
+        return Err(ToolError::Forbidden(
+            "calendar_list requires availability permission".to_string(),
+        ));
     }
 
     // Step 3: Fetch calendars from internal API.

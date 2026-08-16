@@ -15,7 +15,9 @@ use crate::error::ToolError;
 use crate::internal_client::{EventInfo, InternalClient};
 use crate::mcp_grant::{check_calendar_access, get_grant};
 use crate::oauth::TokenValidationResult;
-use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSearchOutput, EventSummary, ToolOutput};
+use crate::output_schema::{
+    ContentBlock, EventDescription, EventOutput, EventSearchOutput, EventSummary, ToolOutput,
+};
 
 /// Maximum number of events to return.
 const MAX_EVENTS: usize = 100;
@@ -53,9 +55,7 @@ pub async fn handle(
 
     // Step 2: Check calendar access.
     if !check_calendar_access(&grant, params.calendar_id) {
-        return Err(ToolError::Forbidden(
-            "calendar not in grant".to_string(),
-        ));
+        return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
     // Step 3: Check tool permission.
@@ -105,38 +105,41 @@ pub async fn handle(
         "basic"
     };
 
-    let event_summaries: Vec<EventSummary> = limited.iter().map(|e| {
-        if access_level == "full" {
-            EventSummary {
-                id: e.id,
-                calendar_id: e.calendar_id,
-                title: e.title.clone(),
-                description: e.description.as_ref().map(|d| EventDescription {
-                    value: d.clone(),
-                    trust: "user_supplied_untrusted",
-                }),
-                location: e.location.clone(),
-                status: e.status.clone(),
-                event_kind: e.event_kind.clone(),
-                start_utc: e.start_utc.map(|t| t.to_string()),
-                end_utc: e.end_utc.map(|t| t.to_string()),
-                version: e.version.unwrap_or(0),
+    let event_summaries: Vec<EventSummary> = limited
+        .iter()
+        .map(|e| {
+            if access_level == "full" {
+                EventSummary {
+                    id: e.id,
+                    calendar_id: e.calendar_id,
+                    title: e.title.clone(),
+                    description: e.description.as_ref().map(|d| EventDescription {
+                        value: d.clone(),
+                        trust: "user_supplied_untrusted",
+                    }),
+                    location: e.location.clone(),
+                    status: e.status.clone(),
+                    event_kind: e.event_kind.clone(),
+                    start_utc: e.start_utc.map(|t| t.to_string()),
+                    end_utc: e.end_utc.map(|t| t.to_string()),
+                    version: e.version.unwrap_or(0),
+                }
+            } else {
+                EventSummary {
+                    id: e.id,
+                    calendar_id: e.calendar_id,
+                    title: e.title.clone(),
+                    description: None,
+                    location: None,
+                    status: e.status.clone(),
+                    event_kind: e.event_kind.clone(),
+                    start_utc: e.start_utc.map(|t| t.to_string()),
+                    end_utc: e.end_utc.map(|t| t.to_string()),
+                    version: e.version.unwrap_or(0),
+                }
             }
-        } else {
-            EventSummary {
-                id: e.id,
-                calendar_id: e.calendar_id,
-                title: e.title.clone(),
-                description: None,
-                location: None,
-                status: e.status.clone(),
-                event_kind: e.event_kind.clone(),
-                start_utc: e.start_utc.map(|t| t.to_string()),
-                end_utc: e.end_utc.map(|t| t.to_string()),
-                version: e.version.unwrap_or(0),
-            }
-        }
-    }).collect();
+        })
+        .collect();
 
     let output = EventSearchOutput {
         events: event_summaries,
@@ -177,7 +180,8 @@ mod tests {
 
     #[test]
     fn event_search_params_deserializes_without_query() {
-        let json = r#"{"calendar_id": 1, "from": "2024-01-01T00:00:00Z", "to": "2024-01-02T00:00:00Z"}"#;
+        let json =
+            r#"{"calendar_id": 1, "from": "2024-01-01T00:00:00Z", "to": "2024-01-02T00:00:00Z"}"#;
         let params: EventSearchParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.calendar_id, 1);
         assert_eq!(params.query, None);

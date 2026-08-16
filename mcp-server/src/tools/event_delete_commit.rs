@@ -11,8 +11,8 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{InternalClient};
-use crate::mcp_grant::{get_grant};
+use crate::internal_client::InternalClient;
+use crate::mcp_grant::get_grant;
 use crate::oauth::TokenValidationResult;
 use crate::output_schema::{ContentBlock, DeleteCommitOutput, ToolOutput};
 
@@ -82,9 +82,7 @@ pub async fn handle(
         .map_err(|e| ToolError::Internal(format!("delete commit failed: {}", e)))?;
 
     // Step 7: Build structured response.
-    let output = DeleteCommitOutput {
-        deleted: true,
-    };
+    let output = DeleteCommitOutput { deleted: true };
 
     let tool_output = ToolOutput {
         content: vec![ContentBlock::Text {

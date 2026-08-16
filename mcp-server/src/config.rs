@@ -1,9 +1,4 @@
-use std::{
-    env,
-    net::SocketAddr,
-    path::PathBuf,
-    time::SystemTime,
-};
+use std::{env, net::SocketAddr, path::PathBuf, time::SystemTime};
 
 use serde::Serialize;
 
@@ -132,11 +127,9 @@ impl Config {
 
         let dpop_key_path = env::var("DPOP_KEY_PATH").ok().map(PathBuf::from);
 
-        let rate_limit_enabled =
-            env::var("MCP_RATE_LIMIT_ENABLED").ok().as_deref() == Some("1");
+        let rate_limit_enabled = env::var("MCP_RATE_LIMIT_ENABLED").ok().as_deref() == Some("1");
 
-        let tracing_level =
-            env::var("TRACING_LEVEL").unwrap_or_else(|_| "info".into());
+        let tracing_level = env::var("TRACING_LEVEL").unwrap_or_else(|_| "info".into());
 
         RawConfig {
             app_env,
@@ -161,7 +154,9 @@ impl Config {
         // Validate required production fields.
         if raw.app_env == AppEnv::Production {
             if raw.oauth_issuer.is_empty() {
-                errors.push(ConfigError::new("MCP_OAUTH_ISSUER is required in production"));
+                errors.push(ConfigError::new(
+                    "MCP_OAUTH_ISSUER is required in production",
+                ));
             } else if raw.oauth_issuer.contains("commoncal.tld") {
                 errors.push(ConfigError::new(
                     "MCP_OAUTH_ISSUER must not contain placeholder domain 'commoncal.tld'",
@@ -176,7 +171,7 @@ impl Config {
                 errors.push(ConfigError::new(
                     "MCP_INTERNAL_API_BASE is required in production",
                 ));
-            } else             if raw.internal_api_base.contains("commoncal-core.internal") {
+            } else if raw.internal_api_base.contains("commoncal-core.internal") {
                 errors.push(ConfigError::new(
                     "MCP_INTERNAL_API_BASE must not contain placeholder domain 'commoncal-core.internal'",
                 ));
@@ -207,12 +202,14 @@ impl Config {
             }
 
             if raw.mcp_domain.as_ref().map_or(true, |d| d.is_empty()) {
-                errors.push(ConfigError::new(
-                    "MCP_DOMAIN is required in production",
-                ));
+                errors.push(ConfigError::new("MCP_DOMAIN is required in production"));
             }
 
-            if raw.public_resource_url.as_ref().map_or(true, |u| u.is_empty()) {
+            if raw
+                .public_resource_url
+                .as_ref()
+                .map_or(true, |u| u.is_empty())
+            {
                 errors.push(ConfigError::new(
                     "MCP_PUBLIC_RESOURCE_URL is required in production",
                 ));
@@ -238,15 +235,19 @@ impl Config {
                             "MCP_PUBLIC_RESOURCE_URL must not contain a fragment",
                         ));
                     }
-                    if parsed.host_str().map_or(false, |h| h.contains("commoncal.tld")) {
+                    if parsed
+                        .host_str()
+                        .map_or(false, |h| h.contains("commoncal.tld"))
+                    {
                         errors.push(ConfigError::new(
                             "MCP_PUBLIC_RESOURCE_URL must not contain placeholder domain 'commoncal.tld'",
                         ));
                     }
                 } else {
-                    errors.push(ConfigError::new(
-                        format!("MCP_PUBLIC_RESOURCE_URL '{}' is not a valid URL", url_str),
-                    ));
+                    errors.push(ConfigError::new(format!(
+                        "MCP_PUBLIC_RESOURCE_URL '{}' is not a valid URL",
+                        url_str
+                    )));
                 }
             }
 
@@ -334,7 +335,8 @@ pub struct OauthProtectedResourceMetadata {
 
 impl OauthProtectedResourceMetadata {
     pub fn new(resource_url: &str, auth_issuer: &str, dpop_supported: bool) -> Self {
-        let resource_metadata = if resource_url.ends_with("/mcp") || resource_url.ends_with("/mcp/") {
+        let resource_metadata = if resource_url.ends_with("/mcp") || resource_url.ends_with("/mcp/")
+        {
             let stripped = resource_url.trim_end_matches('/');
             Some(stripped.replace("/mcp", "/.well-known/oauth-protected-resource"))
         } else if resource_url.ends_with('/') {
@@ -430,7 +432,11 @@ mod tests {
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("MCP_OAUTH_ISSUER")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("MCP_OAUTH_ISSUER"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_DATABASE_PATH");
     }
@@ -474,7 +480,11 @@ mod tests {
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("MCP_INTERNAL_API_KEY")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("MCP_INTERNAL_API_KEY"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_DATABASE_PATH");
     }
@@ -509,10 +519,17 @@ mod tests {
         remove_env("MCP_PUBLIC_RESOURCE_URL");
         remove_env("MCP_DATABASE_PATH");
         set_env("APP_ENV", "production");
-        set_env("MCP_SESSION_SECRET", "mcp-session-dev-secret-change-in-production");
+        set_env(
+            "MCP_SESSION_SECRET",
+            "mcp-session-dev-secret-change-in-production",
+        );
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("development placeholder")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("development placeholder"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_SESSION_SECRET");
     }
@@ -667,7 +684,11 @@ mod tests {
         remove_env("MCP_PUBLIC_RESOURCE_URL");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("MCP_PUBLIC_RESOURCE_URL")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("MCP_PUBLIC_RESOURCE_URL"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_OAUTH_ISSUER");
         remove_env("MCP_INTERNAL_API_BASE");
@@ -705,7 +726,11 @@ mod tests {
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("MCP_RATE_LIMIT_ENABLED")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("MCP_RATE_LIMIT_ENABLED"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_OAUTH_ISSUER");
         remove_env("MCP_INTERNAL_API_BASE");
@@ -770,7 +795,11 @@ mod tests {
         set_env("MCP_DATABASE_PATH", "");
         let raw = Config::parse_env();
         let errors = Config::validate(raw).unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("MCP_DATABASE_PATH")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("MCP_DATABASE_PATH"))
+        );
         remove_env("APP_ENV");
         remove_env("MCP_OAUTH_ISSUER");
         remove_env("MCP_INTERNAL_API_BASE");
@@ -844,7 +873,10 @@ mod tests {
         set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
         set_env("MCP_SESSION_SECRET", "real-secret-12345");
         set_env("MCP_DOMAIN", "mcal.example.com");
-        set_env("MCP_PUBLIC_RESOURCE_URL", "https://user:pass@mcal.example.com/mcp");
+        set_env(
+            "MCP_PUBLIC_RESOURCE_URL",
+            "https://user:pass@mcal.example.com/mcp",
+        );
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         set_env("MCP_RATE_LIMIT_ENABLED", "1");
         let raw = Config::parse_env();
@@ -876,7 +908,10 @@ mod tests {
         set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
         set_env("MCP_SESSION_SECRET", "real-secret-12345");
         set_env("MCP_DOMAIN", "mcal.example.com");
-        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp?foo=bar");
+        set_env(
+            "MCP_PUBLIC_RESOURCE_URL",
+            "https://mcal.example.com/mcp?foo=bar",
+        );
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         set_env("MCP_RATE_LIMIT_ENABLED", "1");
         let raw = Config::parse_env();
@@ -908,7 +943,10 @@ mod tests {
         set_env("MCP_INTERNAL_API_KEY", "real-key-12345");
         set_env("MCP_SESSION_SECRET", "real-secret-12345");
         set_env("MCP_DOMAIN", "mcal.example.com");
-        set_env("MCP_PUBLIC_RESOURCE_URL", "https://mcal.example.com/mcp#section");
+        set_env(
+            "MCP_PUBLIC_RESOURCE_URL",
+            "https://mcal.example.com/mcp#section",
+        );
         set_env("MCP_DATABASE_PATH", "/tmp/test.db");
         set_env("MCP_RATE_LIMIT_ENABLED", "1");
         let raw = Config::parse_env();

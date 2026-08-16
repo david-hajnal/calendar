@@ -9,9 +9,13 @@
 
 #![allow(dead_code)]
 
-use mcp_server::internal_client::{InternalClient};
+use mcp_server::internal_client::InternalClient;
 use mcp_server::mcp_grant::McpGrant;
-use mcp_server::output_schema::{ToolOutput, ContentBlock, CalendarListOutput, CalendarSummary, AvailabilityOutput, AvailabilitySlot, EventOutput, EventSummary, EventSearchOutput, DeletePrepareOutput, DeleteCommitOutput, ReminderOutput};
+use mcp_server::output_schema::{
+    AvailabilityOutput, AvailabilitySlot, CalendarListOutput, CalendarSummary, ContentBlock,
+    DeleteCommitOutput, DeletePrepareOutput, EventOutput, EventSearchOutput, EventSummary,
+    ReminderOutput, ToolOutput,
+};
 use wiremock::MockServer;
 use wiremock::matchers::{method, path};
 
@@ -223,9 +227,7 @@ async fn test_delete_commit_flow() {
     // Mock the internal API commit delete intent endpoint.
     wiremock::Mock::given(method("POST"))
         .and(path("/internal/mcp/delete-intents/intent-abc/commit"))
-        .respond_with(
-            wiremock::ResponseTemplate::new(200),
-        )
+        .respond_with(wiremock::ResponseTemplate::new(200))
         .mount(&mock_server)
         .await;
 
@@ -265,7 +267,11 @@ async fn test_reminder_set_flow() {
 /// E2E test: InternalClient builds correct URLs.
 #[tokio::test]
 async fn test_internal_client_urls() {
-    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string()).unwrap();
+    let client = InternalClient::new(
+        "https://api.commoncal.tld".to_string(),
+        "test-key".to_string(),
+    )
+    .unwrap();
     assert_eq!(client.api_base(), "https://api.commoncal.tld/");
     assert_eq!(client.api_key(), "test-key");
 }
@@ -303,11 +309,9 @@ async fn test_mcp_grant_roundtrip() {
 #[tokio::test]
 async fn test_tool_output_serialization() {
     let output = ToolOutput {
-        content: vec![
-            ContentBlock::Text {
-                text: r#"{"event_id":42}"#.to_string(),
-            },
-        ],
+        content: vec![ContentBlock::Text {
+            text: r#"{"event_id":42}"#.to_string(),
+        }],
     };
     let json = serde_json::to_string(&output).unwrap();
     assert!(json.contains("\"content\""));
@@ -317,8 +321,8 @@ async fn test_tool_output_serialization() {
 /// E2E test: Security module integration.
 #[tokio::test]
 async fn test_security_integration() {
-    use mcp_server::security::{classify_risk, check_auth_strength, check_anomalies, RiskTier};
     use mcp_server::oauth::AuthStrength;
+    use mcp_server::security::{RiskTier, check_anomalies, check_auth_strength, classify_risk};
 
     // Risk classification.
     assert_eq!(classify_risk("event_delete_commit"), RiskTier::Tier3);
@@ -331,23 +335,49 @@ async fn test_security_integration() {
     assert!(check_auth_strength(&AuthStrength::Passwordless, RiskTier::Tier3).is_err());
 
     // Anomaly detection.
-    assert!(check_anomalies("client-1", "event_delete_commit", RiskTier::Tier3, 0, true, false).is_some());
-    assert!(check_anomalies("client-1", "availability_find", RiskTier::Tier0, 0, true, false).is_none());
+    assert!(
+        check_anomalies(
+            "client-1",
+            "event_delete_commit",
+            RiskTier::Tier3,
+            0,
+            true,
+            false
+        )
+        .is_some()
+    );
+    assert!(
+        check_anomalies(
+            "client-1",
+            "availability_find",
+            RiskTier::Tier0,
+            0,
+            true,
+            false
+        )
+        .is_none()
+    );
 }
 
 /// E2E test: Error type integration.
 #[tokio::test]
 async fn test_error_integration() {
-    use mcp_server::error::{TokenError, GrantError, ToolError, SecurityError};
+    use mcp_server::error::{GrantError, SecurityError, TokenError, ToolError};
 
     // Token errors.
-    assert_eq!(format!("{}", TokenError::MissingToken), "missing authorization token");
+    assert_eq!(
+        format!("{}", TokenError::MissingToken),
+        "missing authorization token"
+    );
     assert_eq!(format!("{}", TokenError::Expired), "token has expired");
     assert_eq!(format!("{}", TokenError::InvalidDpop), "invalid DPoP proof");
 
     // Grant errors.
     assert_eq!(format!("{}", GrantError::NoGrant), "no MCP grant found");
-    assert_eq!(format!("{}", GrantError::CalendarNotInGrant), "calendar not in grant");
+    assert_eq!(
+        format!("{}", GrantError::CalendarNotInGrant),
+        "calendar not in grant"
+    );
 
     // Tool errors.
     let forbidden = ToolError::Forbidden("test".to_string());

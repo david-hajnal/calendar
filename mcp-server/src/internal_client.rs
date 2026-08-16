@@ -84,8 +84,12 @@ pub struct TokenExchangeResponse {
 
 impl InternalClient {
     pub fn new(api_base: String, api_key: String) -> Result<Self, crate::config::ConfigError> {
-        let url = url::Url::parse(&api_base)
-            .map_err(|e| crate::config::ConfigError::new(format!("MCP_INTERNAL_API_BASE is not a valid URL: {}", e)))?;
+        let url = url::Url::parse(&api_base).map_err(|e| {
+            crate::config::ConfigError::new(format!(
+                "MCP_INTERNAL_API_BASE is not a valid URL: {}",
+                e
+            ))
+        })?;
 
         if !url.username().is_empty() {
             return Err(crate::config::ConfigError::new(
@@ -146,7 +150,9 @@ impl InternalClient {
         actor_token: Option<&str>,
         resource: &str,
     ) -> Result<TokenExchangeResponse, InternalError> {
-        let url = self.api_base.join("internal/token-exchange")
+        let url = self
+            .api_base
+            .join("internal/token-exchange")
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
 
         let mut body = serde_json::json!({
@@ -159,7 +165,8 @@ impl InternalClient {
 
         if let Some(actor) = actor_token {
             body["actor_token"] = serde_json::json!(actor);
-            body["actor_token_type"] = serde_json::json!("urn:ietf:params:oauth:token-type:access_token");
+            body["actor_token_type"] =
+                serde_json::json!("urn:ietf:params:oauth:token-type:access_token");
         }
 
         let resp = self
@@ -173,16 +180,16 @@ impl InternalClient {
 
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
-            let body_text = resp
-                .text()
-                .await
-                .unwrap_or_else(|_| "no body".to_string());
+            let body_text = resp.text().await.unwrap_or_else(|_| "no body".to_string());
             tracing::warn!(
                 status,
                 body = %body_text,
                 "token exchange failed"
             );
-            return Err(InternalError::Http(status, "token exchange failed".to_string()));
+            return Err(InternalError::Http(
+                status,
+                "token exchange failed".to_string(),
+            ));
         }
 
         let exchange_resp: TokenExchangeResponse = resp
@@ -193,11 +200,10 @@ impl InternalClient {
         Ok(exchange_resp)
     }
 
-    pub async fn get_user_status(
-        &self,
-        user_id: i64,
-    ) -> Result<UserStatusResponse, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/users/{}/status", user_id))
+    pub async fn get_user_status(&self, user_id: i64) -> Result<UserStatusResponse, InternalError> {
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/users/{}/status", user_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -223,7 +229,9 @@ impl InternalClient {
     }
 
     pub async fn list_calendars(&self, user_id: i64) -> Result<Vec<CalendarInfo>, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/users/{}/calendars", user_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/users/{}/calendars", user_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -253,7 +261,12 @@ impl InternalClient {
         user_id: i64,
         calendar_id: i64,
     ) -> Result<String, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/calendars/{}/role/{}", calendar_id, user_id))
+        let url = self
+            .api_base
+            .join(&format!(
+                "internal/mcp/calendars/{}/role/{}",
+                calendar_id, user_id
+            ))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -283,7 +296,9 @@ impl InternalClient {
         calendar_id: i64,
         event_id: i64,
     ) -> Result<EventInfo, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -314,9 +329,13 @@ impl InternalClient {
         from: &str,
         to: &str,
     ) -> Result<Vec<EventInfo>, InternalError> {
-        let mut url = self.api_base.join(&format!("internal/mcp/events/{}/search", calendar_id))
+        let mut url = self
+            .api_base
+            .join(&format!("internal/mcp/events/{}/search", calendar_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
-        url.query_pairs_mut().append_pair("from", from).append_pair("to", to);
+        url.query_pairs_mut()
+            .append_pair("from", from)
+            .append_pair("to", to);
         let resp = self
             .http_client
             .get(url.as_str())
@@ -345,7 +364,9 @@ impl InternalClient {
         calendar_id: i64,
         payload: &serde_json::Value,
     ) -> Result<EventInfo, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/events/{}", calendar_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/events/{}", calendar_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -377,7 +398,9 @@ impl InternalClient {
         event_id: i64,
         payload: &serde_json::Value,
     ) -> Result<EventInfo, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -407,7 +430,9 @@ impl InternalClient {
         &self,
         payload: &serde_json::Value,
     ) -> Result<DeleteIntent, InternalError> {
-        let url = self.api_base.join("internal/mcp/delete-intents")
+        let url = self
+            .api_base
+            .join("internal/mcp/delete-intents")
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -434,7 +459,9 @@ impl InternalClient {
     }
 
     pub async fn get_delete_intent(&self, intent_id: &str) -> Result<DeleteIntent, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/delete-intents/{}", intent_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/delete-intents/{}", intent_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -460,7 +487,9 @@ impl InternalClient {
     }
 
     pub async fn commit_delete_intent(&self, intent_id: &str) -> Result<(), InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/delete-intents/{}/commit", intent_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/delete-intents/{}/commit", intent_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -521,7 +550,9 @@ impl InternalClient {
         user_id: i64,
         client_id: &str,
     ) -> Result<Vec<McpGrantResponse>, InternalError> {
-        let mut url = self.api_base.join("internal/mcp/mcp-grants")
+        let mut url = self
+            .api_base
+            .join("internal/mcp/mcp-grants")
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         url.query_pairs_mut()
             .append_pair("user_id", &user_id.to_string())
@@ -553,7 +584,9 @@ impl InternalClient {
         &self,
         operation_id: &str,
     ) -> Result<Option<serde_json::Value>, InternalError> {
-        let url = self.api_base.join(&format!("internal/mcp/idempotency/{}", operation_id))
+        let url = self
+            .api_base
+            .join(&format!("internal/mcp/idempotency/{}", operation_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -587,7 +620,9 @@ impl InternalClient {
         operation_id: &str,
         payload: &serde_json::Value,
     ) -> Result<(), InternalError> {
-        let url = self.api_base.join("internal/mcp/idempotency")
+        let url = self
+            .api_base
+            .join("internal/mcp/idempotency")
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -637,26 +672,39 @@ mod tests {
 
     #[test]
     fn new_client_has_expected_fields() {
-        let client = InternalClient::new("https://api.example.com".to_string(), "test-key".to_string()).unwrap();
+        let client = InternalClient::new(
+            "https://api.example.com".to_string(),
+            "test-key".to_string(),
+        )
+        .unwrap();
         assert_eq!(client.api_base(), "https://api.example.com/");
         assert_eq!(client.api_key(), "test-key");
     }
 
     #[test]
     fn api_base_returns_correct_value() {
-        let client = InternalClient::new("https://internal.commoncal.tld".to_string(), "key123".to_string()).unwrap();
+        let client = InternalClient::new(
+            "https://internal.commoncal.tld".to_string(),
+            "key123".to_string(),
+        )
+        .unwrap();
         assert_eq!(client.api_base(), "https://internal.commoncal.tld/");
     }
 
     #[test]
     fn api_key_returns_correct_value() {
-        let client = InternalClient::new("https://api.example.com".to_string(), "super-secret-key".to_string()).unwrap();
+        let client = InternalClient::new(
+            "https://api.example.com".to_string(),
+            "super-secret-key".to_string(),
+        )
+        .unwrap();
         assert_eq!(client.api_key(), "super-secret-key");
     }
 
     #[test]
     fn clone_does_not_share_http_client() {
-        let client1 = InternalClient::new("https://api.example.com".to_string(), "key".to_string()).unwrap();
+        let client1 =
+            InternalClient::new("https://api.example.com".to_string(), "key".to_string()).unwrap();
         let client2 = client1.clone();
         // Clone should create independent copies (reqwest::Client is clonable)
         assert_eq!(client1.api_base(), client2.api_base());

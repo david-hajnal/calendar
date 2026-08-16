@@ -20,11 +20,15 @@ pub struct Gateway {
 }
 
 impl Gateway {
-    pub fn new(config: Config, db_pool: SqlitePool) -> Result<Self, Vec<crate::config::ConfigError>> {
+    pub fn new(
+        config: Config,
+        db_pool: SqlitePool,
+    ) -> Result<Self, Vec<crate::config::ConfigError>> {
         let internal_client = InternalClient::new(
             config.internal_api_base.clone(),
             config.internal_api_key.clone(),
-        ).map_err(|e| vec![e])?;
+        )
+        .map_err(|e| vec![e])?;
 
         let rate_limiter = if config.rate_limit_enabled {
             Arc::new(RateLimiter::new())
@@ -50,12 +54,14 @@ impl Gateway {
             .get(axum::http::header::AUTHORIZATION)
             .ok_or_else(|| unauthorized_response("missing authorization header"))?;
 
-        let auth_str = auth_header.to_str().map_err(|_| {
-            unauthorized_response("invalid authorization header encoding")
-        })?;
+        let auth_str = auth_header
+            .to_str()
+            .map_err(|_| unauthorized_response("invalid authorization header encoding"))?;
 
         if !auth_str.starts_with("Bearer ") {
-            return Err(unauthorized_response("authorization must use Bearer scheme"));
+            return Err(unauthorized_response(
+                "authorization must use Bearer scheme",
+            ));
         }
 
         let token = &auth_str[7..];
@@ -121,10 +127,7 @@ impl Gateway {
             }
         };
 
-        let method = message
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let method = message.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
         match method {
             "tools/list" => self.handle_tools_list(&message).await,

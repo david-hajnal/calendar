@@ -57,11 +57,11 @@ echo "Tag: $TAG"
 echo ""
 
 # Bump Cargo.toml versions
-sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" backend/Cargo.toml
-sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" mcp-server/Cargo.toml
+sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" backend/Cargo.toml
+sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" mcp-server/Cargo.toml
 
 # Bump frontend package version
-sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW_VERSION}\"/" frontend/package.json
+sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW_VERSION}\"/" frontend/package.json
 
 # Bump Helm chart versions and appVersions
 if [[ "$(uname)" == "Darwin" ]]; then

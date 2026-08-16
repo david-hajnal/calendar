@@ -36,22 +36,18 @@ pub fn check_auth_strength(
             // Requires strong authentication (passkey or MFA)
             match auth_strength {
                 crate::oauth::AuthStrength::Passkey | crate::oauth::AuthStrength::Mfa => Ok(()),
-                crate::oauth::AuthStrength::Passwordless => {
-                    Err(SecurityError::WeakAuthentication(
-                        "strong authentication required for write operations".to_string(),
-                    ))
-                }
+                crate::oauth::AuthStrength::Passwordless => Err(SecurityError::WeakAuthentication(
+                    "strong authentication required for write operations".to_string(),
+                )),
             }
         }
         RiskTier::Tier3 => {
             // Requires passkey or MFA
             match auth_strength {
                 crate::oauth::AuthStrength::Passkey | crate::oauth::AuthStrength::Mfa => Ok(()),
-                crate::oauth::AuthStrength::Passwordless => {
-                    Err(SecurityError::WeakAuthentication(
-                        "passkey or MFA required for destructive operations".to_string(),
-                    ))
-                }
+                crate::oauth::AuthStrength::Passwordless => Err(SecurityError::WeakAuthentication(
+                    "passkey or MFA required for destructive operations".to_string(),
+                )),
             }
         }
     }
@@ -103,22 +99,14 @@ pub fn check_anomalies(
 
     // Check 3: Rate limit exceeded.
     if rate_limit_exceeded {
-        return Some(format!(
-            "rate limit exceeded for client {}",
-            client_id
-        ));
+        return Some(format!("rate limit exceeded for client {}", client_id));
     }
 
     None
 }
 
 /// Record an anomaly event for audit.
-pub fn record_anomaly(
-    client_id: &str,
-    tool_name: &str,
-    reason: &str,
-    severity: &str,
-) {
+pub fn record_anomaly(client_id: &str, tool_name: &str, reason: &str, severity: &str) {
     tracing::warn!(
         client_id,
         tool = tool_name,
@@ -165,14 +153,18 @@ mod tests {
 
     #[test]
     fn check_auth_strength_tier0_passes_any() {
-        assert!(check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier0).is_ok());
+        assert!(
+            check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier0).is_ok()
+        );
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Passkey, RiskTier::Tier0).is_ok());
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Mfa, RiskTier::Tier0).is_ok());
     }
 
     #[test]
     fn check_auth_strength_tier1_passes_any() {
-        assert!(check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier1).is_ok());
+        assert!(
+            check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier1).is_ok()
+        );
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Passkey, RiskTier::Tier1).is_ok());
     }
 
@@ -180,26 +172,46 @@ mod tests {
     fn check_auth_strength_tier2_requires_strong() {
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Passkey, RiskTier::Tier2).is_ok());
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Mfa, RiskTier::Tier2).is_ok());
-        assert!(check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier2).is_err());
+        assert!(
+            check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier2)
+                .is_err()
+        );
     }
 
     #[test]
     fn check_auth_strength_tier3_requires_passkey_or_mfa() {
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Passkey, RiskTier::Tier3).is_ok());
         assert!(check_auth_strength(&crate::oauth::AuthStrength::Mfa, RiskTier::Tier3).is_ok());
-        assert!(check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier3).is_err());
+        assert!(
+            check_auth_strength(&crate::oauth::AuthStrength::Passwordless, RiskTier::Tier3)
+                .is_err()
+        );
     }
 
     #[test]
     fn check_anomalies_brute_force() {
-        let result = check_anomalies("client-1", "event_create", RiskTier::Tier2, 10, false, false);
+        let result = check_anomalies(
+            "client-1",
+            "event_create",
+            RiskTier::Tier2,
+            10,
+            false,
+            false,
+        );
         assert!(result.is_some());
         assert!(result.unwrap().contains("brute force"));
     }
 
     #[test]
     fn check_anomalies_off_hours_delete() {
-        let result = check_anomalies("client-1", "event_delete_commit", RiskTier::Tier3, 0, true, false);
+        let result = check_anomalies(
+            "client-1",
+            "event_delete_commit",
+            RiskTier::Tier3,
+            0,
+            true,
+            false,
+        );
         assert!(result.is_some());
         assert!(result.unwrap().contains("off-hours"));
     }
@@ -213,13 +225,27 @@ mod tests {
 
     #[test]
     fn check_anomalies_clean_request() {
-        let result = check_anomalies("client-1", "availability_find", RiskTier::Tier0, 0, false, false);
+        let result = check_anomalies(
+            "client-1",
+            "availability_find",
+            RiskTier::Tier0,
+            0,
+            false,
+            false,
+        );
         assert!(result.is_none());
     }
 
     #[test]
     fn check_anomalies_off_hours_read_allowed() {
-        let result = check_anomalies("client-1", "availability_find", RiskTier::Tier0, 0, true, false);
+        let result = check_anomalies(
+            "client-1",
+            "availability_find",
+            RiskTier::Tier0,
+            0,
+            true,
+            false,
+        );
         assert!(result.is_none());
     }
 

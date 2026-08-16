@@ -118,18 +118,14 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     const dy = e.clientY - dragging.startY;
     const snappedDy = snapY(dy);
     let newTop = dragging.originalTop;
-    let newHeight = dragging.originalHeight;
     if (dragging.mode === "move") {
       newTop = dragging.originalTop + snappedDy;
       newTop = Math.max(0, Math.min(1440 - dragging.originalHeight, newTop));
     } else if (dragging.mode === "resize-top") {
       newTop = dragging.originalTop + snappedDy;
-      newHeight = dragging.originalHeight - snappedDy;
       newTop = Math.max(0, newTop);
-      newHeight = Math.max(15, newHeight);
     } else if (dragging.mode === "resize-bottom") {
-      newHeight = dragging.originalHeight + snappedDy;
-      newHeight = Math.max(15, Math.min(1440 - newTop, newHeight));
+      // newTop stays as originalTop
     }
     const hour = Math.floor(Math.max(0, newTop) / 60);
     setSlotHighlight({ dayIndex: dragging.dayIndex, hour });
@@ -141,7 +137,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     if (ev.start_utc == null || ev.end_utc == null) { setDragging(null); setSlotHighlight(null); return; }
     const dy = e.clientY - dragging.startY;
     const snappedDy = snapY(dy);
-    let newStart = new Date(ev.start_utc * 1000);
+    const newStart = new Date(ev.start_utc * 1000);
     let newEnd = new Date(ev.end_utc * 1000);
     if (dragging.mode === "move") {
       const newTop = dragging.originalTop + snappedDy;

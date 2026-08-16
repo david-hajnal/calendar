@@ -17,11 +17,9 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load .env file if it exists
+# Load .env file if it exists (scoped to subshell to avoid leaking secrets)
 if [[ -f "$DEPLOY_DIR/.env" ]]; then
-  set -a
-  source "$DEPLOY_DIR/.env"
-  set +a
+  ( set -a; source "$DEPLOY_DIR/.env"; set +a; )
 fi
 
 # Fail fast if required env vars are missing
@@ -34,13 +32,14 @@ if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{64}$ ]]; then
   exit 1
 fi
 
-NAMESPACE="${NAMESPACE:-production}"
+NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 CORE_DOMAIN="${CORE_DOMAIN:-$DOMAIN}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
+GHCR_TOKEN="${GHCR_TOKEN:-}"
 
 case "${DRY_RUN:-0}" in
   0|"")
@@ -69,6 +68,13 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" || ! -f "$VALUES_FILE" ]]; then
   exit 1
 fi
 
+# Verify kubectl context before deploying
+echo "==> Current kubectl context: $(kubectl config current-context)"
+
+# Ensure namespace exists
+echo "==> Ensuring namespace '$NAMESPACE' exists..."
+kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
 kubectl create secret generic commoncal-session \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \
@@ -81,7 +87,6 @@ echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
-  --reset-values
   --values "$VALUES_FILE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
@@ -93,6 +98,15 @@ helm_args=(
   --set-string existingSecret.name=commoncal-session
   --timeout=15m
 )
+
+# Configure imagePullSecrets for GHCR if token is provided
+if [[ -n "$GHCR_TOKEN" ]]; then
+  helm_args+=(
+    --set-string "imagePullSecrets[0].name=ghcr-creds" \
+    --set-string "imagePullSecrets[0].username=_token" \
+    --set-string "imagePullSecrets[0].password=$GHCR_TOKEN"
+  )
+fi
 
 if ((dry_run)); then
   helm_args+=(--dry-run)
@@ -106,6 +120,23 @@ if ((!dry_run)); then
     --selector "app.kubernetes.io/instance=$RELEASE" \
     --namespace "$NAMESPACE" \
     --timeout=15m
+
+  # Post-deploy health check: verify pods are Ready
+  echo "==> Checking pod readiness..."
+  READY=$(kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
+    --namespace "$NAMESPACE" \
+    --no-headers \
+    -o custom-columns=":status.phase" 2>/dev/null | grep -c "Running" || true)
+  TOTAL=$(kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
+    --namespace "$NAMESPACE" \
+    --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  if (( READY < TOTAL )); then
+    echo "WARNING: Only $READY/$TOTAL pods are Running" >&2
+    kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
+      --namespace "$NAMESPACE" -o wide
+  else
+    echo "==> All $TOTAL pods are Running"
+  fi
 fi
 
 echo "==> Done. Release: $RELEASE, Namespace: $NAMESPACE"

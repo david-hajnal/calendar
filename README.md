@@ -102,11 +102,45 @@ when `APP_ENV=staging` or `APP_ENV=production`; it is disabled in development.
 When rate limited, the API returns `429 Too Many Requests` with an `X-Retry-After` header. Superadmin users
 bypass all write rate limits.
 
+## Local Docker build
+
+Build and push to GitHub Container Registry (GHCR):
+
+```sh
+# Build only (also tags as commoncal:local)
+make docker-build
+
+# Push to GHCR (requires GHCR_TOKEN)
+make docker-push
+
+# Build and push
+make docker-build-push
+```
+
+Override the image tag:
+
+```sh
+IMAGE_TAG=v1.2.3 make docker-build-push
+```
+
+Set up GHCR authentication:
+
+```sh
+# Option 1: export the token directly
+export GHCR_TOKEN=ghp_xxx
+
+# Option 2: use the GitHub CLI (token fetched automatically)
+gh auth login
+```
+
+The script `scripts/docker-build-push.sh` supports `--dry-run` and `--build-only` flags.
+Env vars: `IMAGE_TAG`, `DOCKER_REGISTRY`, `IMAGE_NAME`, `GHCR_TOKEN`, `DRY_RUN`.
+
 ## Production container
 
-Build the production image from a clean build context, then run the bounded
-runtime acceptance checks (non-root execution, read-only filesystem,
-configuration failure, health, frontend, and image contents):
+Build the production image using `scripts/docker-build-push.sh --build-only`,
+then run the bounded runtime acceptance checks (non-root execution, read-only
+filesystem, configuration failure, health, frontend, and image contents):
 
 ```sh
 docker build --tag commoncal:local .

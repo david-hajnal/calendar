@@ -1,4 +1,4 @@
-.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test deploy-script-test e2e frontend-build frontend-test lint mcp-check mcp-test validate-authorization-coverage
+.PHONY: all authorization-regression backend-check backend-test check check-no-yarn ci-script-test deploy-script-test docker-build docker-build-push docker-push e2e frontend-build frontend-test lint mcp-check mcp-test validate-authorization-coverage
 
 all: check
 
@@ -55,3 +55,12 @@ check: check-no-yarn ci-script-test backend-check backend-test authorization-reg
 # Required: IMAGE_TAG. Optional: DOMAIN, NAMESPACE, HELM_RELEASE_NAME, DRY_RUN=1
 deploy:
 	deploy/deploy-prod.sh
+
+docker-build:
+	scripts/docker-build-push.sh --build-only
+
+docker-push:
+	scripts/docker-build-push.sh
+
+docker-build-push:
+	scripts/docker-build-push.sh

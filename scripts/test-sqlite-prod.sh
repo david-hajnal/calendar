@@ -178,7 +178,7 @@ echo "=== Testing deploy/sqlite-prod.sh ==="
 
 # Test: missing kubeconfig
 assert_fail "missing kubeconfig exits non-zero" \
-  bash -c 'unset KUBECONFIG; '"$repo_root/deploy/sqlite-prod.sh"' >/dev/null 2>&1'
+  bash -c 'unset KUBECONFIG; export KUBECONFIG="/nonexistent/kubeconfig"; '"$repo_root/deploy/sqlite-prod.sh"' >/dev/null 2>&1'
 
 # Test: help flag works
 assert_pass "help flag exits 0" \

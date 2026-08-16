@@ -26,7 +26,12 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 jsonwebtoken = "9"
 base64 = "0.22"
 url = "2"
+num-bigint = "0.4"
+rsa = "0.9"
 
 [dev-dependencies]
 wiremock = "0.6"
 serial_test = "3"
+rsa = "0.9"
+rand = "0.8"
+ring = "0.17"

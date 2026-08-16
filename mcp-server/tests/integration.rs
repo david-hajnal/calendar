@@ -22,19 +22,26 @@ async fn test_dpop_proof_validation() {
         .mount(&_mock_server)
         .await;
 
-    let header = serde_json::json!({"typ": "dpop+jwt", "jwk": {"kty": "RSA", "n": "test", "e": "AQAB"}});
+    let header =
+        serde_json::json!({"typ": "dpop+jwt", "jwk": {"kty": "RSA", "n": "test", "e": "AQAB"}});
     let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost","exp":9999999999}"#);
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost","exp":9999999999}"#);
     let proof = format!("{}.{}.signature", header_b64, payload);
 
     let result = mcp_server::oauth::validate_dpop_proof("token", &proof, "nonce").await;
-    assert!(result.is_ok());
+    // Dummy signature cannot be verified, so this fails at signature check (not format check)
+    assert!(result.is_err());
 }
 
 /// Integration test: InternalClient creates correctly.
 #[tokio::test]
 async fn test_internal_client_creation() {
-    let client = InternalClient::new("https://api.commoncal.tld".to_string(), "test-key".to_string()).unwrap();
+    let client = InternalClient::new(
+        "https://api.commoncal.tld".to_string(),
+        "test-key".to_string(),
+    )
+    .unwrap();
     assert_eq!(client.api_base(), "https://api.commoncal.tld/");
     assert_eq!(client.api_key(), "test-key");
 }
@@ -91,21 +98,33 @@ async fn test_output_schema_serialization() {
 /// Integration test: Error types have correct Display implementations.
 #[tokio::test]
 async fn test_error_display() {
-    use mcp_server::error::{TokenError, GrantError, ToolError};
+    use mcp_server::error::{GrantError, TokenError, ToolError};
 
-    assert_eq!(format!("{}", TokenError::MissingToken), "missing authorization token");
+    assert_eq!(
+        format!("{}", TokenError::MissingToken),
+        "missing authorization token"
+    );
     assert_eq!(format!("{}", TokenError::Expired), "token has expired");
-    assert_eq!(format!("{}", TokenError::InvalidAudience), "token audience mismatch");
+    assert_eq!(
+        format!("{}", TokenError::InvalidAudience),
+        "token audience mismatch"
+    );
     assert_eq!(format!("{}", GrantError::NoGrant), "no MCP grant found");
-    assert_eq!(format!("{}", GrantError::GrantExpired), "MCP grant has expired");
-    assert_eq!(format!("{}", GrantError::GrantRevoked), "MCP grant has been revoked");
+    assert_eq!(
+        format!("{}", GrantError::GrantExpired),
+        "MCP grant has expired"
+    );
+    assert_eq!(
+        format!("{}", GrantError::GrantRevoked),
+        "MCP grant has been revoked"
+    );
     assert!(matches!(ToolError::NotFound, ToolError::NotFound));
 }
 
 /// Integration test: Security module risk classification.
 #[tokio::test]
 async fn test_risk_classification() {
-    use mcp_server::security::{classify_risk, RiskTier};
+    use mcp_server::security::{RiskTier, classify_risk};
 
     assert_eq!(classify_risk("availability_find"), RiskTier::Tier0);
     assert_eq!(classify_risk("event_get"), RiskTier::Tier1);
@@ -117,8 +136,8 @@ async fn test_risk_classification() {
 /// Integration test: Security module auth strength checks.
 #[tokio::test]
 async fn test_auth_strength_checks() {
-    use mcp_server::security::{check_auth_strength, RiskTier};
     use mcp_server::oauth::AuthStrength;
+    use mcp_server::security::{RiskTier, check_auth_strength};
 
     assert!(check_auth_strength(&AuthStrength::Passwordless, RiskTier::Tier0).is_ok());
     assert!(check_auth_strength(&AuthStrength::Passwordless, RiskTier::Tier1).is_ok());
@@ -132,14 +151,28 @@ async fn test_auth_strength_checks() {
 /// Integration test: Security module anomaly detection.
 #[tokio::test]
 async fn test_anomaly_detection() {
-    use mcp_server::security::{check_anomalies, classify_risk, RiskTier};
+    use mcp_server::security::{RiskTier, check_anomalies, classify_risk};
 
     // Brute force detection.
-    let result = check_anomalies("client-1", "event_create", classify_risk("event_create"), 10, false, false);
+    let result = check_anomalies(
+        "client-1",
+        "event_create",
+        classify_risk("event_create"),
+        10,
+        false,
+        false,
+    );
     assert!(result.is_some());
 
     // Off-hours Tier3 detection.
-    let result = check_anomalies("client-1", "event_delete_commit", RiskTier::Tier3, 0, true, false);
+    let result = check_anomalies(
+        "client-1",
+        "event_delete_commit",
+        RiskTier::Tier3,
+        0,
+        true,
+        false,
+    );
     assert!(result.is_some());
 
     // Rate limit detection.
@@ -147,11 +180,25 @@ async fn test_anomaly_detection() {
     assert!(result.is_some());
 
     // Clean request.
-    let result = check_anomalies("client-1", "availability_find", RiskTier::Tier0, 0, false, false);
+    let result = check_anomalies(
+        "client-1",
+        "availability_find",
+        RiskTier::Tier0,
+        0,
+        false,
+        false,
+    );
     assert!(result.is_none());
 
     // Off-hours read allowed.
-    let result = check_anomalies("client-1", "availability_find", RiskTier::Tier0, 0, true, false);
+    let result = check_anomalies(
+        "client-1",
+        "availability_find",
+        RiskTier::Tier0,
+        0,
+        true,
+        false,
+    );
     assert!(result.is_none());
 }
 

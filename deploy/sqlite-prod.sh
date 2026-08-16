@@ -84,19 +84,13 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-# 2. Require interactive terminal
-if [ ! -t 0 ]; then
-  echo "ERROR: An interactive terminal is required. Run from a tty." >&2
-  exit 1
-fi
-
-# 3. Require kubectl
+# 2. Require kubectl
 if ! command -v kubectl &>/dev/null; then
   echo "ERROR: kubectl is required but not installed." >&2
   exit 1
 fi
 
-# 4. Require local k3s kubeconfig (loopback-only enforcement)
+# 3. Require local k3s kubeconfig (loopback-only enforcement)
 KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
 if [ ! -f "$KUBECONFIG" ]; then
   echo "ERROR: Local kubeconfig not found at $KUBECONFIG" >&2
@@ -121,6 +115,12 @@ case "$API_SERVER" in
     exit 1
     ;;
 esac
+
+# 4. Require interactive terminal (after kubeconfig check so tests can validate other errors)
+if [ ! -t 0 ]; then
+  echo "ERROR: An interactive terminal is required. Run from a tty." >&2
+  exit 1
+fi
 
 # 5. Discover exactly one Ready core StatefulSet pod
 echo "Discovering core StatefulSet pod..."

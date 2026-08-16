@@ -10,18 +10,16 @@ permissions:
   contents: read
   packages: write
 
-# Skip builds triggered by ImageUpdateAutomation commits that only change deploy/flux/
-if: |
-  github.event_name == 'push' &&
-  (
-    github.event.head_commit.msg != 'chore(deploy): update image tags' ||
-    contains(github.event.head_commit.modified, 'Dockerfile') ||
-    contains(github.event.head_commit.modified, 'backend/') ||
-    contains(github.event.head_commit.modified, 'mcp-server/')
-  )
-
 jobs:
   build:
+    if: |
+      github.event_name != 'push' ||
+      (
+        github.event.head_commit.msg != 'chore(deploy): update image tags' ||
+        contains(github.event.head_commit.modified, 'Dockerfile') ||
+        contains(github.event.head_commit.modified, 'backend/') ||
+        contains(github.event.head_commit.modified, 'mcp-server/')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

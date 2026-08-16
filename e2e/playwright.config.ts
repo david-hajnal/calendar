@@ -24,5 +24,6 @@ export default defineConfig({
     url: `${baseURL}/health/ready`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    cwd: "..",
   },
 });

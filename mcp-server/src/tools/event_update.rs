@@ -98,9 +98,7 @@ pub async fn handle(
 
     // Step 2: Check calendar access.
     if !check_calendar_access(&grant, params.calendar_id) {
-        return Err(ToolError::Forbidden(
-            "calendar not in grant".to_string(),
-        ));
+        return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
     // Step 3: Check tool permission.
@@ -142,9 +140,7 @@ pub async fn handle(
             crate::internal_client::InternalError::Http(409, _) => {
                 ToolError::Conflict("event version conflict — event was modified".to_string())
             }
-            crate::internal_client::InternalError::Http(404, _) => {
-                ToolError::NotFound
-            }
+            crate::internal_client::InternalError::Http(404, _) => ToolError::NotFound,
             _ => ToolError::Internal(format!("event update failed: {}", e)),
         })?;
 

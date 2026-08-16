@@ -1,15 +1,15 @@
+mod audit;
 mod config;
 mod db;
+mod error;
 mod gateway;
 mod internal_client;
-mod tools;
-mod error;
-mod oauth;
 mod mcp_grant;
-mod security;
-mod audit;
+mod oauth;
 mod output_schema;
 mod rate_limiter;
+mod security;
+mod tools;
 
 use axum::{
     Router,
@@ -24,11 +24,7 @@ use config::Config;
 use db::connect_and_migrate;
 use gateway::Gateway;
 
-use tracing_subscriber::{
-    EnvFilter,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,12 +60,11 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 let issuer = config.oauth_issuer.clone();
                 let dpop_supported = config.dpop_key_path.is_some();
                 async move {
-                    let meta =
-                        crate::config::OauthProtectedResourceMetadata::new(
-                            &config.public_resource_url,
-                            &issuer,
-                            dpop_supported,
-                        );
+                    let meta = crate::config::OauthProtectedResourceMetadata::new(
+                        &config.public_resource_url,
+                        &issuer,
+                        dpop_supported,
+                    );
                     (
                         StatusCode::OK,
                         [(CONTENT_TYPE, "application/json")],

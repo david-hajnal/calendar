@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{InternalClient, CalendarInfo};
+use crate::internal_client::{CalendarInfo, InternalClient};
 use crate::mcp_grant::{check_calendar_access, get_grant};
 use crate::oauth::TokenValidationResult;
 use crate::output_schema::{AvailabilityOutput, AvailabilitySlot, ContentBlock, ToolOutput};
@@ -118,13 +118,11 @@ pub async fn handle(
     // Step 5: For the tracer bullet, return mock availability.
     // Slice 6 will wire to the real internal API.
     let output = AvailabilityOutput {
-        slots: vec![
-            AvailabilitySlot {
-                start: params.from.clone(),
-                end: params.to.clone(),
-                status: "free".to_string(),
-            },
-        ],
+        slots: vec![AvailabilitySlot {
+            start: params.from.clone(),
+            end: params.to.clone(),
+            status: "free".to_string(),
+        }],
     };
 
     let tool_output = ToolOutput {
@@ -167,19 +165,13 @@ mod tests {
 
     #[test]
     fn validate_time_range_accepts_31_days() {
-        let result = validate_time_range(
-            "2024-01-01T00:00:00Z",
-            "2024-01-31T23:59:59Z",
-        );
+        let result = validate_time_range("2024-01-01T00:00:00Z", "2024-01-31T23:59:59Z");
         assert!(result.is_ok());
     }
 
     #[test]
     fn validate_time_range_rejects_32_days() {
-        let result = validate_time_range(
-            "2024-01-01T00:00:00Z",
-            "2024-02-02T00:00:00Z",
-        );
+        let result = validate_time_range("2024-01-01T00:00:00Z", "2024-02-02T00:00:00Z");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(format!("{}", err).contains("31"));
@@ -248,13 +240,11 @@ mod tests {
     #[test]
     fn availability_output_serializes() {
         let output = AvailabilityOutput {
-            slots: vec![
-                AvailabilitySlot {
-                    start: "00:00".to_string(),
-                    end: "01:00".to_string(),
-                    status: "free".to_string(),
-                },
-            ],
+            slots: vec![AvailabilitySlot {
+                start: "00:00".to_string(),
+                end: "01:00".to_string(),
+                status: "free".to_string(),
+            }],
         };
         let json = serde_json::to_string_pretty(&output).unwrap();
         assert!(json.contains("\"slots\""));

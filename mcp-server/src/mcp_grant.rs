@@ -29,8 +29,8 @@ struct McpGrantRow {
 
 impl McpGrantRow {
     fn to_grant(self) -> McpGrant {
-        let allowed_calendar_ids: Vec<i64> = serde_json::from_str(&self.allowed_calendar_ids)
-            .unwrap_or_default();
+        let allowed_calendar_ids: Vec<i64> =
+            serde_json::from_str(&self.allowed_calendar_ids).unwrap_or_default();
 
         McpGrant {
             grant_id: self.grant_id,
@@ -153,10 +153,7 @@ pub fn check_tool_permission(grant: &McpGrant, tool_name: &str) -> bool {
 }
 
 /// Revoke an McpGrant by setting revoked_at.
-pub async fn revoke_grant(
-    pool: &SqlitePool,
-    grant_id: &str,
-) -> Result<(), GrantError> {
+pub async fn revoke_grant(pool: &SqlitePool, grant_id: &str) -> Result<(), GrantError> {
     sqlx::query("UPDATE mcp_grant SET revoked_at = ? WHERE grant_id = ?")
         .bind(current_time_secs())
         .bind(grant_id)
@@ -173,7 +170,9 @@ pub async fn revoke_grant(
 /// to a fixed timestamp.
 pub fn current_time_secs() -> i64 {
     if let Ok(test_time) = std::env::var("MCP_TEST_TIME") {
-        return test_time.parse().unwrap_or_else(|_| current_time_secs_real());
+        return test_time
+            .parse()
+            .unwrap_or_else(|_| current_time_secs_real());
     }
     current_time_secs_real()
 }

@@ -53,9 +53,7 @@ pub async fn handle(
 
     // Step 3: Check calendar access.
     if !check_calendar_access(&grant, params.calendar_id) {
-        return Err(ToolError::Forbidden(
-            "calendar not in grant".to_string(),
-        ));
+        return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
     // Step 4: Validate reminder_minutes.

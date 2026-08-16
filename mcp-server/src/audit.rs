@@ -26,10 +26,15 @@ pub async fn log_invocation(
         "INSERT INTO mcp_audit (timestamp, request_id, user_id, oauth_client_id,
          mcp_grant_id, tool, resource_ids, auth_result, scope, auth_strength,
          latency_ms, result_type, operation_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(now)
-    .bind(operation_id.as_ref().map(|s| s.as_str()).unwrap_or_default())
+    .bind(
+        operation_id
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or_default(),
+    )
     .bind(user_id)
     .bind(client_id)
     .bind(grant_id)
@@ -62,7 +67,7 @@ pub async fn log_deletion(
         "INSERT INTO mcp_audit (timestamp, request_id, user_id, oauth_client_id,
          mcp_grant_id, tool, resource_ids, auth_result, scope, auth_strength,
          latency_ms, result_type, operation_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(now)
     .bind("")

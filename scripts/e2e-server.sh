@@ -15,4 +15,4 @@ DATABASE_PATH="$e2e_state_dir/commoncal.sqlite" \
 FRONTEND_DIR=frontend/dist \
 E2E_EMAIL_OUTBOX="$e2e_state_dir/outbox.ndjson" \
 E2E_ICS_FIXTURE=e2e/support/controlled.ics \
-cargo run --quiet --manifest-path backend/Cargo.toml
+cargo run --quiet --manifest-path backend/Cargo.toml --bin commoncal-backend

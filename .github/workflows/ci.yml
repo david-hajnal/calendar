@@ -1,8 +1,13 @@
 name: CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
   push:
+    branches: [main]
 
 jobs:
   checks:
@@ -60,6 +65,7 @@ jobs:
         run: pnpm --dir frontend build
 
   deploy-validation:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

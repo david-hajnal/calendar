@@ -78,17 +78,22 @@ echo "==> Ensuring namespace '$NAMESPACE' exists..."
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
+SECRET_TMPFILE=$(mktemp)
+trap 'rm -f "$SECRET_TMPFILE"' EXIT
 kubectl create secret generic commoncal-session \
   --from-literal=SESSION_SECRET="$SESSION_SECRET" \
   --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
   -n "$NAMESPACE" \
-  --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+  --dry-run=client -o yaml > "$SECRET_TMPFILE"
+kubectl "${kubectl_apply_args[@]}" -f "$SECRET_TMPFILE"
 
 # Deploy with Helm
 echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
+  --reset-values
+  --wait
   --values "$VALUES_FILE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"

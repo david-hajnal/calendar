@@ -36,7 +36,7 @@ spec:
     image:
       # fluxcd/image-automation: tag={{ .Values.image.tag }}
       repository: ghcr.io/david-hajnal/calendar-mcp
-      tag: "v0.3.1"
+      tag: "v0.3.4"
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

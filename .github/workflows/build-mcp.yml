@@ -50,6 +50,7 @@ jobs:
             type=ref,event=branch
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -57,13 +58,14 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image: ghcr.io/david-hajnal/calendar-mcp:${{ steps.meta.outputs.tags }}
+          image-id: ${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true

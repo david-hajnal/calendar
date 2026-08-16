@@ -103,10 +103,16 @@ helm_args=(
 
 # Configure imagePullSecrets for GHCR if token is provided
 if [[ -n "$GHCR_TOKEN" ]]; then
+  echo "==> Ensuring GHCR imagePullSecret 'commoncal-ghcr-creds' exists..."
+  kubectl create secret docker-registry commoncal-ghcr-creds \
+    --docker-server=https://ghcr.io \
+    --docker-username=_token \
+    --docker-password="$GHCR_TOKEN" \
+    --docker-email=none \
+    -n "$NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f -
   helm_args+=(
-    --set-string "imagePullSecrets[0].name=ghcr-creds" \
-    --set-string "imagePullSecrets[0].username=_token" \
-    --set-string "imagePullSecrets[0].password=$GHCR_TOKEN"
+    --set-string "imagePullSecrets[0].name=commoncal-ghcr-creds"
   )
 fi
 

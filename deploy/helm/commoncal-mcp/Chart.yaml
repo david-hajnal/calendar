@@ -2,6 +2,6 @@ apiVersion: v2
 name: commoncal-mcp
 description: Production deployment chart for CommonCal MCP server on k3s
 type: application
-version: 0.3.0
-appVersion: "v0.3.0"
+version: 0.3.1
+appVersion: "v0.3.1"
 kubeVersion: ">=1.25.0-0"

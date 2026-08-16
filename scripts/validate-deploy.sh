@@ -17,10 +17,18 @@ if command -v helm &>/dev/null; then
   helm lint deploy/helm/commoncal-mcp >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-mcp"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (core) ---"
-  helm template commoncal deploy/helm/commoncal >/dev/null 2>&1 || { echo "FAIL: helm template commoncal"; ERRORS=$((ERRORS+1)); }
+  helm template commoncal deploy/helm/commoncal \
+    --set-string existingSecret.name=commoncal-session \
+    --set-string existingSecret.sessionSecretKey=SESSION_SECRET \
+    --set-string existingSecret.backupEncryptionKeyHex=0000000000000000000000000000000000000000000000000000000000000000 \
+    >/dev/null 2>&1 || { echo "FAIL: helm template commoncal"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (MCP) ---"
-  helm template commoncal-mcp deploy/helm/commoncal-mcp >/dev/null 2>&1 || { echo "FAIL: helm template commoncal-mcp"; ERRORS=$((ERRORS+1)); }
+  helm template commoncal-mcp deploy/helm/commoncal-mcp \
+    --set-string existingSecret.name=commoncal-mcp-secrets \
+    --set-string existingSecret.apiKeyName=mcp-internal-api-key \
+    --set-string existingSecret.sessionSecretKeyName=mcp-session-secret \
+    >/dev/null 2>&1 || { echo "FAIL: helm template commoncal-mcp"; ERRORS=$((ERRORS+1)); }
 else
   echo "SKIP: helm not installed"
 fi

@@ -16,10 +16,13 @@ spec:
     - ports:
         - protocol: TCP
           port: http
-      {{- with .Values.networkPolicy.ingress.from }}
       from:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: commoncal-core
   egress:
     - to:
         - namespaceSelector:

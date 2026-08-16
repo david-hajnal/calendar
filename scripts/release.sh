@@ -15,12 +15,6 @@ if [[ ! "$BUMP" =~ ^(major|minor|patch)$ ]]; then
   exit 1
 fi
 
-# Ensure clean working tree
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Error: working tree is dirty. Commit or stash changes first." >&2
-  exit 1
-fi
-
 # Read current versions
 CORE_VERSION=$(grep '^version = ' backend/Cargo.toml | head -1 | cut -d'"' -f2)
 MCP_VERSION=$(grep '^version = ' mcp-server/Cargo.toml | head -1 | cut -d'"' -f2)

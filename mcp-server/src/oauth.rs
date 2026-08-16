@@ -8,10 +8,11 @@
 //
 // DPoP validation is handled separately in the security module.
 
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm, errors::ErrorKind as JwtErrorKind};
-use serde::{Deserialize, Serialize};
-use base64::Engine;
 use crate::error::TokenError;
+use base64::Engine;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, errors::ErrorKind as JwtErrorKind};
+use rsa::pkcs8::{EncodePublicKey, LineEnding};
+use serde::{Deserialize, Serialize};
 
 /// Parsed JWT header (for kid and alg extraction).
 #[derive(Debug, Deserialize, Serialize)]
@@ -145,8 +146,8 @@ pub async fn validate_access_token(
     validation.leeway = 30;
 
     // Decode and validate the token.
-    let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
-        .map_err(|e| match e.kind() {
+    let token_data =
+        decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
             JwtErrorKind::ExpiredSignature => TokenError::Expired,
             JwtErrorKind::InvalidIssuer => TokenError::InvalidIssuer,
             JwtErrorKind::InvalidAudience => TokenError::InvalidAudience,
@@ -157,13 +158,23 @@ pub async fn validate_access_token(
     // Extract user identity from claims.
     let claims = &token_data.claims;
 
-    let user_id = claims.user_id.ok_or(TokenError::InvalidToken("missing user_id claim".to_string()))?;
-    let client_id = claims.client_id.clone().ok_or(TokenError::InvalidToken("missing client_id claim".to_string()))?;
-    let token_id = claims.token_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let user_id = claims.user_id.ok_or(TokenError::InvalidToken(
+        "missing user_id claim".to_string(),
+    ))?;
+    let client_id = claims.client_id.clone().ok_or(TokenError::InvalidToken(
+        "missing client_id claim".to_string(),
+    ))?;
+    let token_id = claims
+        .token_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let scopes = claims.scopes.clone().unwrap_or_default();
     let auth_strength = parse_auth_strength(claims.auth_strength.as_deref());
-    let auth_time = claims.auth_time.map(|t| t as i64).unwrap_or(claims.iat as i64);
+    let auth_time = claims
+        .auth_time
+        .map(|t| t as i64)
+        .unwrap_or(claims.iat as i64);
 
     Ok(TokenValidationResult {
         user_id,
@@ -186,11 +197,7 @@ pub async fn validate_access_token(
 /// 4. Proof payload `jti` has not been seen before
 /// 5. Proof signature verifies against the public key in `dpop_jkt` header
 /// 6. Proof is not expired (nonce is returned in the response)
-pub async fn validate_dpop_proof(
-    token: &str,
-    proof: &str,
-    nonce: &str,
-) -> Result<(), TokenError> {
+pub async fn validate_dpop_proof(token: &str, proof: &str, nonce: &str) -> Result<(), TokenError> {
     // Validate proof format: must have 3 parts.
     let parts: Vec<&str> = proof.split('.').collect();
     if parts.len() != 3 {
@@ -209,11 +216,13 @@ pub async fn validate_dpop_proof(
         typ: String,
         #[serde(rename = "jwk")]
         jwk: Option<serde_json::Value>,
+        #[serde(default)]
+        alg: Option<String>,
         kid: Option<String>,
     }
 
-    let dpop_header: DpopHeader = serde_json::from_slice(&decoded)
-        .map_err(|_| TokenError::InvalidDpop)?;
+    let dpop_header: DpopHeader =
+        serde_json::from_slice(&decoded).map_err(|_| TokenError::InvalidDpop)?;
 
     // Verify typ is "dpop+jwt".
     if dpop_header.typ != "dpop+jwt" {
@@ -221,9 +230,35 @@ pub async fn validate_dpop_proof(
     }
 
     // Verify jwk is present (sender-constrained token).
-    if dpop_header.jwk.is_none() {
+    let jwk = dpop_header.jwk.as_ref().ok_or(TokenError::InvalidDpop)?;
+
+    // Extract RSA public key from JWK.
+    let kty = jwk["kty"].as_str().ok_or(TokenError::InvalidDpop)?;
+    if kty != "RSA" {
         return Err(TokenError::InvalidDpop);
     }
+    let n = jwk["n"].as_str().ok_or(TokenError::InvalidDpop)?;
+    let e = jwk["e"].as_str().ok_or(TokenError::InvalidDpop)?;
+
+    // Determine algorithm (default to RS256 per DPoF spec).
+    let alg_str = dpop_header.alg.as_deref().unwrap_or("RS256");
+    let alg = match alg_str {
+        "RS256" => Algorithm::RS256,
+        "RS384" => Algorithm::RS384,
+        "RS512" => Algorithm::RS512,
+        _ => return Err(TokenError::InvalidDpop),
+    };
+
+    // Construct DecodingKey from JWK.
+    let decoding_key = DecodingKey::from_rsa_components(n, e).map_err(|e| {
+        eprintln!(
+            "DEBUG: from_rsa_components failed: {:?}, n_len={}, e={}",
+            e,
+            n.len(),
+            e
+        );
+        TokenError::InvalidDpop
+    })?;
 
     // Parse DPoP proof payload.
     let payload_b64 = parts[1];
@@ -232,21 +267,36 @@ pub async fn validate_dpop_proof(
         .map_err(|_| TokenError::InvalidDpop)?;
 
     #[derive(serde::Deserialize)]
-    struct DpopPayload {
+    struct DpopClaims {
         jti: String,
         htm: String,
         htu: String,
         exp: usize,
-        #[serde(rename = "htm")]
-        htm_override: Option<String>,
     }
 
-    let _dpop_payload: DpopPayload = serde_json::from_slice(&decoded_payload)
-        .map_err(|_| TokenError::InvalidDpop)?;
+    let dpop_claims: DpopClaims =
+        serde_json::from_slice(&decoded_payload).map_err(|_| TokenError::InvalidDpop)?;
+
+    // Verify proof is not expired.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize;
+    if now >= dpop_claims.exp {
+        return Err(TokenError::InvalidDpop);
+    }
+
+    // Verify the JWS signature against the public key in the DPoP header.
+    let mut validation = Validation::new(alg);
+    validation.set_required_spec_claims(&["exp"]);
+    validation.leeway = 30;
+
+    decode::<DpopClaims>(proof, &decoding_key, &validation).map_err(|_| TokenError::InvalidDpop)?;
 
     // Verify nonce matches (nonce is returned in the response, client must echo it).
-    let _ = nonce;
-    let _ = token;
+    if nonce.is_empty() {
+        return Err(TokenError::InvalidDpop);
+    }
 
     Ok(())
 }
@@ -258,7 +308,38 @@ pub async fn validate_dpop_proof(
 pub async fn load_jwks(issuer: &str) -> Result<JwksDocument, TokenError> {
     let jwks_url = format!("{}/.well-known/oauth-jwks", issuer);
 
-    let resp = reqwest::get(&jwks_url)
+    // Validate URL to prevent SSRF.
+    let url = url::Url::parse(&jwks_url)
+        .map_err(|_| TokenError::InvalidToken("invalid JWKS URL".to_string()))?;
+
+    // Require https scheme.
+    if url.scheme() != "https" {
+        return Err(TokenError::InvalidToken(
+            "JWKS URL must use https scheme".to_string(),
+        ));
+    }
+
+    // Reject private/resolved hosts.
+    let host = url
+        .host_str()
+        .ok_or_else(|| TokenError::InvalidToken("JWKS URL has no host".to_string()))?;
+
+    if is_private_host(host) {
+        return Err(TokenError::InvalidToken(
+            "JWKS URL points to a private address".to_string(),
+        ));
+    }
+
+    // Use a reqwest client with strict TLS settings.
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(false)
+        .danger_accept_invalid_hostnames(false)
+        .build()
+        .map_err(|e| TokenError::InvalidToken(format!("failed to build HTTP client: {}", e)))?;
+
+    let resp = client
+        .get(&jwks_url)
+        .send()
         .await
         .map_err(|e| TokenError::InvalidToken(format!("failed to fetch JWKS: {}", e)))?;
 
@@ -275,17 +356,52 @@ pub async fn load_jwks(issuer: &str) -> Result<JwksDocument, TokenError> {
         .map_err(|e| TokenError::InvalidToken(format!("failed to parse JWKS: {}", e)))?;
 
     if jwks.keys.is_empty() {
-        return Err(TokenError::InvalidToken("JWKS contains no keys".to_string()));
+        return Err(TokenError::InvalidToken(
+            "JWKS contains no keys".to_string(),
+        ));
     }
 
     Ok(jwks)
+}
+
+/// Check if a host string is a private/reserved address.
+fn is_private_host(host: &str) -> bool {
+    // Check for localhost variants.
+    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" {
+        return true;
+    }
+
+    // Check for IPv4 private ranges.
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return ip.is_loopback() || ip.is_unspecified();
+    }
+
+    // Check for IPv6 private/reserved ranges (fc00::/7).
+    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
+        if ip.is_loopback() || ip.is_unspecified() {
+            return true;
+        }
+        // fc00::/7 covers fc00::/8 (ULA) and fe00::/8 (reserved).
+        let first_byte = ip.octets()[0];
+        if first_byte == 0xfc || first_byte == 0xfd {
+            return true;
+        }
+        // fe80::/10 (link-local).
+        if first_byte == 0xfe && (ip.octets()[1] & 0xc0) == 0x80 {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Parse the JWT header to extract `kid` and `alg`.
 fn parse_jwt_header(token: &str) -> Result<JwtHeader, TokenError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        return Err(TokenError::InvalidToken("token must have 3 parts".to_string()));
+        return Err(TokenError::InvalidToken(
+            "token must have 3 parts".to_string(),
+        ));
     }
 
     // Base64url decode the header.
@@ -304,13 +420,14 @@ fn parse_jwt_header(token: &str) -> Result<JwtHeader, TokenError> {
 fn find_jwk<'a>(jwks: &'a JwksDocument, kid: &'a Option<String>) -> Result<&'a Jwk, TokenError> {
     match kid {
         Some(kid) => {
-            jwks.keys.iter()
-                .find(|j| j.kid == *kid)
-                .ok_or_else(|| TokenError::InvalidToken(format!("no matching key for kid: {}", kid)))
+            jwks.keys.iter().find(|j| j.kid == *kid).ok_or_else(|| {
+                TokenError::InvalidToken(format!("no matching key for kid: {}", kid))
+            })
         }
         None => {
             // If no kid, return the first key (should not happen in production).
-            jwks.keys.first()
+            jwks.keys
+                .first()
                 .ok_or_else(|| TokenError::InvalidToken("JWKS contains no keys".to_string()))
         }
     }
@@ -325,7 +442,8 @@ fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey, TokenError> {
         )));
     }
 
-    // RSA JWK n and e are base64url-encoded.
+    // RSA JWK n and e are base64url-encoded big-endian integers.
+    // Decode to raw bytes and construct a proper SubjectPublicKeyInfo PEM.
     let n_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(&jwk.n)
         .map_err(|_| TokenError::InvalidToken("invalid RSA modulus encoding".to_string()))?;
@@ -334,12 +452,31 @@ fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey, TokenError> {
         .decode(&jwk.e)
         .map_err(|_| TokenError::InvalidToken("invalid RSA exponent encoding".to_string()))?;
 
-    // Build a PEM from the JWK components.
-    let pem = rsa_jwk_to_pem(&n_bytes, &e_bytes)
-        .map_err(|e| TokenError::InvalidToken(format!("failed to build RSA key: {}", e)))?;
+    // Pad modulus to next standard RSA key size (multiple of 128 bytes).
+    let key_size_bytes = ((n_bytes.len() + 127) / 128) * 128;
+    let n_padded = if n_bytes.len() < key_size_bytes {
+        let mut padded = vec![0u8; key_size_bytes - n_bytes.len()];
+        padded.extend_from_slice(&n_bytes);
+        padded
+    } else {
+        n_bytes
+    };
 
-    DecodingKey::from_rsa_pem(pem.as_bytes())
-        .map_err(|_| TokenError::InvalidToken("failed to decode RSA public key".to_string()))
+    // Construct RSA public key and export to SubjectPublicKeyInfo PEM.
+    let n_bigint = rsa::BigUint::from_bytes_be(&n_padded);
+    let e_bigint = rsa::BigUint::from_bytes_be(&e_bytes);
+    let rsa_pubkey = rsa::RsaPublicKey::new(n_bigint, e_bigint)
+        .map_err(|_| TokenError::InvalidToken("invalid RSA public key components".to_string()))?;
+
+    let pem = rsa_pubkey
+        .to_public_key_pem(LineEnding::default())
+        .map_err(|_| {
+            TokenError::InvalidToken("failed to export RSA public key to PEM".to_string())
+        })?;
+
+    DecodingKey::from_rsa_pem(pem.into_bytes().as_slice()).map_err(|_| {
+        TokenError::InvalidToken("failed to decode RSA public key from PEM".to_string())
+    })
 }
 
 /// Extract the algorithm from a JWK.
@@ -369,17 +506,6 @@ fn parse_auth_strength(raw: Option<&str>) -> AuthStrength {
         Some("mfa") => AuthStrength::Mfa,
         Some(_) | None => AuthStrength::Passwordless,
     }
-}
-
-/// Convert an RSA JWK (n, e) to a PEM-formatted public key.
-fn rsa_jwk_to_pem(n: &[u8], e: &[u8]) -> Result<String, String> {
-    // Build a minimal RSA public key PEM from JWK components.
-    // This uses a simplified approach — in production, use the `rsa` crate.
-    let pem = format!(
-        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
-        base64::engine::general_purpose::STANDARD.encode(n)
-    );
-    Ok(pem)
 }
 
 #[cfg(test)]
@@ -413,7 +539,10 @@ mod tests {
 
     #[test]
     fn parse_auth_strength_unknown_defaults_to_passwordless() {
-        assert_eq!(parse_auth_strength(Some("unknown")), AuthStrength::Passwordless);
+        assert_eq!(
+            parse_auth_strength(Some("unknown")),
+            AuthStrength::Passwordless
+        );
     }
 
     #[test]
@@ -557,7 +686,8 @@ mod tests {
     fn dpop_proof_rejects_wrong_typ() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let header = serde_json::json!({"typ": "jwt", "jwk": {"kty": "RSA"}});
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
+        let header_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
         let proof = format!("{}.payload.signature", header_b64);
         let result = rt.block_on(validate_dpop_proof("token", &proof, "nonce"));
         assert!(result.is_err());
@@ -567,21 +697,117 @@ mod tests {
     fn dpop_proof_rejects_missing_jwk() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let header = serde_json::json!({"typ": "dpop+jwt"});
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost"}"#);
+        let header_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost"}"#);
         let proof = format!("{}.{}.signature", header_b64, payload);
         let result = rt.block_on(validate_dpop_proof("token", &proof, "nonce"));
         assert!(result.is_err());
     }
 
     #[test]
-    fn dpop_proof_accepts_valid_header() {
+    fn dpop_proof_rejects_dummy_key() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let header = serde_json::json!({"typ": "dpop+jwt", "jwk": {"kty": "RSA", "n": "test", "e": "AQAB"}});
-        let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost","exp":9999999999}"#);
+        let header =
+            serde_json::json!({"typ": "dpop+jwt", "jwk": {"kty": "RSA", "n": "test", "e": "AQAB"}});
+        let header_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"jti":"test","htm":"GET","htu":"http://localhost","exp":9999999999}"#);
         let proof = format!("{}.{}.signature", header_b64, payload);
         let result = rt.block_on(validate_dpop_proof("token", &proof, "nonce"));
-        assert!(result.is_ok());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dpop_proof_accepts_valid_header_and_payload() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // Create a properly formatted DPoP proof with valid typ, jwk, and payload.
+        let header = serde_json::json!({
+            "typ": "dpop+jwt",
+            "jwk": {"kty": "RSA", "n": "dGVzdA==", "e": "AQAB"},
+            "alg": "RS256"
+        });
+        let header_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header.to_string());
+        let claims = serde_json::json!({
+            "jti": "test-jti",
+            "htm": "GET",
+            "htu": "http://localhost",
+            "exp": 4102444800u64
+        });
+        let claims_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
+        // Use a dummy signature (will fail signature verification but passes format checks)
+        let proof = format!("{}.{}.dummy_signature", header_b64, claims_b64);
+        let result = rt.block_on(validate_dpop_proof("token", &proof, "nonce"));
+        // Should fail at signature verification (invalid key), not at format validation
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dpop_proof_rejects_forged_proof() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use rsa::RsaPrivateKey;
+        use rsa::pkcs1v15::SigningKey;
+        use rsa::pkcs1v15::VerifyingKey;
+        use rsa::signature::Signer;
+        use rsa::signature::Verifier;
+        use rsa::traits::PublicKeyParts;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Generate a real RSA key pair for testing.
+        let mut rng = rand::thread_rng();
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let public_key = private_key.to_public_key();
+
+        let n_bytes = public_key.n().to_bytes_be();
+        let n_b64 = URL_SAFE_NO_PAD.encode(&n_bytes);
+
+        // Create JWK for the DPoP header.
+        let jwk = serde_json::json!({
+            "kty": "RSA",
+            "n": n_b64,
+            "e": "AQAB"
+        });
+
+        // Create DPoP header.
+        let header = serde_json::json!({"typ": "dpop+jwt", "jwk": jwk, "alg": "RS256"});
+        let header_b64 = URL_SAFE_NO_PAD.encode(header.to_string());
+
+        // Original payload.
+        let original_claims = serde_json::json!({
+            "jti": "test-jti",
+            "htm": "GET",
+            "htu": "http://localhost",
+            "exp": 4102444800u64
+        });
+        let original_claims_b64 = URL_SAFE_NO_PAD.encode(original_claims.to_string());
+
+        // Sign the original payload.
+        let signing_input = format!("{}.{}", header_b64, original_claims_b64);
+        let signing_key = SigningKey::<sha2::Sha256>::new_unprefixed(private_key);
+        let signature = signing_key.sign(signing_input.as_bytes());
+        let signature_bytes: Box<[u8]> = signature.into();
+        let signature_b64 = URL_SAFE_NO_PAD.encode(&signature_bytes);
+
+        // Tamper with the payload (change GET to POST in base64url).
+        // The base64url of "GET" is "R0VU", changing first char to "P" gives "P0VU" which decodes to different bytes.
+        let tampered_claims = serde_json::json!({
+            "jti": "test-jti",
+            "htm": "POST",
+            "htu": "http://localhost",
+            "exp": 4102444800u64
+        });
+        let tampered_claims_b64 = URL_SAFE_NO_PAD.encode(tampered_claims.to_string());
+
+        // Use the original signature but with tampered payload — this is a forged proof.
+        let forged_proof = format!("{}.{}.{}", header_b64, tampered_claims_b64, signature_b64);
+
+        // Verify the forged proof is rejected.
+        let result = rt.block_on(validate_dpop_proof("token", &forged_proof, "nonce"));
+        assert!(result.is_err(), "forged DPoP proof should be rejected");
     }
 }

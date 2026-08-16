@@ -56,6 +56,8 @@ impl FixedWindowRateLimiter {
             return (false, retry_after);
         }
         bucket.attempts += 1;
+        // Evict buckets that have been idle for longer than the window.
+        buckets.retain(|_, b| now - b.window_started_at < self.window_seconds);
         (true, 0)
     }
 

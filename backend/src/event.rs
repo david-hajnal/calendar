@@ -204,11 +204,54 @@ impl EventRepository {
     }
 }
 
+const DEFAULT_REPLANNER_CHANNEL_CAPACITY: usize = 1024;
+const DEFAULT_REPLANNER_MAX_CONCURRENT: usize = 8;
+
+/// Bounded notification replanner that drains a channel with limited concurrency.
+#[derive(Clone)]
+pub struct NotificationReplanner {
+    sender: tokio::sync::mpsc::Sender<i64>,
+}
+
+impl NotificationReplanner {
+    /// Create a new replanner with a bounded channel and spawn the worker loop.
+    pub fn new(on_notify: Arc<dyn Fn(i64) + Send + Sync>) -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::channel(DEFAULT_REPLANNER_CHANNEL_CAPACITY);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            DEFAULT_REPLANNER_MAX_CONCURRENT,
+        ));
+        let semaphore_clone = semaphore.clone();
+        tokio::spawn(async move {
+            let mut rx = receiver;
+            while let Some(event_id) = rx.recv().await {
+                let semaphore = semaphore_clone.clone();
+                let on_notify = on_notify.clone();
+                tokio::spawn(async move {
+                    let _permit = semaphore.acquire().await.unwrap();
+                    (on_notify)(event_id);
+                });
+            }
+        });
+        Self { sender }
+    }
+
+    pub async fn send(&self, event_id: i64) {
+        let _ = self.sender.send(event_id).await;
+    }
+
+    /// Create a no-op replanner that discards all notifications.
+    pub fn noop() -> Self {
+        let (sender, _receiver) = tokio::sync::mpsc::channel(DEFAULT_REPLANNER_CHANNEL_CAPACITY);
+        drop(_receiver);
+        Self { sender }
+    }
+}
+
 #[derive(Clone)]
 pub struct EventService {
     pool: SqlitePool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
-    notification_replanner: Arc<dyn Fn(i64) + Send + Sync>,
+    notification_replanner: Arc<NotificationReplanner>,
 }
 
 impl EventService {
@@ -221,7 +264,7 @@ impl EventService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
-            notification_replanner: Arc::new(|_| {}),
+            notification_replanner: Arc::new(NotificationReplanner::noop()),
         }
     }
 
@@ -229,14 +272,15 @@ impl EventService {
         Self {
             pool,
             clock: Arc::new(move || now),
-            notification_replanner: Arc::new(|_| {}),
+            notification_replanner: Arc::new(NotificationReplanner::noop()),
         }
     }
 
     pub fn new_with_notification_replanner(
         pool: SqlitePool,
-        notification_replanner: Arc<dyn Fn(i64) + Send + Sync>,
+        on_notify: Arc<dyn Fn(i64) + Send + Sync>,
     ) -> Self {
+        let replanner = NotificationReplanner::new(on_notify);
         Self {
             pool,
             clock: Arc::new(|| {
@@ -245,19 +289,20 @@ impl EventService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
-            notification_replanner,
+            notification_replanner: Arc::new(replanner),
         }
     }
 
     pub fn new_at_with_notification_replanner(
         pool: SqlitePool,
         now: i64,
-        notification_replanner: Arc<dyn Fn(i64) + Send + Sync>,
+        on_notify: Arc<dyn Fn(i64) + Send + Sync>,
     ) -> Self {
+        let replanner = NotificationReplanner::new(on_notify);
         Self {
             pool,
             clock: Arc::new(move || now),
-            notification_replanner,
+            notification_replanner: Arc::new(replanner),
         }
     }
 
@@ -320,7 +365,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(event_id);
+        self.notification_replanner.send(event_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, event_id)
             .await
     }
@@ -382,7 +427,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(event_id);
+        self.notification_replanner.send(event_id).await;
         let mut projection = self
             .get(actor_user_id, is_superadmin, calendar_id, event_id)
             .await?;
@@ -716,7 +761,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(series_id);
+        self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
             .await
     }
@@ -785,7 +830,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(series_id);
+        self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
             .await
     }
@@ -874,7 +919,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(series_id);
+        self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
             .await
     }
@@ -938,7 +983,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(series_id);
+        self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
             .await
     }
@@ -1090,7 +1135,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(event_id);
+        self.notification_replanner.send(event_id).await;
         self.get(actor_user_id, is_superadmin, target_calendar_id, event_id)
             .await
     }
@@ -1139,7 +1184,7 @@ impl EventService {
         )
         .await?;
         transaction.commit().await?;
-        (self.notification_replanner)(event_id);
+        self.notification_replanner.send(event_id).await;
         Ok(())
     }
 

@@ -18,11 +18,10 @@ spec:
     {{- toYaml .Values.ingress.tls | nindent 4 }}
   {{- end }}
   rules:
-    {{- range .Values.ingress.hosts }}
-    - host: {{ .host | quote }}
+    - host: {{ .Values.domain | quote }}
       http:
         paths:
-          {{- range .paths }}
+          {{- range .Values.ingress.hosts }}
           - path: {{ .path | quote }}
             pathType: {{ .pathType | default "Prefix" | quote }}
             backend:
@@ -31,5 +30,4 @@ spec:
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}
-    {{- end }}
 {{- end }}

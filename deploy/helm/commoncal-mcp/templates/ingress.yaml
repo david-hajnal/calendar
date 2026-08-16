@@ -15,14 +15,15 @@ spec:
   {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
-    {{- toYaml .Values.ingress.tls | nindent 4 }}
+    - secretName: {{ .Values.ingress.tls[0].secretName }}
+      hosts:
+        - {{ .Values.domain | quote }}
   {{- end }}
   rules:
     - host: {{ .Values.domain | quote }}
       http:
         paths:
           {{- range .Values.ingress.hosts }}
-          {{- range .paths }}
           - path: {{ .path | quote }}
             pathType: {{ .pathType | default "Prefix" | quote }}
             backend:
@@ -30,6 +31,5 @@ spec:
                 name: {{ include "commoncal-mcp.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
-          {{- end }}
           {{- end }}
 {{- end }}

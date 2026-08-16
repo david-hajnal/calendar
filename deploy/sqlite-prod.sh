@@ -319,7 +319,7 @@ EOF
 
 # --- Create the pod ---
 echo "Creating console pod..."
-if ! echo "$POD_SPEC" | kubectl apply -f - 2>/dev/null; then
+if ! echo "$POD_SPEC" | kubectl create -f - 2>/dev/null; then
   echo "ERROR: Failed to create console pod" >&2
   exit 1
 fi

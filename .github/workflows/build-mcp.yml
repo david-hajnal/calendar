@@ -1,10 +1,22 @@
 name: Build MCP image
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - 'Dockerfile.mcp'
+      - 'mcp-server/**'
+      - '.github/workflows/build-mcp.yml'
   pull_request:
+    paths:
+      - 'Dockerfile.mcp'
+      - 'mcp-server/**'
+      - '.github/workflows/build-mcp.yml'
 
 permissions:
   contents: read
@@ -12,13 +24,6 @@ permissions:
 
 jobs:
   build:
-    if: |
-      github.event_name != 'push' ||
-      (
-        github.event.head_commit.msg != 'chore(deploy): update image tags' ||
-        contains(github.event.head_commit.modified, 'Dockerfile.mcp') ||
-        contains(github.event.head_commit.modified, 'mcp-server/')
-      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,3 +59,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image: ghcr.io/david-hajnal/calendar-mcp:${{ steps.meta.outputs.tags }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true

@@ -1,0 +1,64 @@
+name: E2E Verify Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to verify (e.g., sha-abc123)'
+        required: true
+        type: string
+      core_domain:
+        description: 'Core domain to health check'
+        required: false
+        default: 'https://cal.hajnal.space/health/ready'
+        type: string
+      mcp_domain:
+        description: 'MCP domain to health check'
+        required: false
+        default: 'https://cal.hajnal.space/mcp/health/live'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify images in GHCR
+        run: |
+          echo "Checking ghcr.io/david-hajnal/calendar-core:${{ inputs.image_tag }}"
+          gh cr view david-hajnal/calendar-core --json name,version 2>/dev/null || echo "WARN: Could not verify core image"
+          gh cr view david-hajnal/calendar-mcp --json name,version 2>/dev/null || echo "WARN: Could not verify mcp image"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check core health
+        run: |
+          for i in $(seq 1 30); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "${{ inputs.core_domain }}" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Core health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE, waiting..."
+            sleep 10
+          done
+          echo "ERROR: Core health check failed after 30 attempts"
+          exit 1
+
+      - name: Check MCP health
+        run: |
+          for i in $(seq 1 30); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "${{ inputs.mcp_domain }}" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "MCP health check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE, waiting..."
+            sleep 10
+          done
+          echo "ERROR: MCP health check failed after 30 attempts"
+          exit 1

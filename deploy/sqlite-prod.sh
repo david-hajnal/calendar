@@ -27,7 +27,11 @@ while [ $# -gt 0 ]; do
     --write) WRITE_MODE=1; shift ;;
     -n|--namespace)
       shift
-      NAMESPACE="${1:?ERROR: --namespace requires a value}"
+      if [ $# -eq 0 ] || [ -z "$1" ]; then
+        echo "ERROR: --namespace requires a value" >&2
+        exit 1
+      fi
+      NAMESPACE="$1"
       shift
       ;;
     -h|--help)

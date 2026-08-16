@@ -70,7 +70,7 @@ jobs:
           version: v3.14.0
 
       - name: Run deploy validation
-        run: sh scripts/validate-deploy.sh
+        run: bash scripts/validate-deploy.sh
 
       - name: Check no mutable tags in production
         run: |

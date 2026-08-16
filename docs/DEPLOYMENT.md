@@ -151,7 +151,7 @@ kubectl get deployment -n commoncal
 Run local validation before pushing:
 
 ```bash
-sh scripts/validate-deploy.sh
+bash scripts/validate-deploy.sh
 ```
 
 This checks:

@@ -18,6 +18,9 @@ if command -v helm &>/dev/null; then
   
   echo "--- Helm template (core) ---"
   helm template commoncal deploy/helm/commoncal \
+    --set-string image.tag=test \
+    --set-string domain=example.com \
+    --set-string config.appOrigin=https://example.com \
     --set-string existingSecret.name=commoncal-session \
     --set-string existingSecret.sessionSecretKey=SESSION_SECRET \
     --set-string existingSecret.backupEncryptionKeyHex=0000000000000000000000000000000000000000000000000000000000000000 \

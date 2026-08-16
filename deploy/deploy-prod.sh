@@ -17,9 +17,11 @@ set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load .env file if it exists (scoped to subshell to avoid leaking secrets)
+# Load .env file if it exists
 if [[ -f "$DEPLOY_DIR/.env" ]]; then
-  ( set -a; source "$DEPLOY_DIR/.env"; set +a; )
+  set -a
+  source "$DEPLOY_DIR/.env"
+  set +a
 fi
 
 # Fail fast if required env vars are missing

@@ -15,7 +15,7 @@ spec:
   {{- end }}
   {{- if .Values.ingress.tls }}
   tls:
-    - secretName: {{ index .Values.ingress.tls 0 | default "commoncal-tls" | quote }}
+    - secretName: {{ index (index .Values.ingress.tls 0) "secretName" | default "commoncal-tls" | quote }}
       hosts:
         - {{ .Values.domain | quote }}
   {{- end }}

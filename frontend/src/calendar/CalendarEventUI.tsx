@@ -20,6 +20,8 @@ function editable(event: EventProjection, calendar: Calendar | undefined) { retu
 function title(event: EventProjection) { return event.title ?? "Busy"; }
 function eventTime(event: EventProjection) { return event.start_utc ?? Date.parse(`${event.start_date}T00:00:00Z`) / 1000; }
 function inputTime(seconds: number) { return new Date(seconds * 1000).toISOString().slice(0, 16); }
+function localToUtcMs(local: Date): number { return local.getTime() + local.getTimezoneOffset() * 60000; }
+function utcToLocalMs(utc: number): number { return utc - new Date(utc).getTimezoneOffset() * 60000; }
 function startOfDay(value: Date) { const copy = new Date(value); copy.setHours(0, 0, 0, 0); return copy; }
 function addDays(value: Date, days: number) { const copy = new Date(value); copy.setDate(copy.getDate() + days); return copy; }
 function rangeFor(view: CalendarView, date: Date) {
@@ -33,8 +35,8 @@ function formatRange(view: CalendarView, date: Date) { return new Intl.DateTimeF
 
 function eventTop(event: EventProjection): number | null {
   if (event.event_kind === "all_day" || event.start_utc == null) return null;
-  const d = new Date(event.start_utc * 1000);
-  return d.getHours() * 60 + d.getMinutes();
+  const utc = new Date(utcToLocalMs(event.start_utc * 1000));
+  return utc.getHours() * 60 + utc.getMinutes();
 }
 
 function eventHeight(event: EventProjection): number {
@@ -48,7 +50,7 @@ function currentTimeTop(): number {
 }
 
 function payload(draft: Draft): EventPayload {
-  return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(new Date(draft.start).getTime() / 1000), end_utc: Math.floor(new Date(draft.end).getTime() / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
+  return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(localToUtcMs(new Date(draft.start)) / 1000), end_utc: Math.floor(localToUtcMs(new Date(draft.end)) / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
 }
 
 export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { api: ApiClient; calendars: Calendar[]; initialDate?: Date }) {
@@ -62,6 +64,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const [editing, setEditing] = useState<EventProjection | "new" | null>(null);
   const [slotHighlight, setSlotHighlight] = useState<{ dayIndex: number; hour: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<{ event: EventProjection; startY: number; originalTop: number; originalHeight: number; dayIndex: number; mode: "move" | "resize-top" | "resize-bottom" } | null>(null);
   const firstWritable = calendars.find(writable)?.id ?? calendars[0]?.id ?? 0;
   const [draft, setDraft] = useState<Draft>(() => ({ title: "", start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), calendarId: firstWritable, recurrenceRule: "" }));
   const range = useMemo(() => rangeFor(view, date), [view, date]);
@@ -91,9 +94,90 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const calendarFor = (event: EventProjection) => calendars.find((calendar) => calendar.id === event.calendar_id);
 
   function openNew() {
-    const start = Math.floor(date.getTime() / 1000) + 9 * 3600;
-    setDraft({ title: "", start: inputTime(start), end: inputTime(start + 3600), calendarId: calendars.find(writable)?.id ?? 0, recurrenceRule: "" });
+    const startMs = localToUtcMs(date) + 9 * 3600 * 1000;
+    setDraft({ title: "", start: inputTime(Math.floor(startMs / 1000)), end: inputTime(Math.floor(startMs / 1000) + 3600), calendarId: calendars.find(writable)?.id ?? 0, recurrenceRule: "" });
     setEditing("new"); setSelected(null); setError(null);
+  }
+
+  function snapY(y: number): number {
+    const minutes = Math.round(y / 15) * 15;
+    return Math.max(0, Math.min(1440, minutes));
+  }
+
+  function onPointerDown(event: EventProjection, e: React.PointerEvent, dayIndex: number) {
+    if (!editable(event, calendarFor(event))) return;
+    const top = eventTop(event);
+    if (top === null) return;
+    e.preventDefault();
+    setDragging({ event, startY: e.clientY, originalTop: top, originalHeight: eventHeight(event), dayIndex, mode: "move" });
+    gridRef.current?.setPointerCapture(e.pointerId);
+  }
+
+  function onGridPointerMove(e: React.PointerEvent) {
+    if (!dragging) return;
+    const dy = e.clientY - dragging.startY;
+    const snappedDy = snapY(dy);
+    let newTop = dragging.originalTop;
+    let newHeight = dragging.originalHeight;
+    if (dragging.mode === "move") {
+      newTop = dragging.originalTop + snappedDy;
+      newTop = Math.max(0, Math.min(1440 - dragging.originalHeight, newTop));
+    } else if (dragging.mode === "resize-top") {
+      newTop = dragging.originalTop + snappedDy;
+      newHeight = dragging.originalHeight - snappedDy;
+      newTop = Math.max(0, newTop);
+      newHeight = Math.max(15, newHeight);
+    } else if (dragging.mode === "resize-bottom") {
+      newHeight = dragging.originalHeight + snappedDy;
+      newHeight = Math.max(15, Math.min(1440 - newTop, newHeight));
+    }
+    const hour = Math.floor(Math.max(0, newTop) / 60);
+    setSlotHighlight({ dayIndex: dragging.dayIndex, hour });
+  }
+
+  function onGridPointerUp(e: React.PointerEvent) {
+    if (!dragging) return;
+    const { event: ev } = dragging;
+    if (ev.start_utc == null || ev.end_utc == null) { setDragging(null); setSlotHighlight(null); return; }
+    const dy = e.clientY - dragging.startY;
+    const snappedDy = snapY(dy);
+    let newStart = new Date(ev.start_utc * 1000);
+    let newEnd = new Date(ev.end_utc * 1000);
+    if (dragging.mode === "move") {
+      const newTop = dragging.originalTop + snappedDy;
+      const startMinutes = Math.max(0, Math.min(1439, newTop));
+      newStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+      const duration = ev.end_utc - ev.start_utc;
+      newEnd = new Date(newStart.getTime() + duration * 1000);
+    } else if (dragging.mode === "resize-top") {
+      const newTop = dragging.originalTop + snappedDy;
+      const startMinutes = Math.max(0, newTop);
+      newStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+      const duration = ev.end_utc - ev.start_utc;
+      newEnd = new Date(newStart.getTime() + duration * 1000);
+    } else if (dragging.mode === "resize-bottom") {
+      const newHeight = Math.max(15, dragging.originalHeight + snappedDy);
+      newEnd = new Date(newStart.getTime() + newHeight * 60 * 1000);
+    }
+    updateEvent(api, ev.calendar_id, ev.id, {
+      ...payload({ title: title(ev), start: inputTime(Math.floor(localToUtcMs(newStart) / 1000)), end: inputTime(Math.floor(localToUtcMs(newEnd) / 1000)), calendarId: ev.calendar_id, recurrenceRule: ev.recurrence_rule ?? "" }),
+      calendar_id: ev.calendar_id,
+      version: ev.version!,
+    }).then((saved) => {
+      setEvents((current) => current.map((item) => item.id === saved.id ? saved : item));
+    }).catch(() => { /* ignore */ });
+    setDragging(null);
+    setSlotHighlight(null);
+  }
+
+  function onResizeHandleDown(event: EventProjection, direction: "top" | "bottom", e: React.PointerEvent) {
+    if (!editable(event, calendarFor(event))) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const height = eventHeight(event);
+    const startTop = eventTop(event) ?? 0;
+    setDragging({ event, startY: e.clientY, originalTop: direction === "top" ? startTop + height : startTop, originalHeight: height, dayIndex: 0, mode: direction === "top" ? "resize-top" : "resize-bottom" });
+    gridRef.current?.setPointerCapture(e.pointerId);
   }
 
   function slotDate(dayIndex: number, hour: number, view: CalendarView): Date {
@@ -109,8 +193,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     end.setHours(end.getHours() + 1);
     setDraft({
       title: "",
-      start: inputTime(Math.floor(start.getTime() / 1000)),
-      end: inputTime(Math.floor(end.getTime() / 1000)),
+      start: inputTime(Math.floor(localToUtcMs(start) / 1000)),
+      end: inputTime(Math.floor(localToUtcMs(end) / 1000)),
       calendarId: calendars.find(writable)?.id ?? 0,
       recurrenceRule: "",
     });
@@ -276,16 +360,27 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                 const cal = calendarFor(event);
                 const accentColor = cal?.color || "var(--color-primary)";
                 const bgColor = `${accentColor}1a`;
+                const isDragging = dragging?.event.id === event.id;
+                const canEdit = editable(event, cal);
                 return (
                   <div
                     key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
                     className="event-ui__event-block"
-                    style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor }}
+                    style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor, opacity: isDragging ? 0.6 : 1, cursor: isDragging ? "grabbing" : dragging && canEdit ? "grab" : "pointer", zIndex: isDragging ? 10 : 2 }}
                     onClick={() => openEdit(event)}
+                    onPointerDown={(e) => onPointerDown(event, e, 0)}
+                    onPointerMove={onGridPointerMove}
+                    onPointerUp={onGridPointerUp}
                   >
+                    {canEdit && height > 30 && (
+                      <div className="event-ui__resize-handle event-ui__resize-handle--top" onPointerDown={(e) => onResizeHandleDown(event, "top", e)} />
+                    )}
                     <button type="button" className="event-chip__text" draggable={false} onClick={() => openEdit(event)}>
                       {title(event)}
                     </button>
+                    {canEdit && height > 30 && (
+                      <div className="event-ui__resize-handle event-ui__resize-handle--bottom" onPointerDown={(e) => onResizeHandleDown(event, "bottom", e)} />
+                    )}
                   </div>
                 );
               })}
@@ -306,7 +401,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
             {Array.from({ length: 7 }, (_, dayIndex) => {
               const dayEvents = displayed.filter((e) => {
                 if (e.event_kind === "all_day" || e.start_utc == null) return false;
-                const d = new Date(e.start_utc * 1000);
+                const d = new Date(utcToLocalMs(e.start_utc * 1000));
                 const weekStart = startOfDay(date);
                 const monday = addDays(weekStart, -weekStart.getDay());
                 const dayDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + dayIndex);
@@ -323,16 +418,27 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                     const cal = calendarFor(event);
                     const accentColor = cal?.color || "var(--color-primary)";
                     const bgColor = `${accentColor}1a`;
+                    const isDragging = dragging?.event.id === event.id;
+                    const canEdit = editable(event, cal);
                     return (
                       <div
                         key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
                         className="event-ui__event-block"
-                        style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor }}
+                        style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor, opacity: isDragging ? 0.6 : 1, cursor: isDragging ? "grabbing" : dragging && canEdit ? "grab" : "pointer", zIndex: isDragging ? 10 : 2 }}
                         onClick={() => openEdit(event)}
+                        onPointerDown={(e) => onPointerDown(event, e, dayIndex)}
+                        onPointerMove={onGridPointerMove}
+                        onPointerUp={onGridPointerUp}
                       >
+                        {canEdit && height > 30 && (
+                          <div className="event-ui__resize-handle event-ui__resize-handle--top" onPointerDown={(e) => onResizeHandleDown(event, "top", e)} />
+                        )}
                         <button type="button" className="event-chip__text" draggable={false} onClick={() => openEdit(event)}>
                           {title(event)}
                         </button>
+                        {canEdit && height > 30 && (
+                          <div className="event-ui__resize-handle event-ui__resize-handle--bottom" onPointerDown={(e) => onResizeHandleDown(event, "bottom", e)} />
+                        )}
                       </div>
                     );
                   })}

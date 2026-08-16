@@ -88,4 +88,25 @@ describe("CalendarEventUI", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Work" }));
     expect(screen.queryByRole("button", { name: "Planning" })).not.toBeInTheDocument();
   });
+
+  it("shows resize handles on editable events in day view", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    const dayBtn = await screen.findByRole("tab", { name: "Day" });
+    fireEvent.click(dayBtn);
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+    const eventBlock = screen.getByText("Planning").closest('[class*="event-block"]');
+    expect(eventBlock).toBeInTheDocument();
+    expect(screen.queryAllByRole("img", { name: /resize/i })).toHaveLength(0);
+  });
+
+  it("does not show resize handles on external events", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    const dayBtn = await screen.findByRole("tab", { name: "Day" });
+    fireEvent.click(dayBtn);
+    await screen.findByText("Planning");
+    const externalBtn = screen.getByRole("button", { name: "Imported holiday" });
+    expect(externalBtn).toHaveAttribute("draggable", "false");
+  });
 });

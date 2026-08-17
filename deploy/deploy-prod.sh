@@ -70,8 +70,12 @@ if [[ ! -f "$CHART_DIR/Chart.yaml" || ! -f "$VALUES_FILE" ]]; then
   exit 1
 fi
 
+# Use explicit KUBECONFIG only — do not auto-detect k3s (causes hangs when unreachable)
+: "${KUBECONFIG:?ERROR: KUBECONFIG is not set. Export it or run from the k3s host.}"
+
 # Verify kubectl context before deploying
-echo "==> Current kubectl context: $(kubectl config current-context)"
+CTX=$(kubectl config current-context 2>/dev/null) || CTX="(none)"
+echo "==> Current kubectl context: $CTX"
 
 # Ensure namespace exists
 echo "==> Ensuring namespace '$NAMESPACE' exists..."
@@ -85,7 +89,7 @@ kubectl create secret generic commoncal-session \
   --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
   -n "$NAMESPACE" \
   --dry-run=client -o yaml > "$SECRET_TMPFILE"
-kubectl "${kubectl_apply_args[@]}" -f "$SECRET_TMPFILE"
+kubectl apply -f "$SECRET_TMPFILE"
 
 # Deploy with Helm
 echo "==> Deploying $RELEASE to $NAMESPACE..."

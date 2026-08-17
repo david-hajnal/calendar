@@ -91,68 +91,74 @@ resolve_token() {
   fi
 }
 
-# Build image
-build() {
-  echo "==> Building image ${IMAGE_REF}"
-  docker build -t "${IMAGE_REF}" -t "${LOCAL_TAG}" -f Dockerfile .
+# Collect all tags to apply
+collect_tags() {
+  TAGS=("${IMAGE_REF}" "${LOCAL_TAG}")
+  local git_tag
+  git_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+  if [[ -n "$git_tag" && "${git_tag}" != "${IMAGE_TAG}" ]]; then
+    TAGS+=("${DOCKER_REGISTRY}/${IMAGE_NAME}:${git_tag}")
+  fi
+  TAGS+=("${DOCKER_REGISTRY}/${IMAGE_NAME}:latest")
 }
 
-# Push image to registry
-push() {
+# Build-only: load into local docker (single platform only)
+build_local() {
+  local platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+  if [[ "${platforms}" == *","* ]]; then
+    echo "WARNING: multi-platform build with --build-only falls back to linux/amd64" >&2
+    echo "         (multi-platform images cannot be loaded into local docker)" >&2
+    platforms="linux/amd64"
+  fi
+  echo "==> Building image ${IMAGE_REF} (platform: ${platforms})"
+  docker buildx build \
+    --platform "${platforms}" \
+    --load \
+    "${TAGS[@]/#/-t }" \
+    -f Dockerfile .
+}
+
+# Build and push in one step (supports multi-platform)
+build_push() {
+  local platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
   local token
   token="$(resolve_token)"
 
   echo "==> Logging in to ${DOCKER_REGISTRY}..."
   docker login "${DOCKER_REGISTRY}" -u _token --password-stdin <<< "${token}"
 
-  echo "==> Pushing ${IMAGE_REF}..."
-  docker push "${IMAGE_REF}"
+  echo "==> Building and pushing ${IMAGE_REF} (platforms: ${platforms})"
+  docker buildx build \
+    --platform "${platforms}" \
+    --push \
+    "${TAGS[@]/#/-t }" \
+    -f Dockerfile .
 
-  # If a git tag exists, also push with that tag name
-  local git_tag
-  git_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
-  if [[ -n "$git_tag" ]]; then
-    local tag_with_name="${DOCKER_REGISTRY}/${IMAGE_NAME}:${git_tag}"
-    echo "==> Also tagging as ${tag_with_name}"
-    docker tag "${IMAGE_REF}" "${tag_with_name}"
-    docker push "${tag_with_name}"
-  fi
-
-  # Always tag and push latest
-  local latest_ref="${DOCKER_REGISTRY}/${IMAGE_NAME}:latest"
-  echo "==> Tagging as ${latest_ref}"
-  docker tag "${IMAGE_REF}" "${latest_ref}"
-  docker push "${latest_ref}"
-}
-
-# Cleanup handler
-cleanup() {
   docker logout "${DOCKER_REGISTRY}" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
 
 # Dry-run mode
 if ((DRY_RUN)); then
-  echo "[dry-run] Would build image: ${IMAGE_REF}"
-  echo "[dry-run] Would build image: ${LOCAL_TAG}"
-  echo "[dry-run] Would login to ${DOCKER_REGISTRY}"
-  echo "[dry-run] Would push ${IMAGE_REF}"
-
-  git_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
-  if [[ -n "$git_tag" ]]; then
-    echo "[dry-run] Would also tag as ${DOCKER_REGISTRY}/${IMAGE_NAME}:${git_tag}"
+  collect_tags
+  platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+  echo "[dry-run] Would build image (platforms: ${platforms})"
+  for tag in "${TAGS[@]}"; do
+    echo "[dry-run]   tag: ${tag}"
+  done
+  if ((!BUILD_ONLY)); then
+    echo "[dry-run] Would login to ${DOCKER_REGISTRY}"
+    echo "[dry-run] Would push to ${DOCKER_REGISTRY}"
+    echo "[dry-run] Would logout from ${DOCKER_REGISTRY}"
   fi
-  echo "[dry-run] Would tag as ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest"
-  echo "[dry-run] Would logout from ${DOCKER_REGISTRY}"
   exit 0
 fi
 
 # Execute
+collect_tags
 if ((BUILD_ONLY)); then
-  build
+  build_local
 else
-  build
-  push
+  build_push
 fi
 
 echo "==> Done. Image: ${IMAGE_REF}"

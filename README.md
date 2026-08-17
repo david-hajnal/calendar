@@ -134,7 +134,30 @@ gh auth login
 ```
 
 The script `scripts/docker-build-push.sh` supports `--dry-run` and `--build-only` flags.
-Env vars: `IMAGE_TAG`, `DOCKER_REGISTRY`, `IMAGE_NAME`, `GHCR_TOKEN`, `DRY_RUN`.
+Env vars: `IMAGE_TAG`, `DOCKER_REGISTRY`, `IMAGE_NAME`, `GHCR_TOKEN`, `DRY_RUN`, `PLATFORMS`.
+
+### Multi-platform builds
+
+Production nodes are x86_64 (amd64). Building on Apple Silicon (ARM64) without
+explicit platform targeting produces an image that **cannot run on amd64 nodes**
+(`no match for platform in manifest: not found`).
+
+The build script targets both `linux/amd64` and `linux/arm64` by default.
+Override with the `PLATFORMS` env var if needed:
+
+```sh
+# amd64 only (faster, smaller)
+PLATFORMS=linux/amd64 make docker-build-push
+
+# arm64 only (for ARM nodes)
+PLATFORMS=linux/arm64 make docker-build-push
+```
+
+Requires `docker buildx` (included with Docker Desktop). Verify with:
+
+```sh
+docker buildx version
+```
 
 ## Production container
 

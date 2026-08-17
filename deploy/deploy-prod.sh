@@ -10,7 +10,7 @@
 #   CORE_DOMAIN / DOMAIN        - Production core domain (default: cal.hajnal.space)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal)
-#   NAMESPACE                   - Kubernetes namespace (default: production)
+#   NAMESPACE                   - Kubernetes namespace (default: commoncal)
 #   DRY_RUN                     - set to "1" for --dry-run
 
 set -euo pipefail
@@ -19,9 +19,7 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load .env file if it exists
 if [[ -f "$DEPLOY_DIR/.env" ]]; then
-  set -a
   source "$DEPLOY_DIR/.env"
-  set +a
 fi
 
 # Fail fast if required env vars are missing
@@ -29,8 +27,11 @@ fi
 : "${BACKUP_ENCRYPTION_KEY_HEX:?ERROR: BACKUP_ENCRYPTION_KEY_HEX is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
 
-if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{64}$ ]]; then
-  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must contain exactly 64 hexadecimal characters" >&2
+# Explicitly export only the vars we need (avoid leaking debug flags etc.)
+export SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX IMAGE_TAG GHCR_TOKEN
+
+if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{32,}$ ]]; then
+  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must contain at least 32 hexadecimal characters" >&2
   exit 1
 fi
 
@@ -39,7 +40,6 @@ RELEASE="${HELM_RELEASE_NAME:-commoncal}"
 CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
-CORE_DOMAIN="${CORE_DOMAIN:-$DOMAIN}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 
@@ -79,7 +79,7 @@ echo "==> Current kubectl context: $CTX"
 
 # Ensure namespace exists
 echo "==> Ensuring namespace '$NAMESPACE' exists..."
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
 echo "==> Ensuring secret '$NAMESPACE/commoncal-session' exists..."
 SECRET_TMPFILE=$(mktemp)
@@ -89,15 +89,51 @@ kubectl create secret generic commoncal-session \
   --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
   -n "$NAMESPACE" \
   --dry-run=client -o yaml > "$SECRET_TMPFILE"
-kubectl apply -f "$SECRET_TMPFILE"
+ kubectl apply -f "$SECRET_TMPFILE"
 
-# Deploy with Helm
-echo "==> Deploying $RELEASE to $NAMESPACE..."
+ # Ensure the TLS secret exists. A self-signed cert is sufficient behind
+ # Cloudflare (Full mode) because Cloudflare terminates TLS at the edge and
+ # does not validate the origin cert. Only create it when missing so a real
+ # cert-manager-issued cert is never clobbered on a later deploy.
+ echo "==> Ensuring TLS secret '$NAMESPACE/$TLS_SECRET_NAME' exists..."
+ if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+   if ! command -v openssl >/dev/null 2>&1; then
+     echo "ERROR: openssl is required to generate the self-signed TLS cert" >&2
+     exit 1
+   fi
+   echo "    '$TLS_SECRET_NAME' not found — generating self-signed cert for $DOMAIN..."
+   TLS_TMPDIR=$(mktemp -d)
+    cat > "$TLS_TMPDIR/openssl.cnf" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = $DOMAIN
+[v3]
+subjectAltName = DNS:$DOMAIN
+EOF
+   openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+     -config "$TLS_TMPDIR/openssl.cnf" \
+     -keyout "$TLS_TMPDIR/tls.key" \
+     -out "$TLS_TMPDIR/tls.crt" >/dev/null
+   kubectl create secret tls "$TLS_SECRET_NAME" \
+     --cert="$TLS_TMPDIR/tls.crt" \
+     --key="$TLS_TMPDIR/tls.key" \
+     -n "$NAMESPACE" \
+     --dry-run=client -o yaml | kubectl apply -f -
+   rm -rf "$TLS_TMPDIR"
+   echo "    Created self-signed TLS secret '$TLS_SECRET_NAME'."
+ else
+   echo "    TLS secret '$TLS_SECRET_NAME' already exists — leaving it untouched."
+ fi
+
+ # Deploy with Helm
+ echo "==> Deploying $RELEASE to $NAMESPACE..."
 helm_args=(
   upgrade --install "$RELEASE" "$CHART_DIR"
   --namespace "$NAMESPACE"
   --reset-values
-  --wait
   --values "$VALUES_FILE"
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
@@ -117,7 +153,7 @@ if [[ -n "$GHCR_TOKEN" ]]; then
     --docker-server=https://ghcr.io \
     --docker-username=_token \
     --docker-password="$GHCR_TOKEN" \
-    --docker-email=none \
+    --docker-email="" \
     -n "$NAMESPACE" \
     --dry-run=client -o yaml | kubectl apply -f -
   helm_args+=(
@@ -133,26 +169,24 @@ helm "${helm_args[@]}"
 
 if ((!dry_run)); then
   echo "==> Waiting for the $RELEASE StatefulSet rollout..."
-  kubectl rollout status statefulset \
-    --selector "app.kubernetes.io/instance=$RELEASE" \
+  kubectl rollout status statefulset "$RELEASE-commoncal" \
     --namespace "$NAMESPACE" \
     --timeout=15m
 
   # Post-deploy health check: verify pods are Ready
   echo "==> Checking pod readiness..."
-  READY=$(kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
-    --namespace "$NAMESPACE" \
-    --no-headers \
-    -o custom-columns=":status.phase" 2>/dev/null | grep -c "Running" || true)
   TOTAL=$(kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
     --namespace "$NAMESPACE" \
     --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  READY=$(kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
+    --namespace "$NAMESPACE" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null | grep -c "Ready$" || true)
   if (( READY < TOTAL )); then
-    echo "WARNING: Only $READY/$TOTAL pods are Running" >&2
+    echo "WARNING: Only $READY/$TOTAL pods are Ready" >&2
     kubectl get pods --selector "app.kubernetes.io/instance=$RELEASE" \
       --namespace "$NAMESPACE" -o wide
   else
-    echo "==> All $TOTAL pods are Running"
+    echo "==> All $TOTAL pods are Ready"
   fi
 fi
 

@@ -169,7 +169,7 @@ helm "${helm_args[@]}"
 
 if ((!dry_run)); then
   echo "==> Waiting for the $RELEASE StatefulSet rollout..."
-  kubectl rollout status statefulset "$RELEASE-commoncal" \
+  kubectl rollout status statefulset "$RELEASE" \
     --namespace "$NAMESPACE" \
     --timeout=15m
 

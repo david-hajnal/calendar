@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Required env vars:
 #   SESSION_SECRET              - session encryption key
-#   BACKUP_ENCRYPTION_KEY_HEX   - hex-encoded backup encryption key (64 hex chars)
+#   BACKUP_ENCRYPTION_KEY_HEX   - hex-encoded backup encryption key (even hex, at least 32 chars; 64-hex backward-compatible)
 #   MCP_INTERNAL_API_KEY        - MCP internal API key
 #   MCP_SESSION_SECRET          - MCP session secret
 #   GITHUB_TOKEN                - GitHub PAT with repo write access
@@ -33,8 +33,8 @@ for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SES
   fi
 done
 
-if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{64}$ ]]; then
-  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must be exactly 64 hexadecimal characters" >&2
+if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^([[:xdigit:]]{2}){16,}$ ]]; then
+  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must be an even number of hexadecimal characters (at least 32)" >&2
   exit 1
 fi
 

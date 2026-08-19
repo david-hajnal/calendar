@@ -30,8 +30,8 @@ fi
 # Explicitly export only the vars we need (avoid leaking debug flags etc.)
 export SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX IMAGE_TAG GHCR_TOKEN
 
-if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^[[:xdigit:]]{32,}$ ]]; then
-  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must contain at least 32 hexadecimal characters" >&2
+if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^([[:xdigit:]]{2}){16,}$ ]]; then
+  echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must be an even number of hexadecimal characters (at least 32)" >&2
   exit 1
 fi
 

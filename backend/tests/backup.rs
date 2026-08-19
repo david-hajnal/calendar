@@ -10,6 +10,7 @@ use commoncal_backend::{
     http::Readiness,
 };
 use flate2::read::GzDecoder;
+use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -134,6 +135,281 @@ fn encryptor_round_trip_recovers_the_compressed_artifact() {
 
     assert_ne!(ciphertext, plaintext);
     assert_eq!(encryptor.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_accepts_a_32_hex_key_and_round_trips() {
+    let encryptor = Aes256GcmEncryptor::from_hex_key("0123456789abcdef0123456789abcdef").unwrap();
+    let plaintext = b"compressed sqlite backup";
+
+    let ciphertext = encryptor.encrypt(plaintext).unwrap();
+
+    assert_ne!(ciphertext, plaintext);
+    assert_eq!(encryptor.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_accepts_a_48_hex_key_and_round_trips() {
+    let encryptor =
+        Aes256GcmEncryptor::from_hex_key("0123456789abcdef0123456789abcdef0123456789abcdef")
+            .unwrap();
+    let plaintext = b"compressed sqlite backup";
+
+    let ciphertext = encryptor.encrypt(plaintext).unwrap();
+
+    assert_ne!(ciphertext, plaintext);
+    assert_eq!(encryptor.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_derives_the_same_key_for_identical_hex_input() {
+    let key = "0123456789abcdef0123456789abcdef";
+    let first = Aes256GcmEncryptor::from_hex_key(key).unwrap();
+    let second = Aes256GcmEncryptor::from_hex_key(key).unwrap();
+    let plaintext = b"compressed sqlite backup";
+
+    let ciphertext = first.encrypt(plaintext).unwrap();
+
+    assert_eq!(second.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_rejects_invalid_keys() {
+    let odd_length = Aes256GcmEncryptor::from_hex_key("0123456789abcdef0123456789abcde")
+        .err()
+        .unwrap();
+    let too_short = Aes256GcmEncryptor::from_hex_key("0123456789abcdef")
+        .err()
+        .unwrap();
+    let non_hex = Aes256GcmEncryptor::from_hex_key("0123456789abcdefg123456789abcdef")
+        .err()
+        .unwrap();
+
+    assert!(odd_length.to_string().contains("key"));
+    assert!(too_short.to_string().contains("key"));
+    assert!(non_hex.to_string().contains("key"));
+}
+
+#[test]
+fn from_hex_key_decrypts_ciphertext_made_with_a_raw_32_byte_key() {
+    let legacy = Aes256GcmEncryptor::new([7_u8; 32]);
+    let plaintext = b"compressed sqlite backup";
+
+    let ciphertext = legacy.encrypt(plaintext).unwrap();
+
+    let hex_key = "07".repeat(32);
+    let encryptor = Aes256GcmEncryptor::from_hex_key(&hex_key).unwrap();
+    assert_eq!(encryptor.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_decrypts_ciphertext_made_with_a_nonzero_high_nibble_key() {
+    // Regression: decode_hex combined nibbles with `|` instead of `high << 4 | low`,
+    // so any byte with a non-zero high nibble (e.g. 0xab) decoded to the wrong value.
+    // The [7_u8; 32] guard above decodes correctly by coincidence (high nibble is 0).
+    let legacy = Aes256GcmEncryptor::new([0xab_u8; 32]);
+    let plaintext = b"compressed sqlite backup";
+
+    let ciphertext = legacy.encrypt(plaintext).unwrap();
+
+    let hex_key = "ab".repeat(32);
+    let encryptor = Aes256GcmEncryptor::from_hex_key(&hex_key).unwrap();
+    assert_eq!(encryptor.decrypt(&ciphertext).unwrap(), plaintext);
+}
+
+#[test]
+fn from_hex_key_raw_path_decodes_every_byte_value_byte_identically() {
+    // Strongest check: for every possible byte value, the 64-hex raw path must
+    // decode byte-identically to the legacy new([u8; 32]) constructor. This
+    // exhaustively covers all 256 (high, low) nibble pairs, so any residual
+    // nibble-combination defect (e.g. `|` instead of `high << 4 | low`) fails.
+    for byte in 0u16..=255u16 {
+        let raw = [byte as u8; 32];
+        let legacy = Aes256GcmEncryptor::new(raw);
+        let plaintext = b"compressed sqlite backup";
+        let ciphertext = legacy.encrypt(plaintext).unwrap();
+
+        let hex_key = format!("{byte:02x}").repeat(32);
+        let encryptor = Aes256GcmEncryptor::from_hex_key(&hex_key).unwrap();
+        assert_eq!(
+            encryptor.decrypt(&ciphertext).unwrap(),
+            plaintext,
+            "byte 0x{byte:02x} did not decode byte-identically through the raw path"
+        );
+    }
+}
+
+#[test]
+fn from_hex_key_raw_path_decodes_a_mixed_byte_key_byte_identically() {
+    // Mixed-byte regression: a realistic key spanning the full nibble space
+    // (0x00, 0x0f, 0x10, 0xab, 0xf0, 0xff, ...) must decode byte-identically
+    // to the legacy constructor, not just a single repeated byte.
+    let raw: [u8; 32] = [
+        0x00, 0x0f, 0x10, 0xab, 0xf0, 0xff, 0x5a, 0xa5, 0x01, 0x0e, 0x11, 0xba, 0xf1, 0xfe, 0x6b,
+        0xb6, 0x02, 0x0d, 0x12, 0xaa, 0xf2, 0xfd, 0x7c, 0xc7, 0x03, 0x0c, 0x13, 0xab, 0xf3, 0xfc,
+        0x8d, 0xd8,
+    ];
+    let legacy = Aes256GcmEncryptor::new(raw);
+    let plaintext = b"compressed sqlite backup";
+    let ciphertext = legacy.encrypt(plaintext).unwrap();
+
+    let hex_key: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    let encryptor = Aes256GcmEncryptor::from_hex_key(&hex_key).unwrap();
+    assert_eq!(
+        encryptor.decrypt(&ciphertext).unwrap(),
+        plaintext,
+        "mixed-byte key did not decode byte-identically through the raw path"
+    );
+}
+
+#[test]
+fn from_hex_key_derived_path_matches_independently_computed_kdf_output() {
+    // Pin the derived-key KDF output: the 48-hex path must produce a byte-identical
+    // AES key to Sha256(b"commoncal/backup-key/v1\0" || decoded). A change to the
+    // domain separator, the domain || material order, or the hash would let this
+    // cross-decrypt fail, exposing backups that would otherwise silently stop decrypting.
+    let hex_key = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    let decoded: Vec<u8> = hex_key
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    let mut hasher = Sha256::new();
+    hasher.update(b"commoncal/backup-key/v1\0");
+    hasher.update(&decoded);
+    let expected_key: [u8; 32] = hasher.finalize().into();
+
+    let reference = Aes256GcmEncryptor::new(expected_key);
+    let plaintext = b"compressed sqlite backup";
+    let ciphertext = reference.encrypt(plaintext).unwrap();
+
+    let production = Aes256GcmEncryptor::from_hex_key(hex_key).unwrap();
+    assert_eq!(
+        production.decrypt(&ciphertext).unwrap(),
+        plaintext,
+        "derived path did not produce the pinned KDF key output"
+    );
+}
+
+#[test]
+fn from_hex_key_boundary_lengths_case_and_edges() {
+    let hex = "0123456789abcdef";
+    let key = |n: usize| {
+        hex.repeat(n.div_ceil(16))
+            .chars()
+            .take(n)
+            .collect::<String>()
+    };
+
+    // Odd lengths are always rejected, regardless of size.
+    for n in [1usize, 31, 33, 63, 65] {
+        assert!(
+            Aes256GcmEncryptor::from_hex_key(&key(n)).is_err(),
+            "len {n} should be odd-rejected"
+        );
+    }
+    // Even lengths below 32 are rejected; 32 and above are accepted.
+    for n in [0usize, 16, 30] {
+        assert!(
+            Aes256GcmEncryptor::from_hex_key(&key(n)).is_err(),
+            "len {n} should be short-rejected"
+        );
+    }
+    for n in [32usize, 34, 64, 66, 68] {
+        assert!(
+            Aes256GcmEncryptor::from_hex_key(&key(n)).is_ok(),
+            "len {n} should be accepted"
+        );
+    }
+
+    // Uppercase hex is accepted.
+    assert!(Aes256GcmEncryptor::from_hex_key("0123456789ABCDEF0123456789ABCDEF").is_ok());
+    // Non-hex at the first and last position is rejected.
+    let bad = "g123456789abcdef0123456789abcdef";
+    let error = Aes256GcmEncryptor::from_hex_key(bad).err().unwrap();
+    assert!(error.to_string().contains("key"));
+    // The error must not echo the (invalid) key material.
+    assert!(!error.to_string().contains("g123456789abcdef"));
+    assert!(Aes256GcmEncryptor::from_hex_key("0123456789abcdef0123456789abcdefg").is_err());
+}
+
+#[test]
+fn from_hex_key_raw_path_is_exactly_at_64_hex_chars() {
+    let base = [7_u8; 32];
+    let hex64: String = base.iter().map(|b| format!("{b:02x}")).collect();
+    let legacy = Aes256GcmEncryptor::new(base);
+    let ciphertext = legacy.encrypt(b"compressed sqlite backup").unwrap();
+
+    // 64-hex key is the raw 32-byte key: decrypts legacy ciphertext.
+    let raw = Aes256GcmEncryptor::from_hex_key(&hex64).unwrap();
+    assert_eq!(
+        raw.decrypt(&ciphertext).unwrap(),
+        b"compressed sqlite backup"
+    );
+
+    // 66-hex key is NOT raw (decoded to 33 bytes) so it derives a different key
+    // and must NOT decrypt the legacy ciphertext.
+    let derived = Aes256GcmEncryptor::from_hex_key(&format!("{hex64}00")).unwrap();
+    assert!(derived.decrypt(&ciphertext).is_err());
+}
+
+#[tokio::test]
+async fn backup_cli_round_trips_with_a_48_hex_key() {
+    let (directory, database) = database().await;
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('cli-48hex@example.test', 'active', 1)")
+        .execute(&database)
+        .await
+        .unwrap();
+    database.close().await;
+
+    let database_path = directory.path().join("live.sqlite");
+    let backups = directory.path().join("backups");
+    let key = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    let output = Command::new(env!("CARGO_BIN_EXE_commoncal-backend"))
+        .arg("backup")
+        .arg(&backups)
+        .env("APP_ENV", "development")
+        .env("DATABASE_PATH", &database_path)
+        .env("BACKUP_ENCRYPTION_KEY_HEX", key)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "backup command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let artifact = fs::read_dir(&backups)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "enc"))
+        .expect("backup CLI should create an encrypted artifact");
+    let restored = directory.path().join("clean-environment.sqlite");
+    RestoreService::restore_encrypted(
+        &artifact,
+        &restored,
+        &Aes256GcmEncryptor::from_hex_key(key).unwrap(),
+    )
+    .await
+    .unwrap();
+    verify_snapshot(&restored).await.unwrap();
+
+    let restored_database = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&restored)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let record = sqlx::query(
+        "SELECT normalized_email FROM users WHERE normalized_email = 'cli-48hex@example.test'",
+    )
+    .fetch_one(&restored_database)
+    .await
+    .unwrap();
+    assert_eq!(record.get::<String, _>(0), "cli-48hex@example.test");
 }
 
 #[tokio::test]

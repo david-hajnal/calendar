@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "commoncal-backend"
-version = "0.3.1"
+version = "2.0.0"
 dependencies = [
  "aes-gcm",
  "axum",

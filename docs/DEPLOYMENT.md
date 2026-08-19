@@ -123,8 +123,10 @@ Then add to each HelmRelease's `imagePullSecrets`.
 
 ## Production Secrets
 
-- `commoncal-session` — session encryption (key: `SESSION_SECRET`)
+- `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
 - `commoncal-tls` — TLS certificate (cert-manager)
+
+`BACKUP_ENCRYPTION_KEY_HEX` must be an even number of hexadecimal characters (at least 32); 64-hex (32-byte) keys remain backward-compatible.
 
 ## Monitoring
 

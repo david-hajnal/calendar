@@ -126,15 +126,48 @@ impl Aes256GcmEncryptor {
     }
 
     pub fn from_hex_key(value: &str) -> Result<Self, BackupError> {
-        if value.len() != 64 {
-            return Err(BackupError::Encryption);
+        if !value.len().is_multiple_of(2) {
+            return Err(BackupError::InvalidKey(
+                "key must contain an even number of hex characters".into(),
+            ));
         }
-        let mut key = [0_u8; 32];
-        for (index, byte) in key.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-                .map_err(|_| BackupError::Encryption)?;
+        if value.len() < 32 {
+            return Err(BackupError::InvalidKey(
+                "key must be at least 32 hex characters".into(),
+            ));
         }
+        let decoded = decode_hex(value)?;
+        if decoded.len() == 32 {
+            return Ok(Self::new(decoded.try_into().expect("decoded length is 32")));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"commoncal/backup-key/v1\0");
+        hasher.update(&decoded);
+        let key = hasher
+            .finalize()
+            .as_slice()
+            .try_into()
+            .expect("SHA-256 output is exactly 32 bytes");
         Ok(Self::new(key))
+    }
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, BackupError> {
+    let mut decoded = Vec::with_capacity(value.len() / 2);
+    for chunk in value.as_bytes().chunks_exact(2) {
+        decoded.push((hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?);
+    }
+    Ok(decoded)
+}
+
+fn hex_nibble(byte: u8) -> Result<u8, BackupError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(BackupError::InvalidKey(
+            "key contains non-hex characters".into(),
+        )),
     }
 }
 
@@ -360,6 +393,7 @@ pub enum BackupError {
     InvalidIntegrity(String),
     Metadata(sqlx::Error),
     Encryption,
+    InvalidKey(String),
     Upload,
     RestoreArtifact,
     ProductionTarget,
@@ -383,6 +417,9 @@ impl Display for BackupError {
             }
             Self::Metadata(error) => write!(formatter, "backup metadata recording failed: {error}"),
             Self::Encryption => formatter.write_str("backup artifact encryption failed"),
+            Self::InvalidKey(message) => {
+                write!(formatter, "backup encryption key is invalid: {message}")
+            }
             Self::Upload => formatter
                 .write_str("backup upload failed; encrypted local recovery artifact retained"),
             Self::RestoreArtifact => formatter.write_str("restore artifact is invalid or corrupted"),

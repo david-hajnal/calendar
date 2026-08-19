@@ -63,9 +63,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-id: ${{ steps.build.outputs.digest }}
+          image-ref: ghcr.io/david-hajnal/calendar-mcp@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true

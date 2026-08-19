@@ -7,6 +7,8 @@ set -euo pipefail
 #   IMAGE_TAG       - Git describe tag (default: git describe --tags --always --dirty)
 #   DOCKER_REGISTRY - Registry URL (default: ghcr.io/david-hajnal)
 #   IMAGE_NAME      - Image name (default: calendar-core)
+#   DOCKERFILE      - Dockerfile to build (default: Dockerfile)
+#   LOCAL_TAG       - Local dev tag (default: commoncal:local)
 #   GHCR_TOKEN      - GHCR auth token (fallback: gh auth token)
 #   DRY_RUN         - set to 1 for dry-run mode
 #
@@ -30,6 +32,8 @@ Env vars:
   IMAGE_TAG       Git tag for the image (default: git describe --tags --always --dirty)
   DOCKER_REGISTRY Registry URL (default: ghcr.io/david-hajnal)
   IMAGE_NAME      Image name (default: calendar-core)
+  DOCKERFILE      Dockerfile to build (default: Dockerfile)
+  LOCAL_TAG       Local dev tag (default: commoncal:local)
   GHCR_TOKEN      GHCR auth token (fallback: gh auth token)
   DRY_RUN         Set to 1 for dry-run mode
 
@@ -67,6 +71,7 @@ done
 # Defaults
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/david-hajnal}"
 IMAGE_NAME="${IMAGE_NAME:-calendar-core}"
+DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 
 # Derive IMAGE_TAG from git if not provided
 if [[ -z "${IMAGE_TAG:-}" ]]; then
@@ -77,7 +82,7 @@ fi
 IMAGE_REF="${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 
 # Local dev tag
-LOCAL_TAG="commoncal:local"
+LOCAL_TAG="${LOCAL_TAG:-commoncal:local}"
 
 # Resolve GHCR token
 resolve_token() {
@@ -105,34 +110,44 @@ collect_tags() {
 # Build-only: load into local docker (single platform only)
 build_local() {
   local platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+  local tag_args=()
+  local tag
   if [[ "${platforms}" == *","* ]]; then
     echo "WARNING: multi-platform build with --build-only falls back to linux/amd64" >&2
     echo "         (multi-platform images cannot be loaded into local docker)" >&2
     platforms="linux/amd64"
   fi
+  for tag in "${TAGS[@]}"; do
+    tag_args+=("-t" "$tag")
+  done
   echo "==> Building image ${IMAGE_REF} (platform: ${platforms})"
   docker buildx build \
     --platform "${platforms}" \
     --load \
-    "${TAGS[@]/#/-t }" \
-    -f Dockerfile .
+    "${tag_args[@]}" \
+    -f "${DOCKERFILE}" .
 }
 
 # Build and push in one step (supports multi-platform)
 build_push() {
   local platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+  local tag_args=()
+  local tag
   local token
   token="$(resolve_token)"
 
   echo "==> Logging in to ${DOCKER_REGISTRY}..."
   docker login "${DOCKER_REGISTRY}" -u _token --password-stdin <<< "${token}"
 
+  for tag in "${TAGS[@]}"; do
+    tag_args+=("-t" "$tag")
+  done
   echo "==> Building and pushing ${IMAGE_REF} (platforms: ${platforms})"
   docker buildx build \
     --platform "${platforms}" \
     --push \
-    "${TAGS[@]/#/-t }" \
-    -f Dockerfile .
+    "${tag_args[@]}" \
+    -f "${DOCKERFILE}" .
 
   docker logout "${DOCKER_REGISTRY}" >/dev/null 2>&1 || true
 }

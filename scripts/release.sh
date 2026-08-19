@@ -60,6 +60,10 @@ echo ""
 sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" backend/Cargo.toml
 sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" mcp-server/Cargo.toml
 
+# Sync Cargo.lock with bumped versions (CI and Dockerfiles build with --locked)
+cargo update --manifest-path backend/Cargo.toml -w
+cargo update --manifest-path mcp-server/Cargo.toml -w
+
 # Bump frontend package version
 sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW_VERSION}\"/" frontend/package.json
 

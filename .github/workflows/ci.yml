@@ -112,4 +112,5 @@ jobs:
       - name: Build and push Docker image
         env:
           IMAGE_TAG: ${{ github.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/docker-build-push.sh

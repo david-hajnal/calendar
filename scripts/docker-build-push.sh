@@ -140,7 +140,10 @@ build_push() {
   docker login "${DOCKER_REGISTRY}" -u _token --password-stdin <<< "${token}"
 
   for tag in "${TAGS[@]}"; do
-    tag_args+=("-t" "$tag")
+    case "${tag}" in
+      "${DOCKER_REGISTRY}"/*) tag_args+=("-t" "$tag") ;;
+      *) echo "==> Skipping non-registry tag: ${tag}" ;;
+    esac
   done
   echo "==> Building and pushing ${IMAGE_REF} (platforms: ${platforms})"
   docker buildx build \

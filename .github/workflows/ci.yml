@@ -113,4 +113,5 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLATFORMS: linux/amd64
         run: scripts/docker-build-push.sh

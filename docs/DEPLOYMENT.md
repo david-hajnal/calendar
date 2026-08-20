@@ -26,11 +26,24 @@ Flux is the normal production deployment authority. The HelmReleases use the
 explicit release names `commoncal` and `commoncal-mcp`; this avoids Flux's
 cross-namespace `commoncal-commoncal` default.
 
+Run `deploy/deploy-prod.sh` for either deployment authority. When both
+HelmReleases are active, the script applies the runtime Secrets and reconciles
+the Flux Kustomization followed by the core and MCP HelmReleases; it does not
+invoke Helm directly or create a self-signed certificate. Flux deploys the
+image tags and chart values committed
+to its Git source, so `IMAGE_TAG` and the direct chart overrides are ignored in
+this mode. Flux mode also requires the canonical `commoncal` namespace and
+`commoncal`/`commoncal-mcp` release names; remove any legacy name overrides from
+`deploy/.env`. Before making changes, it verifies that cert-manager is installed
+and the `letsencrypt-prod` ClusterIssuer is Ready. After reconciliation, it
+waits for the shared Certificate and verifies that it covers both live Flux
+domains.
+
 For an emergency direct deployment, first suspend both Flux HelmReleases, then
-run `deploy/deploy-prod.sh`. The script refuses to run while either release is
-actively managed by Flux, deploys both workloads, and requires the core, MCP,
-OAuth issuer, and MCP secret settings documented in `deploy/.env.example`.
-Resume Flux only after reconciling the direct deployment back into Git.
+run the same script. With both releases suspended (or absent), it deploys both
+workloads directly with Helm and requires `IMAGE_TAG`. Resume Flux only after
+reconciling the direct deployment back into Git. A mixed state with only one
+active HelmRelease is rejected to prevent split ownership.
 
 ### Legacy duplicate cleanup
 

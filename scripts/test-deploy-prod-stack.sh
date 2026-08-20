@@ -11,6 +11,7 @@ trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 mkdir "$fixture/bin"
 : >"$fixture/kubeconfig"
 : >"$fixture/helm.log"
+: >"$fixture/flux.log"
 : >"$fixture/kubectl.log"
 : >"$fixture/kubectl-stdin.log"
 : >"$fixture/openssl-config.log"
@@ -28,7 +29,7 @@ case "${1:-} ${2:-} ${3:-}" in
   "get namespace "*)
     ;;
   "get secret "*)
-    if [ "${TLS_EXISTING:-0}" = 1 ]; then
+    if [ "${FLUX_ACTIVE:-0}" = 1 ] || [ "${TLS_EXISTING:-0}" = 1 ]; then
       printf '%s' ZHVtbXk=
     else
       # Force the deploy script to exercise certificate generation.
@@ -36,9 +37,38 @@ case "${1:-} ${2:-} ${3:-}" in
     fi
     ;;
   "get helmrelease "*)
-    if [ "${FLUX_ACTIVE:-0}" = 1 ]; then
-      printf '%s' "$3"
+    case "$*" in
+      *'.spec.values.domain}'*)
+        if [ "$3" = commoncal ]; then
+          printf '%s' calendar.example.test
+        else
+          printf '%s' mcp.example.test
+        fi
+        ;;
+      *'.spec.values.ingress.tls[0].secretName}'*)
+        if [ "$3" = commoncal-mcp ]; then
+          printf '%s' "${MCP_TLS_SECRET:-commoncal-stack-tls}"
+        else
+          printf '%s' commoncal-stack-tls
+        fi
+        ;;
+      *)
+        if [ "${FLUX_ACTIVE:-0}" = 1 ] || [ "${FLUX_ACTIVE_RELEASE:-}" = "$3" ]; then
+          printf '%s' "$3"
+        fi
+        ;;
+    esac
+    ;;
+  "get crd certificates.cert-manager.io")
+    [ "${CERT_MANAGER_READY:-1}" = 1 ]
+    ;;
+  "get clusterissuer letsencrypt-prod")
+    if [ "${CERT_MANAGER_READY:-1}" = 1 ]; then
+      printf '%s' True
     fi
+    ;;
+  "get certificate "*)
+    printf '%s' "${CERTIFICATE_DNS:-calendar.example.test mcp.example.test}"
     ;;
   "create secret generic"|"create secret tls")
     printf '%s\n' 'apiVersion: v1' 'kind: Secret' 'metadata:' "  name: $4"
@@ -101,7 +131,14 @@ esac
 } >>"$HELM_LOG"
 EOF
 
-chmod +x "$fixture/bin/kubectl" "$fixture/bin/openssl" "$fixture/bin/helm"
+cat >"$fixture/bin/flux" <<'EOF'
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$*" >>"$FLUX_LOG"
+EOF
+
+chmod +x "$fixture/bin/kubectl" "$fixture/bin/openssl" "$fixture/bin/helm" "$fixture/bin/flux"
 
 run_stack() {
   PATH="$fixture/bin:$PATH" \
@@ -109,10 +146,11 @@ run_stack() {
     KUBECTL_LOG="${KUBECTL_LOG_OVERRIDE:-$fixture/kubectl.log}" \
     KUBECTL_STDIN_LOG="$fixture/kubectl-stdin.log" \
     HELM_LOG="${HELM_LOG_OVERRIDE:-$fixture/helm.log}" \
-    OPENSSL_CONFIG_LOG="$fixture/openssl-config.log" \
+    FLUX_LOG="${FLUX_LOG_OVERRIDE:-$fixture/flux.log}" \
+    OPENSSL_CONFIG_LOG="${OPENSSL_CONFIG_LOG_OVERRIDE:-$fixture/openssl-config.log}" \
     SESSION_SECRET=test-session-secret \
     BACKUP_ENCRYPTION_KEY_HEX=00000000000000000000000000000000 \
-    IMAGE_TAG=v9.8.7 \
+    IMAGE_TAG="${IMAGE_TAG_OVERRIDE-v9.8.7}" \
     DOMAIN=calendar.example.test \
     MCP_DOMAIN=mcp.example.test \
     MCP_OAUTH_ISSUER=https://issuer.example.test \
@@ -123,6 +161,11 @@ run_stack() {
     TLS_EXISTING="${TLS_EXISTING_OVERRIDE:-0}" \
     TLS_CERT_SANS="${TLS_CERT_SANS_OVERRIDE:-DNS:calendar.example.test, DNS:mcp.example.test}" \
     TLS_SECRET_NAME=commoncal-stack-tls \
+    FLUX_ACTIVE_RELEASE="${FLUX_ACTIVE_RELEASE_OVERRIDE:-}" \
+    CERT_MANAGER_READY="${CERT_MANAGER_READY_OVERRIDE:-1}" \
+    CERTIFICATE_DNS="${CERTIFICATE_DNS_OVERRIDE:-calendar.example.test mcp.example.test}" \
+    MCP_TLS_SECRET="${MCP_TLS_SECRET_OVERRIDE:-commoncal-stack-tls}" \
+    CORE_HELM_RELEASE_NAME="${CORE_RELEASE_OVERRIDE:-}" \
     DRY_RUN="${DRY_RUN_OVERRIDE:-1}" \
     "$deploy_script"
 }
@@ -246,12 +289,180 @@ require_text \
   "MCP ingress must iterate each host's nested paths"
 
 guard_helm_log="$fixture/guard-helm.log"
+guard_flux_log="$fixture/guard-flux.log"
+guard_kubectl_log="$fixture/guard-kubectl.log"
+guard_openssl_log="$fixture/guard-openssl.log"
 : >"$guard_helm_log"
-if (HELM_LOG_OVERRIDE="$guard_helm_log" FLUX_ACTIVE=1 run_stack >/dev/null 2>&1); then
-  echo "manual deploy must fail while an active Flux HelmRelease exists" >&2
+: >"$guard_flux_log"
+: >"$guard_kubectl_log"
+: >"$guard_openssl_log"
+if ! (HELM_LOG_OVERRIDE="$guard_helm_log" \
+  FLUX_LOG_OVERRIDE="$guard_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$guard_kubectl_log" \
+  OPENSSL_CONFIG_LOG_OVERRIDE="$guard_openssl_log" \
+  FLUX_ACTIVE=1 \
+  IMAGE_TAG_OVERRIDE= \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "deploy must reconcile through Flux when active HelmReleases own production" >&2
   failures=$((failures + 1))
-elif [ -s "$guard_helm_log" ]; then
-  echo "Flux ownership preflight must fail before invoking Helm" >&2
+fi
+if [ -s "$guard_helm_log" ]; then
+  echo "Flux-owned deployment must not invoke Helm directly" >&2
+  failures=$((failures + 1))
+fi
+require_line \
+  'reconcile kustomization flux-system --namespace flux-system --with-source' \
+  "$guard_flux_log" \
+  "Flux-owned deployment must load the latest HelmRelease manifests from Git"
+require_line \
+  'reconcile helmrelease commoncal --namespace flux-system --with-source' \
+  "$guard_flux_log" \
+  "Flux-owned deployment must reconcile the core HelmRelease"
+require_line \
+  'reconcile helmrelease commoncal-mcp --namespace flux-system --with-source' \
+  "$guard_flux_log" \
+  "Flux-owned deployment must reconcile the MCP HelmRelease"
+require_text \
+  'create secret generic commoncal-session' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must apply the core runtime Secret"
+require_text \
+  'create secret generic commoncal-mcp-secrets' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must apply the MCP runtime Secret"
+require_text \
+  'wait --for=create certificate commoncal-stack-tls --namespace commoncal --timeout=2m' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must wait for ingress-shim to create the Certificate"
+require_text \
+  'wait certificate commoncal-stack-tls --namespace commoncal --for=condition=Ready --timeout=5m' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must wait for the shared Certificate to become Ready"
+certificate_create_wait_line=$(grep -n -F -- 'wait --for=create certificate commoncal-stack-tls' "$guard_kubectl_log" | head -1 | cut -d: -f1 || true)
+certificate_ready_wait_line=$(grep -n -F -- 'wait certificate commoncal-stack-tls' "$guard_kubectl_log" | head -1 | cut -d: -f1 || true)
+if [ -z "$certificate_create_wait_line" ] || [ -z "$certificate_ready_wait_line" ] || \
+  [ "$certificate_create_wait_line" -ge "$certificate_ready_wait_line" ]; then
+  echo "Certificate creation must be awaited before its Ready condition" >&2
+  failures=$((failures + 1))
+fi
+require_text \
+  'rollout restart statefulset commoncal --namespace commoncal' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must restart core after applying external Secrets"
+require_text \
+  'rollout status deployment commoncal-mcp --namespace commoncal --timeout=15m' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must wait for the MCP rollout"
+if grep -F -- 'create secret tls' "$guard_kubectl_log" >/dev/null || [ -s "$guard_openssl_log" ]; then
+  echo "Flux-owned deployment must leave TLS issuance to cert-manager" >&2
+  failures=$((failures + 1))
+fi
+
+override_helm_log="$fixture/override-helm.log"
+override_flux_log="$fixture/override-flux.log"
+override_kubectl_log="$fixture/override-kubectl.log"
+: >"$override_helm_log"
+: >"$override_flux_log"
+: >"$override_kubectl_log"
+if (HELM_LOG_OVERRIDE="$override_helm_log" \
+  FLUX_LOG_OVERRIDE="$override_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$override_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CORE_RELEASE_OVERRIDE=legacy-core \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned deployment must reject legacy release-name overrides" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$override_helm_log" ] || [ -s "$override_flux_log" ] || \
+  grep -F -- 'create secret' "$override_kubectl_log" >/dev/null; then
+  echo "invalid Flux name overrides must fail before mutations" >&2
+  failures=$((failures + 1))
+fi
+
+missing_cert_flux_log="$fixture/missing-cert-flux.log"
+missing_cert_kubectl_log="$fixture/missing-cert-kubectl.log"
+: >"$missing_cert_flux_log"
+: >"$missing_cert_kubectl_log"
+if (FLUX_LOG_OVERRIDE="$missing_cert_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$missing_cert_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned deployment must require cert-manager and a Ready production issuer" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$missing_cert_flux_log" ] || grep -F -- 'create secret' "$missing_cert_kubectl_log" >/dev/null; then
+  echo "missing cert-manager must fail before reconciliation or secret mutations" >&2
+  failures=$((failures + 1))
+fi
+
+mismatched_tls_kubectl_log="$fixture/mismatched-tls-kubectl.log"
+: >"$mismatched_tls_kubectl_log"
+if (KUBECTL_LOG_OVERRIDE="$mismatched_tls_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  MCP_TLS_SECRET_OVERRIDE=wrong-mcp-tls \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned deployment must reject different core and MCP TLS Secrets" >&2
+  failures=$((failures + 1))
+fi
+if grep -F -- 'rollout restart' "$mismatched_tls_kubectl_log" >/dev/null; then
+  echo "mismatched Flux TLS Secrets must fail before workload restarts" >&2
+  failures=$((failures + 1))
+fi
+
+mixed_helm_log="$fixture/mixed-helm.log"
+mixed_flux_log="$fixture/mixed-flux.log"
+mixed_kubectl_log="$fixture/mixed-kubectl.log"
+: >"$mixed_helm_log"
+: >"$mixed_flux_log"
+: >"$mixed_kubectl_log"
+if (HELM_LOG_OVERRIDE="$mixed_helm_log" \
+  FLUX_LOG_OVERRIDE="$mixed_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$mixed_kubectl_log" \
+  FLUX_ACTIVE_RELEASE_OVERRIDE=commoncal \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "deploy must reject mixed Flux/direct ownership" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$mixed_helm_log" ] || [ -s "$mixed_flux_log" ]; then
+  echo "mixed ownership must fail before invoking Helm or Flux" >&2
+  failures=$((failures + 1))
+fi
+if grep -F -- 'create secret' "$mixed_kubectl_log" >/dev/null; then
+  echo "mixed ownership must fail before mutating runtime secrets" >&2
+  failures=$((failures + 1))
+fi
+
+flux_dry_run_helm_log="$fixture/flux-dry-run-helm.log"
+flux_dry_run_flux_log="$fixture/flux-dry-run-flux.log"
+flux_dry_run_kubectl_log="$fixture/flux-dry-run-kubectl.log"
+: >"$flux_dry_run_helm_log"
+: >"$flux_dry_run_flux_log"
+: >"$flux_dry_run_kubectl_log"
+if ! (HELM_LOG_OVERRIDE="$flux_dry_run_helm_log" \
+  FLUX_LOG_OVERRIDE="$flux_dry_run_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$flux_dry_run_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  DRY_RUN_OVERRIDE=1 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned dry-run must validate successfully" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$flux_dry_run_helm_log" ] || [ -s "$flux_dry_run_flux_log" ]; then
+  echo "Flux-owned dry-run must not invoke Helm or reconcile Flux" >&2
+  failures=$((failures + 1))
+fi
+require_text \
+  'apply --dry-run=server -f -' \
+  "$flux_dry_run_kubectl_log" \
+  "Flux-owned dry-run must server-validate runtime secret manifests"
+if grep -F -- 'rollout restart' "$flux_dry_run_kubectl_log" >/dev/null; then
+  echo "Flux-owned dry-run must not restart workloads" >&2
   failures=$((failures + 1))
 fi
 

@@ -2,9 +2,10 @@
 # Deploy the CommonCal core and MCP stack with secrets from the environment.
 #
 # Required (loaded from deploy/.env when present):
-#   SESSION_SECRET, BACKUP_ENCRYPTION_KEY_HEX, IMAGE_TAG
+#   SESSION_SECRET, BACKUP_ENCRYPTION_KEY_HEX
 #   MCP_INTERNAL_API_KEY, MCP_SESSION_SECRET, MCP_DOMAIN, MCP_OAUTH_ISSUER
 # Optional:
+#   IMAGE_TAG (required only for direct Helm deployment; Flux uses Git's tags)
 #   DOMAIN (default: cal.hajnal.space)
 #   MCP_INTERNAL_API_BASE (default: https://$DOMAIN)
 #   TLS_SECRET_NAME, CORE_HELM_RELEASE_NAME, MCP_HELM_RELEASE_NAME, NAMESPACE
@@ -19,7 +20,6 @@ fi
 
 : "${SESSION_SECRET:?ERROR: SESSION_SECRET is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${BACKUP_ENCRYPTION_KEY_HEX:?ERROR: BACKUP_ENCRYPTION_KEY_HEX is required. Set it in $DEPLOY_DIR/.env or export it}"
-: "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_INTERNAL_API_KEY:?ERROR: MCP_INTERNAL_API_KEY is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_SESSION_SECRET:?ERROR: MCP_SESSION_SECRET is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_DOMAIN:?ERROR: MCP_DOMAIN is required. Set it in $DEPLOY_DIR/.env or export it}"
@@ -59,7 +59,7 @@ case "${DRY_RUN:-0}" in
   *) echo "ERROR: DRY_RUN must be either 0 or 1" >&2; exit 1 ;;
 esac
 
-for command_name in kubectl helm openssl; do
+for command_name in kubectl; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "ERROR: required command not found: $command_name" >&2
     exit 1
@@ -76,17 +76,58 @@ done
 
 : "${KUBECONFIG:?ERROR: KUBECONFIG is not set. Export it or run from the k3s host.}"
 
+active_flux_releases=0
 for flux_release in commoncal commoncal-mcp; do
   flux_status=$(kubectl get helmrelease "$flux_release" --namespace flux-system \
     -o jsonpath='{.metadata.name}{"\t"}{.spec.suspend}' 2>/dev/null || true)
   if [[ "$flux_status" == "$flux_release" || "$flux_status" == "$flux_release"$'\t'* ]]; then
     if [[ "$flux_status" != "$flux_release"$'\ttrue' ]]; then
-      echo "ERROR: active Flux HelmRelease '$flux_release' already manages production." >&2
-      echo "Refusing a second Helm authority. Suspend both Flux HelmReleases before a manual deploy, or deploy through Flux." >&2
-      exit 1
+      active_flux_releases=$((active_flux_releases + 1))
     fi
   fi
 done
+
+case "$active_flux_releases" in
+  2)
+    deploy_mode=flux
+    if ! command -v flux >/dev/null 2>&1; then
+      echo "ERROR: active Flux HelmReleases manage production, but the flux command is not installed" >&2
+      exit 1
+    fi
+    if [[ "$NAMESPACE" != commoncal || "$CORE_RELEASE" != commoncal || "$MCP_RELEASE" != commoncal-mcp ]]; then
+      echo "ERROR: Flux manages namespace 'commoncal' with releases 'commoncal' and 'commoncal-mcp'." >&2
+      echo "Remove NAMESPACE, HELM_RELEASE_NAME, CORE_HELM_RELEASE_NAME, and MCP_HELM_RELEASE_NAME overrides for Flux deployment." >&2
+      exit 1
+    fi
+    if ! kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+      echo "ERROR: Flux TLS requires cert-manager, but the Certificate CRD is not installed." >&2
+      echo "Install cert-manager, then create the 'letsencrypt-prod' ClusterIssuer before deploying." >&2
+      exit 1
+    fi
+    cluster_issuer_ready=$(kubectl get clusterissuer letsencrypt-prod \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+    if [[ "$cluster_issuer_ready" != True ]]; then
+      echo "ERROR: cert-manager ClusterIssuer 'letsencrypt-prod' is missing or not Ready." >&2
+      echo "Create/fix the issuer before deploying; Flux will not create a self-signed production certificate." >&2
+      exit 1
+    fi
+    ;;
+  0)
+    deploy_mode=helm
+    : "${IMAGE_TAG:?ERROR: IMAGE_TAG is required for direct Helm deployment. Set it in $DEPLOY_DIR/.env or export it}"
+    for command_name in helm openssl; do
+      if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "ERROR: required command not found: $command_name" >&2
+        exit 1
+      fi
+    done
+    ;;
+  *)
+    echo "ERROR: production has mixed deployment ownership: only $active_flux_releases of 2 Flux HelmReleases are active." >&2
+    echo "Resume both HelmReleases for Flux deployment, or suspend both for direct Helm deployment." >&2
+    exit 1
+    ;;
+esac
 
 CTX=$(kubectl config current-context 2>/dev/null) || CTX="(none)"
 echo "==> Current kubectl context: $CTX"
@@ -111,6 +152,71 @@ kubectl create secret generic commoncal-mcp-secrets \
   --from-literal=mcp-session-secret="$MCP_SESSION_SECRET" \
   --from-literal=mcp-oauth-issuer="$MCP_OAUTH_ISSUER" \
   -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+
+if [[ "$deploy_mode" == flux ]]; then
+  if ((dry_run)); then
+    echo "==> Flux owns production; dry-run validated the runtime secrets without reconciling."
+    echo "    A real run will deploy the image tags and chart values committed to Flux's Git source."
+    exit 0
+  fi
+
+  echo "==> Flux owns production; reconciling Git-managed releases (IMAGE_TAG and direct Helm values are ignored)..."
+  flux reconcile kustomization flux-system --namespace flux-system --with-source
+  flux reconcile helmrelease commoncal --namespace flux-system --with-source
+  flux reconcile helmrelease commoncal-mcp --namespace flux-system --with-source
+
+  flux_core_domain=$(kubectl get helmrelease commoncal --namespace flux-system \
+    -o jsonpath='{.spec.values.domain}')
+  flux_mcp_domain=$(kubectl get helmrelease commoncal-mcp --namespace flux-system \
+    -o jsonpath='{.spec.values.domain}')
+  flux_tls_secret=$(kubectl get helmrelease commoncal --namespace flux-system \
+    -o jsonpath='{.spec.values.ingress.tls[0].secretName}')
+  flux_mcp_tls_secret=$(kubectl get helmrelease commoncal-mcp --namespace flux-system \
+    -o jsonpath='{.spec.values.ingress.tls[0].secretName}')
+  if [[ -z "$flux_core_domain" || -z "$flux_mcp_domain" || -z "$flux_tls_secret" ]]; then
+    echo "ERROR: reconciled Flux HelmReleases are missing domain or TLS secret values" >&2
+    exit 1
+  fi
+  if [[ "$flux_mcp_tls_secret" != "$flux_tls_secret" ]]; then
+    echo "ERROR: Flux core and MCP ingresses must reference the same TLS Secret" >&2
+    exit 1
+  fi
+  if ! kubectl wait --for=create certificate "$flux_tls_secret" --namespace "$NAMESPACE" --timeout=2m; then
+    echo "ERROR: cert-manager did not create Certificate '$NAMESPACE/$flux_tls_secret'" >&2
+    exit 1
+  fi
+  if ! kubectl wait certificate "$flux_tls_secret" --namespace "$NAMESPACE" \
+    --for=condition=Ready --timeout=5m; then
+    echo "ERROR: cert-manager Certificate '$NAMESPACE/$flux_tls_secret' did not become Ready" >&2
+    exit 1
+  fi
+  flux_certificate_dns=$(kubectl get certificate "$flux_tls_secret" --namespace "$NAMESPACE" \
+    -o jsonpath='{.spec.dnsNames[*]}')
+  for tls_host in "$flux_core_domain" "$flux_mcp_domain"; do
+    if ! grep -Fw -- "$tls_host" <<<"$flux_certificate_dns" >/dev/null; then
+      echo "ERROR: Certificate '$NAMESPACE/$flux_tls_secret' does not cover '$tls_host'" >&2
+      exit 1
+    fi
+  done
+  if ! kubectl get secret "$flux_tls_secret" --namespace "$NAMESPACE" >/dev/null 2>&1; then
+    echo "ERROR: Ready Certificate '$NAMESPACE/$flux_tls_secret' did not produce its TLS Secret" >&2
+    exit 1
+  fi
+
+  # Secret contents are external to the HelmRelease pod templates. Restart the
+  # workloads so rotated credentials take effect even when the chart is unchanged.
+  kubectl rollout restart statefulset "$CORE_RELEASE" --namespace "$NAMESPACE"
+  kubectl rollout restart deployment "$MCP_RELEASE" --namespace "$NAMESPACE"
+  kubectl rollout status statefulset "$CORE_RELEASE" --namespace "$NAMESPACE" --timeout=15m
+  kubectl rollout status deployment "$MCP_RELEASE" --namespace "$NAMESPACE" --timeout=15m
+
+  core_image=$(kubectl get statefulset "$CORE_RELEASE" --namespace "$NAMESPACE" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+  mcp_image=$(kubectl get deployment "$MCP_RELEASE" --namespace "$NAMESPACE" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+  echo "==> Done through Flux. Core: ${core_image:-$CORE_RELEASE}, MCP: ${mcp_image:-$MCP_RELEASE}, Namespace: $NAMESPACE"
+  exit 0
+fi
 
 echo "==> Ensuring TLS secret '$NAMESPACE/$TLS_SECRET_NAME' exists..."
 if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then

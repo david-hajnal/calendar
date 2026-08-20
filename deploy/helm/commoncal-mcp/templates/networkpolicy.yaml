@@ -22,7 +22,7 @@ spec:
               kubernetes.io/metadata.name: kube-system
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: commoncal-core
+               app.kubernetes.io/name: commoncal
   egress:
     - to:
         - namespaceSelector:

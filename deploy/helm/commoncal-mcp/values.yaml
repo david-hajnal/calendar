@@ -88,6 +88,6 @@ existingSecret:
   sessionSecretKeyName: mcp-session-secret
 
 env:
-  MCP_INTERNAL_API_BASE: http://commoncal-core:3000
+  MCP_INTERNAL_API_BASE: http://commoncal:3000
   MCP_DATABASE_PATH: /app/data/mcp-server.db
   MCP_RATE_LIMIT_ENABLED: "0"

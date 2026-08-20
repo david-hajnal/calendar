@@ -52,7 +52,7 @@ existingSecret:
 
 env:
   APP_ENV: production
-  MCP_INTERNAL_API_BASE: http://commoncal-core:3000
+  MCP_INTERNAL_API_BASE: http://commoncal:3000
   MCP_DATABASE_PATH: /app/data/mcp-server.db
   MCP_DOMAIN: mcal.hajnal.space
   MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp

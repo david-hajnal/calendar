@@ -17,7 +17,7 @@ spec:
       interval: 10m
   interval: 10m
   dependsOn:
-    - name: commoncal-core
+    - name: commoncal
   install:
     remediation:
       retries: 3
@@ -67,7 +67,7 @@ spec:
       sessionSecretKeyName: mcp-session-secret
     env:
       APP_ENV: production
-      MCP_INTERNAL_API_BASE: http://commoncal-core:3000
+      MCP_INTERNAL_API_BASE: http://commoncal:3000
       MCP_DOMAIN: mcal.hajnal.space
       MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp
       MCP_RATE_LIMIT_ENABLED: "1"

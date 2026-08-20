@@ -73,7 +73,7 @@ kubectl delete annotation imageupdateautomation/image-update-core \
 flux reconcile kustomization flux-system --namespace=flux-system
 
 # Reconcile specific HelmRelease
-flux reconcile helmrelease commoncal-core --namespace=flux-system
+flux reconcile helmrelease commoncal --namespace=flux-system
 flux reconcile helmrelease commoncal-mcp --namespace=flux-system
 
 # Reconcile image policy

@@ -89,7 +89,7 @@ fi
 # 6. Validate YAML syntax
 echo ""
 echo "--- YAML syntax validation ---"
-python3 -c "import yaml, sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]" deploy/flux/overlays/production/**/*.yaml 2>/dev/null || { echo "FAIL: YAML syntax error"; ERRORS=$((ERRORS+1)); }
+python3 -c "import yaml, sys; [list(yaml.safe_load_all(open(f))) for f in sys.argv[1:]]" deploy/flux/overlays/production/**/*.yaml 2>/dev/null || { echo "FAIL: YAML syntax error"; ERRORS=$((ERRORS+1)); }
 
 # 7. Run deploy script tests
 echo ""

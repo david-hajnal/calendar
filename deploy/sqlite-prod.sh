@@ -13,7 +13,7 @@ set -euo pipefail
 
 readonly CONSOLE_POD_NAME="commoncal-sqlite-console"
 readonly DB_PATH="/app/data/commoncal.sqlite"
-readonly CORE_STATEFULSET="commoncal-commoncal"
+readonly CORE_STATEFULSET="commoncal"
 readonly DEFAULT_NAMESPACE="commoncal"
 readonly MAX_DURATION=3600
 

@@ -7,6 +7,7 @@ metadata:
   name: commoncal
   namespace: flux-system
 spec:
+  releaseName: commoncal
   targetNamespace: commoncal
   chart:
     spec:
@@ -49,6 +50,7 @@ spec:
         - secretName: commoncal-tls
           hosts:
             - cal.hajnal.space
+            - mcal.hajnal.space
     persistence:
       size: 10Gi
       accessModes:
@@ -58,6 +60,9 @@ spec:
     existingSecret:
       name: commoncal-session
       sessionSecretKey: SESSION_SECRET
+    mcpInternalApiSecret:
+      name: commoncal-mcp-secrets
+      key: mcp-internal-api-key
     backup:
       enabled: true
       schedule: "0 2 * * *"

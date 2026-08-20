@@ -34,6 +34,7 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/templates/statefulset.yaml" 'name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}'
   require_source "$chart_dir/templates/statefulset.yaml" 'key: {{ required "existingSecret.sessionSecretKey is required" .Values.existingSecret.sessionSecretKey }}'
   require_source "$chart_dir/templates/statefulset.yaml" 'required "image.tag is required" .Values.image.tag'
+  require_source "$chart_dir/templates/statefulset.yaml" 'name: MCP_INTERNAL_API_KEY'
   exit 0
 fi
 
@@ -51,10 +52,10 @@ grep -q 'readOnlyRootFilesystem: true' "$rendered"
 grep -q 'drop:' "$rendered"
 grep -q -- '- ALL' "$rendered"
 grep -q 'mountPath: /app/data' "$rendered"
-grep -q 'claimName: commoncal-commoncal-data' "$rendered"
+grep -q 'claimName: commoncal-data' "$rendered"
 grep -q 'DATABASE_PATH' "$rendered"
 grep -q 'configMapRef:' "$rendered"
-grep -q 'name: commoncal-commoncal' "$rendered"
+grep -q 'name: commoncal' "$rendered"
 grep -q 'secretKeyRef:' "$rendered"
 grep -q 'key: SESSION_SECRET' "$rendered"
 if ! awk '

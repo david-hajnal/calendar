@@ -47,6 +47,13 @@ spec:
                 secretKeyRef:
                   name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
                   key: {{ required "existingSecret.sessionSecretKey is required" .Values.existingSecret.sessionSecretKey }}
+            {{- if .Values.mcpInternalApiSecret.name }}
+            - name: MCP_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpInternalApiSecret.name }}
+                  key: {{ required "mcpInternalApiSecret.key is required when name is set" .Values.mcpInternalApiSecret.key }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 3000

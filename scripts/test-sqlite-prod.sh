@@ -53,7 +53,7 @@ case "$ACTION" in
       case "$JSONPATH" in
         *.spec.nodeName*) echo "prod-node-1" ;;
         *.image*) echo "ghcr.io/david-hajnal/calendar-core:v1.2.3" ;;
-        *.volumeClaimTemplates*) echo "commoncal-commoncal-data" ;;
+        *.volumeClaimTemplates*) echo "commoncal-data" ;;
       esac
     elif [ -n "$POD_NAME" ]; then
       # kubectl get pod <name>
@@ -65,7 +65,7 @@ case "$ACTION" in
       # List pods
       if echo "$SELECTOR" | grep -q "app.kubernetes.io/name=commoncal" && \
          echo "$FIELD_SELECTOR" | grep -q "status.phase=Running"; then
-        echo "commoncal-commoncal-0   1/1     Running   0          10m"
+        echo "commoncal-0   1/1     Running   0          10m"
       fi
     fi
     ;;

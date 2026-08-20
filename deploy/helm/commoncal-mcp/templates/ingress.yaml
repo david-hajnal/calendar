@@ -24,6 +24,7 @@ spec:
       http:
         paths:
           {{- range .Values.ingress.hosts }}
+          {{- range .paths }}
           - path: {{ .path | quote }}
             pathType: {{ .pathType | default "Prefix" | quote }}
             backend:
@@ -31,5 +32,6 @@ spec:
                 name: {{ include "commoncal-mcp.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
+          {{- end }}
           {{- end }}
 {{- end }}

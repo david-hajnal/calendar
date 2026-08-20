@@ -71,6 +71,10 @@ existingSecret:
   name: commoncal-session
   sessionSecretKey: SESSION_SECRET
 
+mcpInternalApiSecret:
+  name: ""
+  key: mcp-internal-api-key
+
 resources:
   requests:
     cpu: 100m

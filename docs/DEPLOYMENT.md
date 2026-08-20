@@ -22,6 +22,26 @@ Git push (v* tag)
 
 Both applications deploy to the `commoncal` namespace.
 
+Flux is the normal production deployment authority. The HelmReleases use the
+explicit release names `commoncal` and `commoncal-mcp`; this avoids Flux's
+cross-namespace `commoncal-commoncal` default.
+
+For an emergency direct deployment, first suspend both Flux HelmReleases, then
+run `deploy/deploy-prod.sh`. The script refuses to run while either release is
+actively managed by Flux, deploys both workloads, and requires the core, MCP,
+OAuth issuer, and MCP secret settings documented in `deploy/.env.example`.
+Resume Flux only after reconciling the direct deployment back into Git.
+
+### Legacy duplicate cleanup
+
+Clusters previously reconciled without `spec.releaseName` may still contain the
+legacy Helm release and StatefulSet named `commoncal-commoncal`. Before removing
+it, use `helm list -n commoncal` and inspect both StatefulSets/PVCs to confirm
+that `commoncal` is the live release holding the intended database. Suspend the
+Flux HelmReleases during that inspection. Only then uninstall the verified
+stale release with `helm uninstall commoncal-commoncal -n commoncal`; never
+delete its PVC until the live database location has been confirmed.
+
 ## Images
 
 - Core: `ghcr.io/david-hajnal/calendar-core`
@@ -124,7 +144,12 @@ Then add to each HelmRelease's `imagePullSecrets`.
 ## Production Secrets
 
 - `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
+- `commoncal-mcp-secrets` — the shared internal API key, MCP session secret, and HTTPS OAuth issuer (`mcp-oauth-issuer`)
 - `commoncal-tls` — TLS certificate (cert-manager)
+
+The shared certificate covers both the core and MCP domains. Under Flux, only
+the core Ingress requests the certificate; the MCP Ingress references the same
+Secret without creating a competing cert-manager Certificate.
 
 `BACKUP_ENCRYPTION_KEY_HEX` must be an even number of hexadecimal characters (at least 32); 64-hex (32-byte) keys remain backward-compatible.
 

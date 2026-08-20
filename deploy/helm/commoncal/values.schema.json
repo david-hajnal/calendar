@@ -15,6 +15,15 @@
         "sessionSecretKey": { "type": "string", "minLength": 1 }
       }
     },
+    "mcpInternalApiSecret": {
+      "type": "object",
+      "description": "Optional Secret mapping for the core MCP internal API key.",
+      "required": ["name", "key"],
+      "properties": {
+        "name": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
     "persistence": {
       "type": "object",
       "required": ["size"],

@@ -41,12 +41,12 @@ spec:
           env:
             - name: BIND_ADDRESS
               value: {{ .Values.bindAddress | quote }}
-            {{- if .Values.existingSecret.apiKeyNameName }}
+            {{- if .Values.existingSecret.apiKeyKeyName }}
             - name: MCP_INTERNAL_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.apiKeyNameName }}
+                  key: {{ .Values.existingSecret.apiKeyKeyName }}
             {{- end }}
             {{- if .Values.existingSecret.sessionSecretKeyName }}
             - name: MCP_SESSION_SECRET
@@ -54,6 +54,13 @@ spec:
                 secretKeyRef:
                   name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.sessionSecretKeyName }}
+            {{- end }}
+            {{- if .Values.existingSecret.oauthIssuerKeyName }}
+            - name: MCP_OAUTH_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.oauthIssuerKeyName }}
             {{- end }}
             {{- range $key, $val := .Values.env }}
             - name: {{ $key }}

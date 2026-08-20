@@ -22,8 +22,12 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/templates/deployment.yaml" 'type: Recreate'
   require_source "$chart_dir/templates/deployment.yaml" 'persistentVolumeClaim:'
   require_source "$chart_dir/templates/deployment.yaml" 'claimName: {{ include "commoncal-mcp.fullname" . }}-data'
+  require_source "$chart_dir/templates/deployment.yaml" '.Values.existingSecret.apiKeyKeyName'
+  require_source "$chart_dir/templates/ingress.yaml" '{{- range .paths }}'
   require_source "$chart_dir/templates/deployment.yaml" 'mountPath: /app/data'
   require_source "$chart_dir/templates/deployment.yaml" 'containerPort: 3001'
+  require_source "$chart_dir/templates/deployment.yaml" 'name: MCP_OAUTH_ISSUER'
+  require_source "$chart_dir/templates/deployment.yaml" '.Values.existingSecret.oauthIssuerKeyName'
   require_source "$chart_dir/templates/deployment.yaml" 'mountPath: /app/tmp'
   exit 0
 fi
@@ -38,7 +42,10 @@ grep -q 'helm.sh/resource-policy: keep' "$rendered"
 grep -q 'claimName: commoncal-mcp-data' "$rendered"
 grep -q 'mountPath: /app/data' "$rendered"
 grep -q 'containerPort: 3001' "$rendered"
+grep -q 'name: MCP_OAUTH_ISSUER' "$rendered"
 grep -q 'mountPath: /app/tmp' "$rendered"
+grep -q 'name: MCP_INTERNAL_API_KEY' "$rendered"
+grep -q 'key: mcp-internal-api-key' "$rendered"
 grep -q 'host: "mcp.example.com"' "$rendered"
 grep -q 'path: "/mcp"' "$rendered"
 grep -q 'path: "/.well-known/oauth-protected-resource"' "$rendered"

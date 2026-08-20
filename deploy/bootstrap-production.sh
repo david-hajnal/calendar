@@ -8,6 +8,7 @@ set -euo pipefail
 #   BACKUP_ENCRYPTION_KEY_HEX   - hex-encoded backup encryption key (even hex, at least 32 chars; 64-hex backward-compatible)
 #   MCP_INTERNAL_API_KEY        - MCP internal API key
 #   MCP_SESSION_SECRET          - MCP session secret
+#   MCP_OAUTH_ISSUER            - HTTPS OAuth issuer exposing the JWKS endpoint
 #   GITHUB_TOKEN                - GitHub PAT with repo write access
 #   DOMAIN                      - core domain (default: cal.hajnal.space)
 #   MCP_DOMAIN                  - MCP domain (default: mcal.hajnal.space)
@@ -26,7 +27,7 @@ FLUX_REPO="${FLUX_REPO:-calendar}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 echo "==> Validating required environment variables..."
-for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET GITHUB_TOKEN; do
+for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET MCP_OAUTH_ISSUER GITHUB_TOKEN; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: $var is required" >&2
     exit 1
@@ -52,6 +53,7 @@ echo "==> Creating MCP secret '$NAMESPACE/commoncal-mcp-secrets'..."
 kubectl create secret generic commoncal-mcp-secrets \
   --from-literal=mcp-internal-api-key="$MCP_INTERNAL_API_KEY" \
   --from-literal=mcp-session-secret="$MCP_SESSION_SECRET" \
+  --from-literal=mcp-oauth-issuer="$MCP_OAUTH_ISSUER" \
   -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 

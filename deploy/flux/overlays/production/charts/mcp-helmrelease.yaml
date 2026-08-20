@@ -7,6 +7,7 @@ metadata:
   name: commoncal-mcp
   namespace: flux-system
 spec:
+  releaseName: commoncal-mcp
   targetNamespace: commoncal
   chart:
     spec:
@@ -41,7 +42,6 @@ spec:
       enabled: true
       className: traefik
       annotations:
-        cert-manager.io/cluster-issuer: letsencrypt-prod
         traefik.ingress.kubernetes.io/router.entrypoints: websecure
       hosts:
         - host: mcal.hajnal.space
@@ -65,9 +65,10 @@ spec:
       name: commoncal-mcp-secrets
       apiKeyKeyName: mcp-internal-api-key
       sessionSecretKeyName: mcp-session-secret
+      oauthIssuerKeyName: mcp-oauth-issuer
     env:
       APP_ENV: production
-      MCP_INTERNAL_API_BASE: http://commoncal:3000
+      MCP_INTERNAL_API_BASE: https://cal.hajnal.space
       MCP_DOMAIN: mcal.hajnal.space
       MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp
       MCP_RATE_LIMIT_ENABLED: "1"

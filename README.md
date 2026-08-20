@@ -134,7 +134,12 @@ gh auth login
 ```
 
 The script `scripts/docker-build-push.sh` supports `--dry-run` and `--build-only` flags.
-Env vars: `IMAGE_TAG`, `DOCKER_REGISTRY`, `IMAGE_NAME`, `GHCR_TOKEN`, `DRY_RUN`, `PLATFORMS`.
+Env vars: `IMAGE_TAG`, `DOCKER_REGISTRY`, `IMAGE_NAME`, `DOCKERFILE`, `LOCAL_TAG`, `GHCR_TOKEN`, `DRY_RUN`, `PLATFORMS`.
+
+`make check` runs CI-parity checks on top of the build targets: `docker-check`
+builds the core and MCP images locally, and `trivy-check` scans both for
+CRITICAL/HIGH vulnerabilities. `trivy-check` requires the `trivy` CLI; set
+`SKIP_TRIVY=1` to skip the scan.
 
 ### Multi-platform builds
 

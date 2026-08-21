@@ -83,6 +83,14 @@ jobs:
       # - name: Run deploy validation
       #   run: bash scripts/validate-deploy.sh
 
+      - name: Test deployment script contract
+        run: sh scripts/test-deploy-prod.sh
+
+      - name: Test Helm chart templates
+        run: |
+          sh deploy/helm/commoncal/tests/template_assertions.sh
+          sh deploy/helm/commoncal-mcp/tests/template_assertions.sh
+
       - name: Check no mutable tags in production
         run: |
           if grep -rn 'tag:.*latest' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then

@@ -6,10 +6,12 @@
 #   MCP_INTERNAL_API_KEY, MCP_SESSION_SECRET, MCP_DOMAIN, MCP_OAUTH_ISSUER
 # Optional:
 #   IMAGE_TAG (required only for direct Helm deployment; Flux uses Git's tags)
+#   CERT_MANAGER_ACME_EMAIL (required when bootstrapping Let's Encrypt)
+#   CERT_MANAGER_VERSION (default: v1.21.1)
 #   DOMAIN (default: cal.hajnal.space)
 #   MCP_INTERNAL_API_BASE (default: https://$DOMAIN)
 #   TLS_SECRET_NAME, CORE_HELM_RELEASE_NAME, MCP_HELM_RELEASE_NAME, NAMESPACE
-#   GHCR_TOKEN, DRY_RUN=1
+#   GHCR_TOKEN (direct Helm mode only; rejected under Flux ownership), DRY_RUN=1
 
 set -euo pipefail
 
@@ -41,6 +43,9 @@ DOMAIN="${DOMAIN:-cal.hajnal.space}"
 MCP_INTERNAL_API_BASE="${MCP_INTERNAL_API_BASE:-https://$DOMAIN}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.21.1}"
+CERT_MANAGER_CHART="oci://quay.io/jetstack/charts/cert-manager"
+CERT_MANAGER_ACME_EMAIL="${CERT_MANAGER_ACME_EMAIL:-}"
 
 if [[ "$CORE_RELEASE" == "$MCP_RELEASE" ]]; then
   echo "ERROR: core and MCP Helm release names must be distinct" >&2
@@ -99,17 +104,103 @@ case "$active_flux_releases" in
       echo "Remove NAMESPACE, HELM_RELEASE_NAME, CORE_HELM_RELEASE_NAME, and MCP_HELM_RELEASE_NAME overrides for Flux deployment." >&2
       exit 1
     fi
-    if ! kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
-      echo "ERROR: Flux TLS requires cert-manager, but the Certificate CRD is not installed." >&2
-      echo "Install cert-manager, then create the 'letsencrypt-prod' ClusterIssuer before deploying." >&2
+    if [[ -n "$GHCR_TOKEN" ]]; then
+      echo "ERROR: GHCR_TOKEN is ignored under Flux ownership: Flux pulls images with its own ImageRepository credentials." >&2
+      echo "Remove GHCR_TOKEN from '$DEPLOY_DIR/.env', or add the pull Secret to the Flux HelmReleases in Git." >&2
       exit 1
+    fi
+    cert_manager_missing=0
+    if ! kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+      cert_manager_missing=1
+    fi
+    cluster_issuer_exists=0
+    if kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
+      cluster_issuer_exists=1
     fi
     cluster_issuer_ready=$(kubectl get clusterissuer letsencrypt-prod \
       -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
     if [[ "$cluster_issuer_ready" != True ]]; then
-      echo "ERROR: cert-manager ClusterIssuer 'letsencrypt-prod' is missing or not Ready." >&2
-      echo "Create/fix the issuer before deploying; Flux will not create a self-signed production certificate." >&2
-      exit 1
+      if ((cluster_issuer_exists)); then
+        {
+          echo "ERROR: ClusterIssuer 'letsencrypt-prod' exists but is not Ready." >&2
+          echo "Refusing to overwrite an existing issuer. Current state:" >&2
+          kubectl get clusterissuer letsencrypt-prod -o yaml >&2 || true
+          echo "Repair it (for example: kubectl describe clusterissuer letsencrypt-prod), then rerun the deployment." >&2
+        }
+        exit 1
+      fi
+      if [[ ! "$CERT_MANAGER_ACME_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        echo "ERROR: CERT_MANAGER_ACME_EMAIL is required to create 'letsencrypt-prod' and must be a valid email address." >&2
+        echo "Set it in '$DEPLOY_DIR/.env' or export it, then rerun the deployment." >&2
+        exit 1
+      fi
+    fi
+
+    cert_manager_dry_run_only=0
+    if ((cert_manager_missing)); then
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "ERROR: Helm is required to bootstrap cert-manager" >&2
+        exit 1
+      fi
+      if [[ "$CERT_MANAGER_VERSION" == v1.21.1 ]]; then
+        k8s_server_version=$(kubectl get --raw /version 2>/dev/null \
+          | sed -n 's/.*"gitVersion"[[:space:]]*:[[:space:]]*"v\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' \
+          | head -n 1 || true)
+        if [[ -z "$k8s_server_version" ]]; then
+          echo "ERROR: could not determine the Kubernetes server version; refusing to bootstrap cert-manager $CERT_MANAGER_VERSION." >&2
+          echo "Verify cluster access, or set CERT_MANAGER_VERSION to a release that supports this cluster." >&2
+          exit 1
+        fi
+        k8s_major="${k8s_server_version%%.*}"
+        k8s_minor="${k8s_server_version#*.}"
+        if [[ "$k8s_major" != 1 ]] || ((10#$k8s_minor < 33 || 10#$k8s_minor > 36)); then
+          echo "ERROR: cert-manager $CERT_MANAGER_VERSION supports Kubernetes 1.33-1.36, but the cluster reports v${k8s_server_version}." >&2
+          echo "Upgrade the cluster, or set CERT_MANAGER_VERSION to a cert-manager release that supports v${k8s_server_version}." >&2
+          exit 1
+        fi
+      fi
+      cert_manager_helm_args=(
+        upgrade --install cert-manager "$CERT_MANAGER_CHART"
+        --version "$CERT_MANAGER_VERSION"
+        --namespace cert-manager --create-namespace
+        --set crds.enabled=true --set crds.keep=true
+        --wait --timeout=10m
+      )
+      if ((dry_run)); then
+        cert_manager_helm_args+=(--dry-run)
+        cert_manager_dry_run_only=1
+        echo "==> Dry-running cert-manager $CERT_MANAGER_VERSION bootstrap..."
+      else
+        echo "==> Installing cert-manager $CERT_MANAGER_VERSION..."
+      fi
+      helm "${cert_manager_helm_args[@]}"
+
+      if ((!dry_run)); then
+        kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout=2m
+      fi
+    fi
+
+    if [[ "$cluster_issuer_ready" != True && "$cert_manager_dry_run_only" == 0 ]]; then
+      echo "==> Applying production Let's Encrypt ClusterIssuer..."
+      cat <<EOF | kubectl "${kubectl_apply_args[@]}"
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: $CERT_MANAGER_ACME_EMAIL
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+EOF
+      if ((!dry_run)); then
+        kubectl wait clusterissuer letsencrypt-prod --for=condition=Ready --timeout=5m
+      fi
     fi
     ;;
   0)
@@ -131,6 +222,43 @@ esac
 
 CTX=$(kubectl config current-context 2>/dev/null) || CTX="(none)"
 echo "==> Current kubectl context: $CTX"
+
+if [[ "$deploy_mode" == helm ]]; then
+  echo "==> Verifying TLS secret '$NAMESPACE/$TLS_SECRET_NAME'..."
+  if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+    {
+      echo "ERROR: TLS secret '$NAMESPACE/$TLS_SECRET_NAME' does not exist." >&2
+      echo "Direct production deployment requires a trusted, pre-provisioned certificate; it will not generate a self-signed one." >&2
+      echo "Create it from a CA-issued certificate that covers both '$DOMAIN' and '$MCP_DOMAIN', for example:" >&2
+      echo "  kubectl create namespace $NAMESPACE" >&2
+      echo "  kubectl create secret tls $TLS_SECRET_NAME --cert=<fullchain.pem> --key=<privkey.pem> -n $NAMESPACE" >&2
+    }
+    exit 1
+  fi
+  TLS_CHECK_DIR=$(mktemp -d)
+  trap 'rm -rf "$TLS_CHECK_DIR"' EXIT
+  if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" \
+    -o jsonpath='{.data.tls\.crt}' | openssl base64 -d -A >"$TLS_CHECK_DIR/tls.crt"; then
+    echo "ERROR: could not read tls.crt from '$NAMESPACE/$TLS_SECRET_NAME'" >&2
+    exit 1
+  fi
+  if ! TLS_CERT_TEXT=$(openssl x509 -in "$TLS_CHECK_DIR/tls.crt" -noout -text 2>/dev/null); then
+    echo "ERROR: '$NAMESPACE/$TLS_SECRET_NAME' does not contain a valid TLS certificate" >&2
+    exit 1
+  fi
+  TLS_CERT_DNS_NAMES=$(printf '%s\n' "$TLS_CERT_TEXT" | grep -oE 'DNS:[^,[:space:]]+' || true)
+  for tls_host in "$DOMAIN" "$MCP_DOMAIN"; do
+    if ! grep -Fx "DNS:$tls_host" <<<"$TLS_CERT_DNS_NAMES" >/dev/null; then
+      echo "ERROR: existing TLS secret '$NAMESPACE/$TLS_SECRET_NAME' does not cover '$tls_host'." >&2
+      echo "Reissue it with SANs for both '$DOMAIN' and '$MCP_DOMAIN', or choose a new TLS_SECRET_NAME; it was not overwritten." >&2
+      exit 1
+    fi
+  done
+  rm -rf "$TLS_CHECK_DIR"
+  trap - EXIT
+  echo "    Existing TLS certificate covers both production domains; leaving it untouched."
+fi
+
 echo "==> Ensuring namespace '$NAMESPACE' exists..."
 if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
   if ((dry_run)); then
@@ -216,61 +344,6 @@ if [[ "$deploy_mode" == flux ]]; then
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
   echo "==> Done through Flux. Core: ${core_image:-$CORE_RELEASE}, MCP: ${mcp_image:-$MCP_RELEASE}, Namespace: $NAMESPACE"
   exit 0
-fi
-
-echo "==> Ensuring TLS secret '$NAMESPACE/$TLS_SECRET_NAME' exists..."
-if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
-  if ! command -v openssl >/dev/null 2>&1; then
-    echo "ERROR: openssl is required to generate the self-signed TLS certificate" >&2
-    exit 1
-  fi
-  TLS_TMPDIR=$(mktemp -d)
-  trap 'rm -rf "$TLS_TMPDIR"' EXIT
-  cat >"$TLS_TMPDIR/openssl.cnf" <<EOF
-[req]
-distinguished_name = dn
-x509_extensions = v3
-prompt = no
-[dn]
-CN = $DOMAIN
-[v3]
-subjectAltName = @alt_names
-[alt_names]
-DNS.1 = $DOMAIN
-DNS.2 = $MCP_DOMAIN
-EOF
-  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-    -config "$TLS_TMPDIR/openssl.cnf" \
-    -keyout "$TLS_TMPDIR/tls.key" \
-    -out "$TLS_TMPDIR/tls.crt" >/dev/null
-  kubectl create secret tls "$TLS_SECRET_NAME" \
-    --cert="$TLS_TMPDIR/tls.crt" --key="$TLS_TMPDIR/tls.key" \
-    -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
-  rm -rf "$TLS_TMPDIR"
-  trap - EXIT
-else
-  TLS_CHECK_DIR=$(mktemp -d)
-  trap 'rm -rf "$TLS_CHECK_DIR"' EXIT
-  if ! kubectl get secret "$TLS_SECRET_NAME" -n "$NAMESPACE" \
-    -o jsonpath='{.data.tls\.crt}' | openssl base64 -d -A >"$TLS_CHECK_DIR/tls.crt"; then
-    echo "ERROR: could not read tls.crt from '$NAMESPACE/$TLS_SECRET_NAME'" >&2
-    exit 1
-  fi
-  if ! TLS_CERT_TEXT=$(openssl x509 -in "$TLS_CHECK_DIR/tls.crt" -noout -text 2>/dev/null); then
-    echo "ERROR: '$NAMESPACE/$TLS_SECRET_NAME' does not contain a valid TLS certificate" >&2
-    exit 1
-  fi
-  TLS_CERT_DNS_NAMES=$(printf '%s\n' "$TLS_CERT_TEXT" | grep -oE 'DNS:[^,[:space:]]+' || true)
-  for tls_host in "$DOMAIN" "$MCP_DOMAIN"; do
-    if ! grep -Fx "DNS:$tls_host" <<<"$TLS_CERT_DNS_NAMES" >/dev/null; then
-      echo "ERROR: existing TLS secret '$NAMESPACE/$TLS_SECRET_NAME' does not cover '$tls_host'." >&2
-      echo "Reissue it with SANs for both '$DOMAIN' and '$MCP_DOMAIN', or choose a new TLS_SECRET_NAME; it was not overwritten." >&2
-      exit 1
-    fi
-  done
-  rm -rf "$TLS_CHECK_DIR"
-  trap - EXIT
-  echo "    Existing TLS certificate covers both production domains; leaving it untouched."
 fi
 
 core_helm_args=(

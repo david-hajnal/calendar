@@ -15,6 +15,8 @@ mkdir "$fixture/bin"
 : >"$fixture/kubectl.log"
 : >"$fixture/kubectl-stdin.log"
 : >"$fixture/openssl-config.log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
 
 cat >"$fixture/bin/kubectl" <<'EOF'
 #!/bin/sh
@@ -60,12 +62,25 @@ case "${1:-} ${2:-} ${3:-}" in
     esac
     ;;
   "get crd certificates.cert-manager.io")
-    [ "${CERT_MANAGER_READY:-1}" = 1 ]
+    [ "${CERT_MANAGER_CRD_READY:-${CERT_MANAGER_READY:-1}}" = 1 ] || [ -s "$CERT_MANAGER_STATE" ]
     ;;
   "get clusterissuer letsencrypt-prod")
-    if [ "${CERT_MANAGER_READY:-1}" = 1 ]; then
-      printf '%s' True
+    state=$(cat "$CLUSTERISSUER_STATE" 2>/dev/null || true)
+    if [ -n "$state" ]; then
+      case "$state" in
+        notready) printf '%s' False ;;
+        *) printf '%s' True ;;
+      esac
+      exit 0
     fi
+    if [ "${CLUSTERISSUER_READY:-${CERT_MANAGER_READY:-1}}" = 1 ]; then
+      printf '%s' True
+      exit 0
+    fi
+    exit 1
+    ;;
+  "get --raw /version")
+    printf '{"gitVersion":"%s"}\n' "${K8S_SERVER_VERSION:-v1.34.2+k3s2}"
     ;;
   "get certificate "*)
     printf '%s' "${CERTIFICATE_DNS:-calendar.example.test mcp.example.test}"
@@ -76,8 +91,15 @@ case "${1:-} ${2:-} ${3:-}" in
   "apply --dry-run=server"*)
     cat >>"$KUBECTL_STDIN_LOG"
     ;;
+  "apply --dry-run=client"*)
+    cat >>"$KUBECTL_STDIN_LOG"
+    ;;
   "apply -f "*)
-    cat >/dev/null || true
+    manifest=$(cat)
+    printf '%s\n' "$manifest" >>"$KUBECTL_STDIN_LOG"
+    if printf '%s\n' "$manifest" | grep -F 'kind: ClusterIssuer' >/dev/null; then
+      printf '%s\n' ready >"$CLUSTERISSUER_STATE"
+    fi
     ;;
 esac
 EOF
@@ -116,6 +138,22 @@ cat >"$fixture/bin/helm" <<'EOF'
 #!/bin/sh
 set -eu
 
+if [ "${1:-}" = upgrade ] && [ "${2:-}" = --install ] && [ "${3:-}" = cert-manager ]; then
+  {
+    printf 'BEGIN cert-manager-bootstrap\n'
+    printf '%s\n' "$@"
+    printf '%s\n' END
+  } >>"$HELM_LOG"
+  if [ "${CERT_MANAGER_INSTALL_FAIL:-0}" = 1 ]; then
+    exit 42
+  fi
+  case " $* " in
+    *' --dry-run '*) ;;
+    *) printf '%s\n' installed >"$CERT_MANAGER_STATE" ;;
+  esac
+  exit 0
+fi
+
 release=$3
 chart=$4
 chart_name=${chart##*/}
@@ -144,7 +182,7 @@ run_stack() {
   PATH="$fixture/bin:$PATH" \
     KUBECONFIG="$fixture/kubeconfig" \
     KUBECTL_LOG="${KUBECTL_LOG_OVERRIDE:-$fixture/kubectl.log}" \
-    KUBECTL_STDIN_LOG="$fixture/kubectl-stdin.log" \
+    KUBECTL_STDIN_LOG="${KUBECTL_STDIN_LOG_OVERRIDE:-$fixture/kubectl-stdin.log}" \
     HELM_LOG="${HELM_LOG_OVERRIDE:-$fixture/helm.log}" \
     FLUX_LOG="${FLUX_LOG_OVERRIDE:-$fixture/flux.log}" \
     OPENSSL_CONFIG_LOG="${OPENSSL_CONFIG_LOG_OVERRIDE:-$fixture/openssl-config.log}" \
@@ -157,12 +195,20 @@ run_stack() {
     MCP_INTERNAL_API_BASE=https://calendar.example.test \
     MCP_INTERNAL_API_KEY=test-internal-api-key \
     MCP_SESSION_SECRET=test-mcp-session-secret \
-    GHCR_TOKEN=test-ghcr-token \
+    GHCR_TOKEN="${GHCR_TOKEN_OVERRIDE-}" \
     TLS_EXISTING="${TLS_EXISTING_OVERRIDE:-0}" \
+    K8S_SERVER_VERSION="${K8S_SERVER_VERSION_OVERRIDE:-v1.34.2+k3s2}" \
     TLS_CERT_SANS="${TLS_CERT_SANS_OVERRIDE:-DNS:calendar.example.test, DNS:mcp.example.test}" \
     TLS_SECRET_NAME=commoncal-stack-tls \
     FLUX_ACTIVE_RELEASE="${FLUX_ACTIVE_RELEASE_OVERRIDE:-}" \
     CERT_MANAGER_READY="${CERT_MANAGER_READY_OVERRIDE:-1}" \
+    CERT_MANAGER_CRD_READY="${CERT_MANAGER_CRD_READY_OVERRIDE:-}" \
+    CLUSTERISSUER_READY="${CLUSTERISSUER_READY_OVERRIDE:-}" \
+    CERT_MANAGER_ACME_EMAIL="${CERT_MANAGER_ACME_EMAIL_OVERRIDE-deployer@example.test}" \
+    CERT_MANAGER_INSTALL_FAIL="${CERT_MANAGER_INSTALL_FAIL_OVERRIDE:-0}" \
+    CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION_OVERRIDE-v1.21.1}" \
+    CERT_MANAGER_STATE="$fixture/cert-manager-state" \
+    CLUSTERISSUER_STATE="$fixture/clusterissuer-state" \
     CERTIFICATE_DNS="${CERTIFICATE_DNS_OVERRIDE:-calendar.example.test mcp.example.test}" \
     MCP_TLS_SECRET="${MCP_TLS_SECRET_OVERRIDE:-commoncal-stack-tls}" \
     CORE_HELM_RELEASE_NAME="${CORE_RELEASE_OVERRIDE:-}" \
@@ -170,7 +216,13 @@ run_stack() {
     "$deploy_script"
 }
 
+# bash 3.2 POSIX mode leaks "VAR=x func" assignments into the shell, so set
+# and clear the overrides explicitly instead of using a command prefix.
+GHCR_TOKEN_OVERRIDE=test-ghcr-token
+TLS_EXISTING_OVERRIDE=1
 run_stack >/dev/null
+unset GHCR_TOKEN_OVERRIDE
+unset TLS_EXISTING_OVERRIDE
 
 failures=0
 
@@ -269,15 +321,6 @@ if [ "$pull_secret_count" -ne 2 ]; then
   echo "GHCR pull secret must be passed to both Helm releases; found $pull_secret_count reference(s)" >&2
   failures=$((failures + 1))
 fi
-
-require_text \
-  'DNS.1 = calendar.example.test' \
-  "$fixture/openssl-config.log" \
-  "generated TLS certificate must cover the core domain"
-require_text \
-  'DNS.2 = mcp.example.test' \
-  "$fixture/openssl-config.log" \
-  "generated TLS certificate must cover the MCP domain"
 
 require_text \
   '{{- range .Values.ingress.hosts }}' \
@@ -383,19 +426,384 @@ fi
 
 missing_cert_flux_log="$fixture/missing-cert-flux.log"
 missing_cert_kubectl_log="$fixture/missing-cert-kubectl.log"
+missing_cert_helm_log="$fixture/missing-cert-helm.log"
+missing_cert_stdin_log="$fixture/missing-cert-stdin.log"
 : >"$missing_cert_flux_log"
 : >"$missing_cert_kubectl_log"
-if (FLUX_LOG_OVERRIDE="$missing_cert_flux_log" \
+: >"$missing_cert_helm_log"
+: >"$missing_cert_stdin_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if ! (FLUX_LOG_OVERRIDE="$missing_cert_flux_log" \
+  HELM_LOG_OVERRIDE="$missing_cert_helm_log" \
   KUBECTL_LOG_OVERRIDE="$missing_cert_kubectl_log" \
+  KUBECTL_STDIN_LOG_OVERRIDE="$missing_cert_stdin_log" \
   FLUX_ACTIVE=1 \
   CERT_MANAGER_READY_OVERRIDE=0 \
   DRY_RUN_OVERRIDE=0 \
   run_stack >/dev/null 2>&1); then
-  echo "Flux-owned deployment must require cert-manager and a Ready production issuer" >&2
+  echo "Flux-owned deployment must bootstrap missing cert-manager and its production issuer" >&2
   failures=$((failures + 1))
 fi
-if [ -s "$missing_cert_flux_log" ] || grep -F -- 'create secret' "$missing_cert_kubectl_log" >/dev/null; then
-  echo "missing cert-manager must fail before reconciliation or secret mutations" >&2
+require_line \
+  'BEGIN cert-manager-bootstrap' \
+  "$missing_cert_helm_log" \
+  "missing cert-manager must be installed through the pinned Helm chart"
+require_line \
+  'oci://quay.io/jetstack/charts/cert-manager' \
+  "$missing_cert_helm_log" \
+  "cert-manager bootstrap must use the official OCI chart"
+for cert_manager_arg in '--version' 'v1.21.1' '--namespace' 'cert-manager' '--create-namespace' '--set' 'crds.enabled=true' 'crds.keep=true' '--wait' '--timeout=10m'; do
+  require_line \
+    "$cert_manager_arg" \
+    "$missing_cert_helm_log" \
+    "cert-manager bootstrap is missing required Helm argument: $cert_manager_arg"
+done
+require_text \
+  'kind: ClusterIssuer' \
+  "$missing_cert_stdin_log" \
+  "missing issuer must be created declaratively"
+require_text \
+  'name: letsencrypt-prod' \
+  "$missing_cert_stdin_log" \
+  "cert-manager bootstrap must create the letsencrypt-prod ClusterIssuer"
+require_text \
+  'email: deployer@example.test' \
+  "$missing_cert_stdin_log" \
+  "the ClusterIssuer must use CERT_MANAGER_ACME_EMAIL"
+require_text \
+  'server: https://acme-v02.api.letsencrypt.org/directory' \
+  "$missing_cert_stdin_log" \
+  "the production issuer must use the Let's Encrypt production endpoint"
+require_text \
+  'name: letsencrypt-prod-account-key' \
+  "$missing_cert_stdin_log" \
+  "the production issuer must persist its ACME account key"
+require_text \
+  'ingressClassName: traefik' \
+  "$missing_cert_stdin_log" \
+  "HTTP-01 challenges must use the k3s Traefik ingress class"
+require_text \
+  'wait clusterissuer letsencrypt-prod --for=condition=Ready --timeout=5m' \
+  "$missing_cert_kubectl_log" \
+  "deployment must wait for the bootstrapped ClusterIssuer to become Ready"
+require_line \
+  'reconcile helmrelease commoncal-mcp --namespace flux-system --with-source' \
+  "$missing_cert_flux_log" \
+  "Flux reconciliation must continue after TLS prerequisites become Ready"
+
+missing_cert_dry_helm_log="$fixture/missing-cert-dry-helm.log"
+missing_cert_dry_flux_log="$fixture/missing-cert-dry-flux.log"
+missing_cert_dry_kubectl_log="$fixture/missing-cert-dry-kubectl.log"
+: >"$missing_cert_dry_helm_log"
+: >"$missing_cert_dry_flux_log"
+: >"$missing_cert_dry_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if ! (HELM_LOG_OVERRIDE="$missing_cert_dry_helm_log" \
+  FLUX_LOG_OVERRIDE="$missing_cert_dry_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$missing_cert_dry_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  DRY_RUN_OVERRIDE=1 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned dry-run must validate a missing cert-manager bootstrap" >&2
+  failures=$((failures + 1))
+fi
+require_line \
+  '--dry-run' \
+  "$missing_cert_dry_helm_log" \
+  "missing cert-manager dry-run must render the pinned Helm install without installing it"
+if [ -s "$missing_cert_dry_flux_log" ]; then
+  echo "missing cert-manager dry-run must not reconcile Flux" >&2
+  failures=$((failures + 1))
+fi
+if grep -F -x -- 'apply -f -' "$missing_cert_dry_kubectl_log" >/dev/null || \
+  grep -F -- 'rollout restart' "$missing_cert_dry_kubectl_log" >/dev/null || \
+  [ -s "$fixture/cert-manager-state" ] || [ -s "$fixture/clusterissuer-state" ]; then
+  echo "missing cert-manager dry-run must not persist cert-manager, issuer, or workload changes" >&2
+  failures=$((failures + 1))
+fi
+
+missing_email_helm_log="$fixture/missing-email-helm.log"
+missing_email_flux_log="$fixture/missing-email-flux.log"
+missing_email_kubectl_log="$fixture/missing-email-kubectl.log"
+: >"$missing_email_helm_log"
+: >"$missing_email_flux_log"
+: >"$missing_email_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if (HELM_LOG_OVERRIDE="$missing_email_helm_log" \
+  FLUX_LOG_OVERRIDE="$missing_email_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$missing_email_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  CERT_MANAGER_ACME_EMAIL_OVERRIDE= \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "cert-manager bootstrap must require CERT_MANAGER_ACME_EMAIL" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$missing_email_helm_log" ] || [ -s "$missing_email_flux_log" ] || \
+  grep -F -x -- 'apply -f -' "$missing_email_kubectl_log" >/dev/null; then
+  echo "missing ACME email must fail before persistent deployment mutations" >&2
+  failures=$((failures + 1))
+fi
+
+issuer_only_helm_log="$fixture/issuer-only-helm.log"
+issuer_only_flux_log="$fixture/issuer-only-flux.log"
+issuer_only_kubectl_log="$fixture/issuer-only-kubectl.log"
+issuer_only_stdin_log="$fixture/issuer-only-stdin.log"
+: >"$issuer_only_helm_log"
+: >"$issuer_only_flux_log"
+: >"$issuer_only_kubectl_log"
+: >"$issuer_only_stdin_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if ! (HELM_LOG_OVERRIDE="$issuer_only_helm_log" \
+  FLUX_LOG_OVERRIDE="$issuer_only_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$issuer_only_kubectl_log" \
+  KUBECTL_STDIN_LOG_OVERRIDE="$issuer_only_stdin_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_CRD_READY_OVERRIDE=1 \
+  CLUSTERISSUER_READY_OVERRIDE=0 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "Flux-owned deployment must create a missing issuer when cert-manager is installed" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$issuer_only_helm_log" ]; then
+  echo "an installed cert-manager must not be reinstalled just because its issuer is absent" >&2
+  failures=$((failures + 1))
+fi
+require_text \
+  'kind: ClusterIssuer' \
+  "$issuer_only_stdin_log" \
+  "an absent letsencrypt-prod issuer must be applied without reinstalling cert-manager"
+require_text \
+  'wait clusterissuer letsencrypt-prod --for=condition=Ready --timeout=5m' \
+  "$issuer_only_kubectl_log" \
+  "a newly applied issuer must become Ready before application reconciliation"
+require_line \
+  'reconcile helmrelease commoncal --namespace flux-system --with-source' \
+  "$issuer_only_flux_log" \
+  "Flux reconciliation must continue after creating the missing issuer"
+
+install_failure_helm_log="$fixture/install-failure-helm.log"
+install_failure_flux_log="$fixture/install-failure-flux.log"
+install_failure_kubectl_log="$fixture/install-failure-kubectl.log"
+: >"$install_failure_helm_log"
+: >"$install_failure_flux_log"
+: >"$install_failure_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if (HELM_LOG_OVERRIDE="$install_failure_helm_log" \
+  FLUX_LOG_OVERRIDE="$install_failure_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$install_failure_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  CERT_MANAGER_INSTALL_FAIL_OVERRIDE=1 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "a failed cert-manager installation must abort deployment" >&2
+  failures=$((failures + 1))
+fi
+require_line \
+  'BEGIN cert-manager-bootstrap' \
+  "$install_failure_helm_log" \
+  "the installation-failure scenario must reach the cert-manager bootstrap"
+if [ -s "$install_failure_flux_log" ] || \
+  grep -F -- 'create secret' "$install_failure_kubectl_log" >/dev/null || \
+  grep -F -x -- 'apply -f -' "$install_failure_kubectl_log" >/dev/null; then
+  echo "a failed cert-manager installation must abort before app secrets, issuer, or Flux mutations" >&2
+  failures=$((failures + 1))
+fi
+
+ready_tls_helm_log="$fixture/ready-tls-helm.log"
+ready_tls_flux_log="$fixture/ready-tls-flux.log"
+ready_tls_kubectl_log="$fixture/ready-tls-kubectl.log"
+ready_tls_stdin_log="$fixture/ready-tls-stdin.log"
+: >"$ready_tls_helm_log"
+: >"$ready_tls_flux_log"
+: >"$ready_tls_kubectl_log"
+: >"$ready_tls_stdin_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if ! (HELM_LOG_OVERRIDE="$ready_tls_helm_log" \
+  FLUX_LOG_OVERRIDE="$ready_tls_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$ready_tls_kubectl_log" \
+  KUBECTL_STDIN_LOG_OVERRIDE="$ready_tls_stdin_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_CRD_READY_OVERRIDE=1 \
+  CLUSTERISSUER_READY_OVERRIDE=1 \
+  CERT_MANAGER_ACME_EMAIL_OVERRIDE= \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "an existing Ready cert-manager and issuer must deploy without an ACME email" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$ready_tls_helm_log" ] || grep -F -- 'kind: ClusterIssuer' "$ready_tls_stdin_log" >/dev/null; then
+  echo "existing Ready TLS prerequisites must not be reinstalled or overwritten" >&2
+  failures=$((failures + 1))
+fi
+require_line \
+  'reconcile helmrelease commoncal-mcp --namespace flux-system --with-source' \
+  "$ready_tls_flux_log" \
+  "existing Ready TLS prerequisites must proceed directly to Flux deployment"
+
+issuer_notready_helm_log="$fixture/issuer-notready-helm.log"
+issuer_notready_flux_log="$fixture/issuer-notready-flux.log"
+issuer_notready_kubectl_log="$fixture/issuer-notready-kubectl.log"
+issuer_notready_out="$fixture/issuer-notready.out"
+: >"$issuer_notready_helm_log"
+: >"$issuer_notready_flux_log"
+: >"$issuer_notready_kubectl_log"
+printf 'notready\n' >"$fixture/clusterissuer-state"
+if (HELM_LOG_OVERRIDE="$issuer_notready_helm_log" \
+  FLUX_LOG_OVERRIDE="$issuer_notready_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$issuer_notready_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_CRD_READY_OVERRIDE=1 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >"$issuer_notready_out" 2>&1); then
+  echo "an existing NotReady issuer must abort the Flux deployment" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$issuer_notready_helm_log" ] || [ -s "$issuer_notready_flux_log" ] || \
+  grep -F -- 'create secret' "$issuer_notready_kubectl_log" >/dev/null || \
+  grep -F -x -- 'apply -f -' "$issuer_notready_kubectl_log" >/dev/null; then
+  echo "an existing NotReady issuer must fail before any deployment mutation" >&2
+  failures=$((failures + 1))
+fi
+if ! grep -F -- 'exists but is not Ready' "$issuer_notready_out" >/dev/null; then
+  echo "an existing NotReady issuer must be reported as not Ready" >&2
+  failures=$((failures + 1))
+fi
+
+k8s_old_helm_log="$fixture/k8s-old-helm.log"
+k8s_old_flux_log="$fixture/k8s-old-flux.log"
+k8s_old_kubectl_log="$fixture/k8s-old-kubectl.log"
+: >"$k8s_old_helm_log"
+: >"$k8s_old_flux_log"
+: >"$k8s_old_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if (HELM_LOG_OVERRIDE="$k8s_old_helm_log" \
+  FLUX_LOG_OVERRIDE="$k8s_old_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$k8s_old_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  K8S_SERVER_VERSION_OVERRIDE=v1.31.4+k3s1 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "cert-manager bootstrap must refuse an unsupported Kubernetes version" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$k8s_old_helm_log" ] || [ -s "$k8s_old_flux_log" ] || \
+  grep -F -- 'create secret' "$k8s_old_kubectl_log" >/dev/null || \
+  grep -F -x -- 'apply -f -' "$k8s_old_kubectl_log" >/dev/null; then
+  echo "an unsupported Kubernetes version must fail before cert-manager bootstrap" >&2
+  failures=$((failures + 1))
+fi
+
+k8s_unknown_helm_log="$fixture/k8s-unknown-helm.log"
+k8s_unknown_kubectl_log="$fixture/k8s-unknown-kubectl.log"
+: >"$k8s_unknown_helm_log"
+: >"$k8s_unknown_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if (HELM_LOG_OVERRIDE="$k8s_unknown_helm_log" \
+  KUBECTL_LOG_OVERRIDE="$k8s_unknown_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  K8S_SERVER_VERSION_OVERRIDE=unparseable \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "cert-manager bootstrap must fail when the Kubernetes version is undetectable" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$k8s_unknown_helm_log" ] || grep -F -x -- 'apply -f -' "$k8s_unknown_kubectl_log" >/dev/null; then
+  echo "an undetectable Kubernetes version must fail before cert-manager bootstrap" >&2
+  failures=$((failures + 1))
+fi
+
+k8s_override_helm_log="$fixture/k8s-override-helm.log"
+k8s_override_kubectl_log="$fixture/k8s-override-kubectl.log"
+: >"$k8s_override_helm_log"
+: >"$k8s_override_kubectl_log"
+: >"$fixture/cert-manager-state"
+: >"$fixture/clusterissuer-state"
+if ! (HELM_LOG_OVERRIDE="$k8s_override_helm_log" \
+  KUBECTL_LOG_OVERRIDE="$k8s_override_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  CERT_MANAGER_READY_OVERRIDE=0 \
+  K8S_SERVER_VERSION_OVERRIDE=v1.31.4+k3s1 \
+  CERT_MANAGER_VERSION_OVERRIDE=v1.15.10 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >/dev/null 2>&1); then
+  echo "an explicit CERT_MANAGER_VERSION override must be allowed on an older cluster" >&2
+  failures=$((failures + 1))
+fi
+require_line \
+  'BEGIN cert-manager-bootstrap' \
+  "$k8s_override_helm_log" \
+  "an explicit CERT_MANAGER_VERSION override must reach the cert-manager bootstrap"
+require_line \
+  'v1.15.10' \
+  "$k8s_override_helm_log" \
+  "the bootstrap must install the overridden cert-manager version"
+
+direct_no_tls_helm_log="$fixture/direct-no-tls-helm.log"
+direct_no_tls_kubectl_log="$fixture/direct-no-tls-kubectl.log"
+direct_no_tls_openssl_log="$fixture/direct-no-tls-openssl.log"
+direct_no_tls_out="$fixture/direct-no-tls.out"
+: >"$direct_no_tls_helm_log"
+: >"$direct_no_tls_kubectl_log"
+: >"$direct_no_tls_openssl_log"
+if (HELM_LOG_OVERRIDE="$direct_no_tls_helm_log" \
+  KUBECTL_LOG_OVERRIDE="$direct_no_tls_kubectl_log" \
+  OPENSSL_CONFIG_LOG_OVERRIDE="$direct_no_tls_openssl_log" \
+  TLS_EXISTING_OVERRIDE=0 \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >"$direct_no_tls_out" 2>&1); then
+  echo "direct deployment must require an existing trusted TLS secret" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$direct_no_tls_helm_log" ] || [ -s "$direct_no_tls_openssl_log" ] || \
+  grep -F -- 'create' "$direct_no_tls_kubectl_log" >/dev/null || \
+  grep -F -- 'apply' "$direct_no_tls_kubectl_log" >/dev/null; then
+  echo "a missing TLS secret must fail before any namespace, secret, or Helm mutation" >&2
+  failures=$((failures + 1))
+fi
+if ! grep -F -- 'will not generate a self-signed' "$direct_no_tls_out" >/dev/null; then
+  echo "the missing-TLS failure must state that no self-signed certificate is generated" >&2
+  failures=$((failures + 1))
+fi
+
+ghcr_flux_flux_log="$fixture/ghcr-flux-flux.log"
+ghcr_flux_helm_log="$fixture/ghcr-flux-helm.log"
+ghcr_flux_kubectl_log="$fixture/ghcr-flux-kubectl.log"
+ghcr_flux_out="$fixture/ghcr-flux.out"
+: >"$ghcr_flux_flux_log"
+: >"$ghcr_flux_helm_log"
+: >"$ghcr_flux_kubectl_log"
+if (HELM_LOG_OVERRIDE="$ghcr_flux_helm_log" \
+  FLUX_LOG_OVERRIDE="$ghcr_flux_flux_log" \
+  KUBECTL_LOG_OVERRIDE="$ghcr_flux_kubectl_log" \
+  FLUX_ACTIVE=1 \
+  GHCR_TOKEN_OVERRIDE=test-ghcr-token \
+  DRY_RUN_OVERRIDE=0 \
+  run_stack >"$ghcr_flux_out" 2>&1); then
+  echo "GHCR_TOKEN must be rejected under Flux ownership" >&2
+  failures=$((failures + 1))
+fi
+if [ -s "$ghcr_flux_flux_log" ] || [ -s "$ghcr_flux_helm_log" ] || \
+  grep -F -- 'create secret' "$ghcr_flux_kubectl_log" >/dev/null; then
+  echo "GHCR_TOKEN under Flux ownership must fail before any mutation" >&2
+  failures=$((failures + 1))
+fi
+if ! grep -F -- 'GHCR_TOKEN is ignored under Flux ownership' "$ghcr_flux_out" >/dev/null; then
+  echo "the GHCR_TOKEN rejection must explain how Flux pulls images" >&2
   failures=$((failures + 1))
 fi
 
@@ -481,7 +889,13 @@ fi
 
 rollout_log="$fixture/rollout-kubectl.log"
 : >"$rollout_log"
-DRY_RUN_OVERRIDE=0 KUBECTL_LOG_OVERRIDE="$rollout_log" run_stack >/dev/null
+if ! (DRY_RUN_OVERRIDE=0 \
+  TLS_EXISTING_OVERRIDE=1 \
+  KUBECTL_LOG_OVERRIDE="$rollout_log" \
+  run_stack >/dev/null 2>&1); then
+  echo "direct deployment must wait for the core and MCP rollouts" >&2
+  failures=$((failures + 1))
+fi
 require_text \
   'rollout status statefulset commoncal --namespace commoncal --timeout=15m' \
   "$rollout_log" \

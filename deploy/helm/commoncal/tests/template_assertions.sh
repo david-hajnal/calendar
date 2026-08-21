@@ -25,6 +25,7 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/values.yaml" 'type: RuntimeDefault'
   require_source "$chart_dir/values.yaml" '      - ALL'
   require_source "$chart_dir/templates/pvc.yaml" 'kind: PersistentVolumeClaim'
+  require_source "$chart_dir/templates/pvc.yaml" 'helm.sh/resource-policy: keep'
   require_source "$chart_dir/templates/statefulset.yaml" 'persistentVolumeClaim:'
   require_source "$chart_dir/templates/statefulset.yaml" 'claimName: {{ include "commoncal.fullname" . }}-data'
   require_source "$chart_dir/templates/statefulset.yaml" 'mountPath: /app/data'
@@ -78,6 +79,7 @@ grep -q 'memory: 128Mi' "$rendered"
 grep -q 'cpu: 1000m' "$rendered"
 grep -q 'memory: 512Mi' "$rendered"
 grep -q 'kind: PersistentVolumeClaim' "$rendered"
+grep -q 'helm.sh/resource-policy: keep' "$rendered"
 grep -q 'kind: Service' "$rendered"
 grep -q 'kind: Ingress' "$rendered"
 grep -q 'kind: NetworkPolicy' "$rendered"

@@ -35,6 +35,7 @@ only one replica.
 ## Data retention
 
 The chart creates a standalone `PersistentVolumeClaim`, rather than a
-StatefulSet claim template. Helm retains this PVC by default on upgrade and
-uninstall, preserving SQLite data until it is deliberately removed. The storage
-class's reclaim policy still governs the backing volume after PVC deletion.
+StatefulSet claim template. It sets `helm.sh/resource-policy: keep` so Helm
+retains the PVC on upgrade and uninstall, preserving SQLite data until it is
+deliberately removed. The storage class's reclaim policy still governs the
+backing volume after PVC deletion.

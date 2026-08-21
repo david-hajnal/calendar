@@ -29,19 +29,41 @@ cross-namespace `commoncal-commoncal` default.
 Run `deploy/deploy-prod.sh` for either deployment authority. When both
 HelmReleases are active, the script applies the runtime Secrets and reconciles
 the Flux Kustomization followed by the core and MCP HelmReleases; it does not
-invoke Helm directly or create a self-signed certificate. Flux deploys the
-image tags and chart values committed
-to its Git source, so `IMAGE_TAG` and the direct chart overrides are ignored in
-this mode. Flux mode also requires the canonical `commoncal` namespace and
+deploy the workloads with direct Helm or create a self-signed certificate.
+Flux deploys the image tags and chart values committed to its Git source, so
+`IMAGE_TAG` and the direct chart overrides are ignored in this mode. Flux mode
+also requires the canonical `commoncal` namespace and
 `commoncal`/`commoncal-mcp` release names; remove any legacy name overrides from
-`deploy/.env`. Before making changes, it verifies that cert-manager is installed
-and the `letsencrypt-prod` ClusterIssuer is Ready. After reconciliation, it
-waits for the shared Certificate and verifies that it covers both live Flux
-domains.
+`deploy/.env`. If needed, it installs pinned cert-manager from the official OCI
+chart and creates the `letsencrypt-prod` HTTP-01 ClusterIssuer for Traefik;
+`CERT_MANAGER_ACME_EMAIL` is required for that one-time bootstrap. The issuer is
+only created when absent — an existing `letsencrypt-prod` that is not Ready
+aborts the deployment with its current state instead of being overwritten.
+`GHCR_TOKEN` is rejected in this mode because Flux pulls images with its own
+ImageRepository credentials; configure the pull Secret on the HelmReleases in
+Git instead. After reconciliation, it waits for the shared Certificate and
+verifies that it covers both live Flux domains.
+
+The default cert-manager `v1.21.1` supports Kubernetes 1.33–1.36. The script
+checks the k3s server version before bootstrapping and aborts when it is
+outside that range. For an older cluster, upgrade k3s or set
+`CERT_MANAGER_VERSION` to a cert-manager release that officially supports that
+Kubernetes version.
+
+Let's Encrypt HTTP-01 also requires both production domains to resolve publicly
+to this cluster's Traefik endpoint and inbound TCP port 80 to be reachable. If
+either domain has an AAAA record, IPv6 must reach the same endpoint as well.
+
+The MCP NetworkPolicy allows egress HTTPS to non-private IPv4 addresses only.
+On a dual-stack cluster, make sure the OAuth issuer and the core domain resolve
+to IPv4 for MCP egress.
 
 For an emergency direct deployment, first suspend both Flux HelmReleases, then
 run the same script. With both releases suspended (or absent), it deploys both
-workloads directly with Helm and requires `IMAGE_TAG`. Resume Flux only after
+workloads directly with Helm and requires `IMAGE_TAG`. It also requires a
+trusted, pre-provisioned TLS Secret (`TLS_SECRET_NAME`, default
+`commoncal-tls`) whose certificate covers both production domains; it never
+generates a self-signed certificate for production. Resume Flux only after
 reconciling the direct deployment back into Git. A mixed state with only one
 active HelmRelease is rejected to prevent split ownership.
 
@@ -141,7 +163,7 @@ To revert an automated image tag change:
 
 ## GHCR Credentials
 
-Images are published to `ghcr.io/david-hajnal/`. The repo must be public for Flux ImageRepository to pull without credentials. If private, create a Secret:
+Images are published to `ghcr.io/david-hajnal/`. The repo must be public for Flux ImageRepository to pull without credentials. `GHCR_TOKEN` in `deploy/.env` only applies to direct Helm deployments; under Flux ownership the script rejects it. If the repo is private, create a Secret for the Flux side:
 
 ```bash
 kubectl create secret docker-registry ghcr-credentials \

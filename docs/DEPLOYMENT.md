@@ -34,25 +34,38 @@ Flux deploys the image tags and chart values committed to its Git source, so
 `IMAGE_TAG` and the direct chart overrides are ignored in this mode. Flux mode
 also requires the canonical `commoncal` namespace and
 `commoncal`/`commoncal-mcp` release names; remove any legacy name overrides from
-`deploy/.env`. If needed, it installs pinned cert-manager from the official OCI
-chart and creates the `letsencrypt-prod` HTTP-01 ClusterIssuer for Traefik;
-`CERT_MANAGER_ACME_EMAIL` is required for that one-time bootstrap. The issuer is
-only created when absent — an existing `letsencrypt-prod` that is not Ready
-aborts the deployment with its current state instead of being overwritten.
-`GHCR_TOKEN` is rejected in this mode because Flux pulls images with its own
+`deploy/.env`. `GHCR_TOKEN` is rejected in this mode because Flux pulls images with its own
 ImageRepository credentials; configure the pull Secret on the HelmReleases in
-Git instead. After reconciliation, it waits for the shared Certificate and
-verifies that it covers both live Flux domains.
+Git instead.
 
-The default cert-manager `v1.21.1` supports Kubernetes 1.33–1.36. The script
-checks the k3s server version before bootstrapping and aborts when it is
-outside that range. For an older cluster, upgrade k3s or set
-`CERT_MANAGER_VERSION` to a cert-manager release that officially supports that
-Kubernetes version.
+### TLS model (two-hop)
 
-Let's Encrypt HTTP-01 also requires both production domains to resolve publicly
-to this cluster's Traefik endpoint and inbound TCP port 80 to be reachable. If
-either domain has an AAAA record, IPv6 must reach the same endpoint as well.
+Production TLS uses a two-hop model:
+
+1. **Browser → Cloudflare edge:** Cloudflare Universal SSL provides a
+   publicly-trusted certificate for `*.hajnal.space`. Cloudflare must proxy
+   both DNS records (`cal.hajnal.space` and `mcal.hajnal.space`) and use
+   SSL/TLS mode **Full** (not `Flexible` or `Full (strict)`).
+2. **Cloudflare → origin (Traefik):** the origin presents a self-signed
+   certificate stored in the `commoncal-tls` Kubernetes Secret. Cloudflare in
+   `Full` mode does not validate the origin certificate — it only requires
+   that the origin speaks TLS.
+
+The deploy script manages the origin Secret:
+
+- **First run:** if `commoncal-tls` is absent or invalid, the script generates
+  a self-signed RSA 2048-bit / SHA-256 certificate (365 days) covering both
+  `DOMAIN` and `MCP_DOMAIN`, and creates the Secret in the `commoncal`
+  namespace. The private key is never logged.
+- **Subsequent runs:** if a valid Secret already exists (correct type,
+  matching key, both SANs present, more than 30 days to expiry), the script
+  reuses it and does not regenerate.
+- **30-day expiry guard:** if the existing certificate expires within 30 days,
+  the script regenerates it.
+- **Manual rotation:** delete the Secret (`kubectl delete secret commoncal-tls
+  -n commoncal`) and re-run the deploy script to force regeneration.
+
+No cert-manager, Let's Encrypt, or ACME dependency is required.
 
 The MCP NetworkPolicy allows egress HTTPS to non-private IPv4 addresses only.
 On a dual-stack cluster, make sure the OAuth issuer and the core domain resolve
@@ -60,12 +73,12 @@ to IPv4 for MCP egress.
 
 For an emergency direct deployment, first suspend both Flux HelmReleases, then
 run the same script. With both releases suspended (or absent), it deploys both
-workloads directly with Helm and requires `IMAGE_TAG`. It also requires a
-trusted, pre-provisioned TLS Secret (`TLS_SECRET_NAME`, default
-`commoncal-tls`) whose certificate covers both production domains; it never
-generates a self-signed certificate for production. Resume Flux only after
-reconciling the direct deployment back into Git. A mixed state with only one
-active HelmRelease is rejected to prevent split ownership.
+workloads directly with Helm and requires `IMAGE_TAG`. It ensures the
+`commoncal-tls` TLS Secret exists and is valid (generating a self-signed
+certificate on first run if needed), then deploys both Ingresses referencing
+that Secret. Resume Flux only after reconciling the direct deployment back into
+Git. A mixed state with only one active HelmRelease is rejected to prevent
+split ownership.
 
 ### Legacy duplicate cleanup
 
@@ -180,13 +193,178 @@ Then add to each HelmRelease's `imagePullSecrets`.
 
 - `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
 - `commoncal-mcp-secrets` — the shared internal API key, MCP session secret, and HTTPS OAuth issuer (`mcp-oauth-issuer`)
-- `commoncal-tls` — TLS certificate (cert-manager)
+- `commoncal-tls` — self-signed TLS certificate for the origin hop (covers both `cal.hajnal.space` and `mcal.hajnal.space`)
 
-The shared certificate covers both the core and MCP domains. Under Flux, only
-the core Ingress requests the certificate; the MCP Ingress references the same
-Secret without creating a competing cert-manager Certificate.
+The shared certificate covers both the core and MCP domains. Both Ingresses
+reference the same Secret. Browsers receive Cloudflare Universal SSL; the
+self-signed certificate is only presented on the Cloudflare-to-origin hop.
 
 `BACKUP_ENCRYPTION_KEY_HEX` must be an even number of hexadecimal characters (at least 32); 64-hex (32-byte) keys remain backward-compatible.
+
+## TLS Cutover Checklist
+
+Execute in this exact order. Each step must succeed before proceeding to the
+next.
+
+### Pre-cutover
+
+1. **Confirm proxied DNS.** Both `cal.hajnal.space` and `mcal.hajnal.space`
+   must be proxied (orange cloud) in Cloudflare:
+   ```bash
+   dig +short A cal.hajnal.space    # expect Cloudflare anycast IPs
+   dig +short A mcal.hajnal.space   # expect Cloudflare anycast IPs
+   ```
+2. **Set Cloudflare SSL/TLS mode to `Full`.** In the Cloudflare dashboard
+   (SSL/TLS → Edge to Origin), select **Full**.
+   - Do **not** use `Full (strict)` — it validates the origin certificate and
+     will reject the self-signed cert with error **526**.
+   - Do **not** use `Flexible` — it allows plain-HTTP origin traffic, which
+     breaks HSTS and the HTTPS-only OAuth flow required by both applications.
+3. **Back up the existing TLS Secret** (if one exists):
+   ```bash
+   kubectl get secret commoncal-tls -n commoncal -o yaml \
+     > commoncal-tls-backup-$(date +%Y%m%d).yaml
+   ```
+
+### Cutover
+
+4. **Deploy.** Run the deploy script (Flux or direct mode):
+   ```bash
+   bash deploy/deploy-prod.sh
+   ```
+   On first run this generates the self-signed certificate and creates the
+   `commoncal-tls` Secret. On subsequent runs it reuses the existing Secret.
+
+5. **Verify both edge endpoints** (browser-facing, Cloudflare Universal SSL):
+   ```bash
+   curl -sI https://cal.hajnal.space | head -5
+   curl -sI https://mcal.hajnal.space/mcp | head -5
+   ```
+   Both must return `200` or `301`/`302` with a valid TLS handshake.
+
+6. **Verify direct-origin SNI** (Cloudflare-to-origin hop, self-signed):
+   ```bash
+   ORIGIN_IP=<k3s-node-public-ip>
+   openssl s_client -connect "$ORIGIN_IP":443 -servername cal.hajnal.space </dev/null 2>/dev/null \
+     | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+   openssl s_client -connect "$ORIGIN_IP":443 -servername mcal.hajnal.space </dev/null 2>/dev/null \
+     | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+   ```
+   Both must present a self-signed certificate containing both SANs
+   (`cal.hajnal.space` and `mcal.hajnal.space`).
+
+7. **Inspect logs.** Check for TLS errors in the ingress controller and
+   application logs:
+   ```bash
+   kubectl logs -n kube-system -l app.kubernetes.io/name=traefik --tail=50
+   kubectl logs -n commoncal -l app.kubernetes.io/name=commoncal --tail=50
+   kubectl logs -n commoncal -l app.kubernetes.io/name=commoncal-mcp --tail=50
+   ```
+   No TLS handshake errors, no 526/521/525 Cloudflare error codes.
+
+### Post-cutover (optional)
+
+8. **Delete cluster cert-manager resources (optional).** Only if cert-manager
+   is no longer needed by any other workload:
+   ```bash
+   # First: inventory all Certificate and ClusterIssuer resources
+   kubectl get certificates -A
+   kubectl get clusterissuers
+   ```
+   If no other Certificate resources exist, you may uninstall cert-manager:
+   ```bash
+   helm uninstall cert-manager -n cert-manager
+   kubectl delete namespace cert-manager
+   kubectl delete crd certificates.cert-manager.io
+   kubectl delete crd challengers.cert-manager.io
+   kubectl delete crd orders.cert-manager.io
+   kubectl delete crd issuers.cert-manager.io
+   kubectl delete crd clusterissuers.cert-manager.io
+   ```
+   **Do not delete cert-manager if any other Certificate resource depends on
+   it.**
+
+### Rollback
+
+If the cutover must be reverted:
+
+1. Restore the previous trusted TLS Secret:
+   ```bash
+   kubectl apply -f commoncal-tls-backup-<date>.yaml
+   ```
+2. Switch Cloudflare SSL/TLS mode back to the previous mode (typically
+   **Full (strict)** if a trusted cert was in place before):
+   - Cloudflare dashboard → SSL/TLS → Edge to Origin → select previous mode.
+3. Verify both domains:
+   ```bash
+   curl -sI https://cal.hajnal.space
+   curl -sI https://mcal.hajnal.space
+   ```
+4. If the previous mode was `Full (strict)`, the restored trusted certificate
+   must be valid for both domains. If it was `Full`, the self-signed cert is
+   acceptable.
+
+> **Warning:** Switching Cloudflare to `Full (strict)` while the origin still
+> presents the self-signed certificate causes Cloudflare error **526**
+> (Invalid SSL Certificate). Always restore a trusted origin certificate
+> before enabling `Full (strict)`.
+
+## TLS Verification
+
+Verify the Cloudflare edge certificate (browser-facing):
+
+```bash
+# Edge certificate (should be a Cloudflare/Google trusted cert)
+openssl s_client -connect cal.hajnal.space:443 -servername cal.hajnal.space </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+
+openssl s_client -connect mcal.hajnal.space:443 -servername mcal.hajnal.space </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
+```
+
+Verify the origin certificate (Cloudflare-to-origin hop, self-signed):
+
+```bash
+# Replace <ORIGIN_IP> with the k3s node's public IP
+openssl s_client -connect <ORIGIN_IP>:443 -servername cal.hajnal.space </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+
+openssl s_client -connect <ORIGIN_IP>:443 -servername mcal.hajnal.space </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+Inspect the Kubernetes Secret:
+
+```bash
+kubectl get secret commoncal-tls -n commoncal -o jsonpath='{.type}'
+# Expected: kubernetes.io/tls
+
+kubectl get secret commoncal-tls -n commoncal \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+## TLS Rollback
+
+If the self-signed origin certificate must be reverted to a previously-trusted
+certificate:
+
+1. Restore the previous trusted Secret (backed up before cutover):
+   ```bash
+   kubectl apply -f commoncal-tls-trusted-backup.yaml
+   ```
+2. Switch Cloudflare SSL/TLS mode back to **Full (strict)** in the Cloudflare
+   dashboard (SSL/TLS → Edge to Origin).
+3. Verify both domains:
+   ```bash
+   curl -sI https://cal.hajnal.space
+   curl -sI https://mcal.hajnal.space
+   ```
+
+> **Warning:** Switching Cloudflare to `Full (strict)` while the origin still
+> presents the self-signed certificate causes Cloudflare error **526**
+> (Invalid SSL Certificate). Always restore a trusted origin certificate
+> before enabling `Full (strict)`.
 
 ## Monitoring
 

@@ -91,7 +91,38 @@ echo ""
 echo "--- YAML syntax validation ---"
 python3 -c "import yaml, sys; [list(yaml.safe_load_all(open(f))) for f in sys.argv[1:]]" deploy/flux/overlays/production/**/*.yaml 2>/dev/null || { echo "FAIL: YAML syntax error"; ERRORS=$((ERRORS+1)); }
 
-# 7. Run deploy script tests
+# 7. Run chart template assertions
+echo ""
+echo "--- Chart template assertions ---"
+if [ -f "deploy/helm/commoncal/tests/template_assertions.sh" ]; then
+  sh deploy/helm/commoncal/tests/template_assertions.sh || { echo "FAIL: commoncal template_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal template_assertions.sh not found"
+fi
+
+if [ -f "deploy/helm/commoncal-mcp/tests/template_assertions.sh" ]; then
+  sh deploy/helm/commoncal-mcp/tests/template_assertions.sh || { echo "FAIL: commoncal-mcp template_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal-mcp template_assertions.sh not found"
+fi
+
+# 8. Check for cert-manager annotations in production-owned deployment files
+# (scoped to app deployment files; does not scan vendored Flux CRDs)
+echo ""
+echo "--- Checking for cert-manager annotations in production files ---"
+CERT_MGR=$(grep -rn 'cert-manager.io/cluster-issuer\|cert-manager.io/issuer' \
+  deploy/flux/overlays/production/ \
+  deploy/values-production.yaml \
+  deploy/values-mcp-production.yaml \
+  deploy/deploy-prod.sh \
+  --include='*.yaml' --include='*.sh' 2>/dev/null || true)
+if [ -n "$CERT_MGR" ]; then
+  echo "FAIL: Found cert-manager issuer annotation in production files:"
+  echo "$CERT_MGR"
+  ERRORS=$((ERRORS+1))
+fi
+
+# 9. Run deploy script tests
 echo ""
 echo "--- Deploy script tests ---"
 if [ -f "scripts/test-sqlite-prod.sh" ]; then
@@ -104,6 +135,12 @@ if [ -f "scripts/test-deploy-prod.sh" ]; then
   sh scripts/test-deploy-prod.sh || { echo "FAIL: test-deploy-prod.sh"; ERRORS=$((ERRORS+1)); }
 else
   echo "SKIP: test-deploy-prod.sh not found"
+fi
+
+if [ -f "scripts/test-deploy-prod-stack.sh" ]; then
+  bash scripts/test-deploy-prod-stack.sh || { echo "FAIL: test-deploy-prod-stack.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: test-deploy-prod-stack.sh not found"
 fi
 
 echo ""

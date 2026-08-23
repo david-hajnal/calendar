@@ -88,8 +88,12 @@ case "$ACTION" in
     ;;
   config)
     # kubectl config view --minify --output='jsonpath=...'
+    # Mimic real kubectl: print the server from the kubeconfig, or nothing
+    # (exit 0) when the current-context cluster has no server field.
     if echo "$*" | grep -q "cluster.server"; then
-      echo "https://127.0.0.1:6443"
+      if [ -n "${KUBECONFIG:-}" ] && [ -f "$KUBECONFIG" ]; then
+        grep -o 'server: .*' "$KUBECONFIG" | head -1 | sed 's/^server: //'
+      fi
     fi
     ;;
   *)
@@ -179,6 +183,31 @@ echo "=== Testing deploy/sqlite-prod.sh ==="
 # Test: missing kubeconfig
 assert_fail "missing kubeconfig exits non-zero" \
   bash -c 'unset KUBECONFIG; export KUBECONFIG="/nonexistent/kubeconfig"; '"$repo_root/deploy/sqlite-prod.sh"' >/dev/null 2>&1'
+
+# Test: kubeconfig whose current-context cluster has no server field
+# (kubectl exits 0 with empty output; script must reject with a clear error)
+noserver_dir=$(mktemp -d)
+trap 'rm -rf "$test_dir" "$noserver_dir"' EXIT
+cat > "$noserver_dir/k3s.yaml" <<'EOF'
+apiVersion: v1
+kind: Config
+clusters:
+  - cluster:
+      insecure-skip-tls-verify: true
+    name: k3s
+current-context: k3s
+contexts:
+  - context:
+      cluster: k3s
+      user: admin
+    name: k3s
+users:
+  - name: admin
+    user:
+      token: fake-token
+EOF
+assert_fail "kubeconfig without server field exits non-zero" \
+  bash -c "KUBECONFIG=$noserver_dir/k3s.yaml $repo_root/deploy/sqlite-prod.sh >/dev/null 2>&1"
 
 # Test: help flag works
 assert_pass "help flag exits 0" \

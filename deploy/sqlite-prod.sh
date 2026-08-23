@@ -104,6 +104,13 @@ API_SERVER=$(kubectl config --kubeconfig="$KUBECONFIG" view --minify --output='j
   exit 1
 }
 
+if [ -z "$API_SERVER" ]; then
+  echo "ERROR: API server URL is empty in $KUBECONFIG" >&2
+  echo "The kubeconfig's current-context has no cluster server defined." >&2
+  echo "Inspect it with: kubectl config --kubeconfig=$KUBECONFIG view --minify" >&2
+  exit 1
+fi
+
 case "$API_SERVER" in
   http://127.0.0.1:*|http://[::1]:*|https://127.0.0.1:*|https://[::1]:*)
     # Loopback -- OK

@@ -132,9 +132,24 @@ fi
 # 5. Discover exactly one Ready core StatefulSet pod
 echo "Discovering core StatefulSet pod..."
 
+# Derive the pod selector from the StatefulSet itself so this works
+# regardless of the Helm release name.
+CORE_SELECTOR=$(kubectl get statefulset "$CORE_STATEFULSET" \
+  --namespace="$NAMESPACE" \
+  -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' \
+  2>/dev/null | sed 's/,$//') || {
+  echo "ERROR: Failed to read selector from StatefulSet $CORE_STATEFULSET" >&2
+  exit 1
+}
+
+if [ -z "$CORE_SELECTOR" ]; then
+  echo "ERROR: StatefulSet $CORE_STATEFULSET has no selector matchLabels" >&2
+  exit 1
+fi
+
 CORE_PODS=$(kubectl get pods \
   --namespace="$NAMESPACE" \
-  --selector="app.kubernetes.io/name=commoncal,app.kubernetes.io/instance=commoncal" \
+  --selector="$CORE_SELECTOR" \
   --field-selector="status.phase=Running" \
   --no-headers 2>/dev/null) || {
   echo "ERROR: Failed to query pods in namespace $NAMESPACE" >&2
@@ -166,13 +181,6 @@ CORE_IMAGE=$(kubectl get pod "$CORE_POD_NAME" \
   --namespace="$NAMESPACE" \
   -o jsonpath='{.spec.containers[0].image}' 2>/dev/null) || {
   echo "ERROR: Failed to read image from pod $CORE_POD_NAME" >&2
-  exit 1
-}
-
-CORE_IMAGE_TAG=$(kubectl get pod "$CORE_POD_NAME" \
-  --namespace="$NAMESPACE" \
-  -o jsonpath='{.spec.containers[0].image}' 2>/dev/null | grep -o ':[^:@]*$' | tail -1) || {
-  echo "ERROR: Failed to parse image tag from $CORE_IMAGE" >&2
   exit 1
 }
 
@@ -265,9 +273,15 @@ PVC_MOUNT_READ_ONLY=""
 SQLITE_READONLY_FLAG=""
 
 if [ "$WRITE_MODE" -eq 0 ]; then
-  PVC_MOUNT_READ_ONLY="        readOnly: true"
+  # 10 spaces: must be a field of the "data" mount item, aligned with
+  # name:/mountPath: in the heredoc below.
+  PVC_MOUNT_READ_ONLY="          readOnly: true"
   SQLITE_READONLY_FLAG="-readonly"
 fi
+
+# Note: the app runs SQLite in WAL mode (backend/src/database.rs). A
+# read-only connection requires the -shm/-wal files to already exist; they
+# do, because the core pod is running and holds them open (verified above).
 
 POD_SPEC=$(cat <<EOF
 apiVersion: v1
@@ -287,7 +301,7 @@ spec:
       command:
         - busybox
         - sleep
-        - "3600"
+        - "${MAX_DURATION}"
       volumeMounts:
         - name: data
           mountPath: /app/data
@@ -328,10 +342,13 @@ EOF
 
 # --- Create the pod ---
 echo "Creating console pod..."
-if ! echo "$POD_SPEC" | kubectl create -f - 2>/dev/null; then
+CREATE_ERR=$(echo "$POD_SPEC" | kubectl create -f - 2>&1 >/dev/null) || {
   echo "ERROR: Failed to create console pod" >&2
+  if [ -n "$CREATE_ERR" ]; then
+    echo "$CREATE_ERR" >&2
+  fi
   exit 1
-fi
+}
 
 # --- Wait for pod to be Ready ---
 echo "Waiting for console pod to become Ready..."
@@ -373,14 +390,17 @@ echo "Console pod is Ready. Opening SQLite session..."
 echo ""
 
 # --- Run sqlite3 interactively ---
+# No `exec`: the shell must survive the session so the EXIT trap deletes
+# the console pod immediately. activeDeadlineSeconds is the backstop for
+# hard disconnects (e.g. SIGHUP) where the trap cannot run.
 if [ "$WRITE_MODE" -eq 1 ]; then
-  exec kubectl exec -it "$CONSOLE_POD_NAME" \
+  kubectl exec -it "$CONSOLE_POD_NAME" \
     --namespace="$NAMESPACE" \
     -- sqlite3 \
       -timeout 5000 \
       "$DB_PATH"
 else
-  exec kubectl exec -it "$CONSOLE_POD_NAME" \
+  kubectl exec -it "$CONSOLE_POD_NAME" \
     --namespace="$NAMESPACE" \
     -- sqlite3 \
       -timeout 5000 \

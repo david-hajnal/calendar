@@ -16,67 +16,91 @@ cat > "$test_dir/bin/kubectl" <<'STUB'
 set -eu
 
 # Simulated kubectl for testing
+RAW_ARGS="$*"
 ACTION="${1:-}"
+if [ $# -gt 0 ]; then shift; fi
 NAMESPACE="commoncal"
 SELECTOR=""
 FIELD_SELECTOR=""
 NO_HEADERS=0
 OUTPUT=""
 POD_NAME=""
+SECOND=""
 STATEFULSET_NAME=""
 JSONPATH=""
+GOTEMPLATE=""
 
-# Parse arguments
+# Parse arguments (both "--flag value" and "--flag=value" forms)
 while [ $# -gt 0 ]; do
   case "$1" in
     -n|--namespace) shift; NAMESPACE="$1" ;;
+    --namespace=*) NAMESPACE="${1#--namespace=}" ;;
     --selector) shift; SELECTOR="$1" ;;
+    --selector=*) SELECTOR="${1#--selector=}" ;;
     --field-selector) shift; FIELD_SELECTOR="$1" ;;
+    --field-selector=*) FIELD_SELECTOR="${1#--field-selector=}" ;;
     --no-headers) NO_HEADERS=1 ;;
+    --ignore-not-found) ;;
+    --grace-period=*) ;;
+    -it) ;;
     -o) shift; OUTPUT="$1" ;;
     jsonpath=*) JSONPATH="${1#jsonpath=}" ;;
     jsonpath) shift; JSONPATH="$1" ;;
+    go-template=*) GOTEMPLATE="${1#go-template=}" ;;
     *)
-      # Positional args
+      # Positional args: first is resource type, second is object name
       if [ -z "$POD_NAME" ]; then
         POD_NAME="$1"
+      elif [ -z "$SECOND" ]; then
+        SECOND="$1"
       fi
       ;;
   esac
   shift
 done
 
+# Split "-o jsonpath=..." / "-o go-template=..." values
+case "$OUTPUT" in
+  jsonpath=*) JSONPATH="${OUTPUT#jsonpath=}" ;;
+  go-template=*) GOTEMPLATE="${OUTPUT#go-template=}" ;;
+esac
+
 case "$ACTION" in
   get)
-    # Handle "kubectl get pods --selector=... --field-selector=..."
-    if [ "$OUTPUT" = "jsonpath=*" ] || [ "${OUTPUT:0:8}" = "jsonpath" ]; then
+    # jsonpath queries (pod/node/image/PVC/status)
+    if [ -n "$JSONPATH" ]; then
       case "$JSONPATH" in
         *.spec.nodeName*) echo "prod-node-1" ;;
         *.image*) echo "ghcr.io/david-hajnal/calendar-core:v1.2.3" ;;
         *claimName*) echo "commoncal-data" ;;
+        *.status.phase*) echo "Running" ;;
+        *containerStatuses*.ready*) echo "true" ;;
       esac
-    elif [ -n "$POD_NAME" ]; then
-      # kubectl get pod <name>
-      if [ "$POD_NAME" = "commoncal-sqlite-console" ]; then
-        # No existing console pod
-        exit 1
-      fi
-    else
-      # List pods
+    # go-template queries (StatefulSet selector)
+    elif [ -n "$GOTEMPLATE" ]; then
+      case "$GOTEMPLATE" in
+        *matchLabels*) echo "app.kubernetes.io/instance=commoncal,app.kubernetes.io/name=commoncal" ;;
+      esac
+    # List pods
+    elif [ -z "$POD_NAME" ] || [ "$POD_NAME" = "pods" ]; then
       if echo "$SELECTOR" | grep -q "app.kubernetes.io/name=commoncal" && \
          echo "$FIELD_SELECTOR" | grep -q "status.phase=Running"; then
         echo "commoncal-0   1/1     Running   0          10m"
       fi
+    # NetworkPolicy exists
+    elif [ "$POD_NAME" = "networkpolicy" ]; then
+      echo "sqlite-console-deny-all   1d     1d"
+    # Single pod by name: no existing console pod
+    elif [ "$SECOND" = "commoncal-sqlite-console" ]; then
+      exit 1
     fi
     ;;
   exec)
-    # kubectl exec <pod> -- test -f <path>
-    if echo "$@" | grep -q "test -f"; then
-      echo "yes"
-    fi
+    # kubectl exec <pod> -- test -f <path>: exit status only, no output
+    exit 0
     ;;
-  apply)
-    # kubectl apply -f -
+  apply|create)
+    # kubectl apply/create -f -
     # Read from stdin
     cat > /dev/null
     ;;
@@ -90,7 +114,7 @@ case "$ACTION" in
     # kubectl config view --minify --output='jsonpath=...'
     # Mimic real kubectl: print the server from the kubeconfig, or nothing
     # (exit 0) when the current-context cluster has no server field.
-    if echo "$*" | grep -q "cluster.server"; then
+    if echo "$RAW_ARGS" | grep -q "cluster.server"; then
       if [ -n "${KUBECONFIG:-}" ] && [ -f "$KUBECONFIG" ]; then
         grep -o 'server: .*' "$KUBECONFIG" | head -1 | sed 's/^server: //'
       fi

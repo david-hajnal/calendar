@@ -393,17 +393,20 @@ echo ""
 # No `exec`: the shell must survive the session so the EXIT trap deletes
 # the console pod immediately. activeDeadlineSeconds is the backstop for
 # hard disconnects (e.g. SIGHUP) where the trap cannot run.
+# busy_timeout is a SQL pragma, not a sqlite3 CLI flag (there is no
+# -timeout option). -cmd runs the pragma after the DB opens, before
+# the interactive prompt.
 if [ "$WRITE_MODE" -eq 1 ]; then
   kubectl exec -it "$CONSOLE_POD_NAME" \
     --namespace="$NAMESPACE" \
     -- sqlite3 \
-      -timeout 5000 \
+      -cmd "PRAGMA busy_timeout = 5000;" \
       "$DB_PATH"
 else
   kubectl exec -it "$CONSOLE_POD_NAME" \
     --namespace="$NAMESPACE" \
     -- sqlite3 \
-      -timeout 5000 \
+      -cmd "PRAGMA busy_timeout = 5000;" \
       $SQLITE_READONLY_FLAG \
       "$DB_PATH"
 fi

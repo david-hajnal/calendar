@@ -53,7 +53,7 @@ case "$ACTION" in
       case "$JSONPATH" in
         *.spec.nodeName*) echo "prod-node-1" ;;
         *.image*) echo "ghcr.io/david-hajnal/calendar-core:v1.2.3" ;;
-        *.volumeClaimTemplates*) echo "commoncal-data" ;;
+        *claimName*) echo "commoncal-data" ;;
       esac
     elif [ -n "$POD_NAME" ]; then
       # kubectl get pod <name>

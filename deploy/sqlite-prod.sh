@@ -176,15 +176,17 @@ CORE_IMAGE_TAG=$(kubectl get pod "$CORE_POD_NAME" \
   exit 1
 }
 
-DATA_PVC=$(kubectl get statefulset "$CORE_STATEFULSET" \
+# Read the data PVC from the running pod spec. Works for both pre-created
+# PVCs (claimName in pod volumes) and volumeClaimTemplates, since both end
+# up in the pod's volume list. Require exactly one PVC-backed volume.
+DATA_PVC=$(kubectl get pod "$CORE_POD_NAME" \
   --namespace="$NAMESPACE" \
-  -o jsonpath='{.spec.volumeClaimTemplates[0].metadata.name}' 2>/dev/null) || {
-  echo "ERROR: Failed to read PVC name from StatefulSet $CORE_STATEFULSET" >&2
-  exit 1
-}
+  -o jsonpath='{.spec.volumes[*].persistentVolumeClaim.claimName}' 2>/dev/null | tr -s '[:space:]' '\n' | grep -v '^$' || true)
 
-if [ -z "$DATA_PVC" ]; then
-  echo "ERROR: StatefulSet $CORE_STATEFULSET has no volumeClaimTemplates" >&2
+DATA_PVC_COUNT=$(printf '%s\n' "$DATA_PVC" | grep -c . || true)
+if [ "$DATA_PVC_COUNT" -ne 1 ]; then
+  echo "ERROR: Expected exactly 1 PVC-backed volume on pod $CORE_POD_NAME, found $DATA_PVC_COUNT" >&2
+  echo "The console must mount the same volume that holds the database." >&2
   exit 1
 fi
 

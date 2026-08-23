@@ -101,3 +101,35 @@ if helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag --
   echo 'replicaCount=2 should be rejected by values schema' >&2
   exit 1
 fi
+
+# Production TLS assertions: render with the production ingress values and
+# verify the Ingress references the shared TLS Secret and uses websecure.
+prod_values=$(mktemp)
+prod_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered"' EXIT
+cat > "$prod_values" <<'VALUES'
+image:
+  tag: test-image-tag
+ingress:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    - secretName: commoncal-tls
+      hosts:
+        - cal.example.test
+        - mcal.example.test
+VALUES
+helm template commoncal "$chart_dir" -f "$prod_values" > "$prod_rendered"
+
+grep -F -q 'secretName: commoncal-tls' "$prod_rendered" || {
+  echo 'production Ingress must reference the commoncal-tls Secret' >&2
+  exit 1
+}
+grep -F -q 'traefik.ingress.kubernetes.io/router.entrypoints: websecure' "$prod_rendered" || {
+  echo 'production Ingress must use the websecure entrypoint' >&2
+  exit 1
+}
+if grep -F -q 'cert-manager.io/cluster-issuer' "$prod_rendered"; then
+  echo 'production Ingress must not carry a cert-manager cluster-issuer annotation' >&2
+  exit 1
+fi

@@ -99,7 +99,7 @@ if [ ! -f "$KUBECONFIG" ]; then
 fi
 
 # Verify the API server is loopback (not a remote address)
-API_SERVER=$(kubectl config --kubeconfig="$KUBECONFIG" view --minify --output='jsonpath={.cluster.server}' 2>/dev/null) || {
+API_SERVER=$(kubectl config --kubeconfig="$KUBECONFIG" view --minify --output='jsonpath={.clusters[0].cluster.server}' 2>/dev/null) || {
   echo "ERROR: Failed to read API server URL from $KUBECONFIG" >&2
   exit 1
 }

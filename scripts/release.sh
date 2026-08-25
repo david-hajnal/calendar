@@ -80,17 +80,13 @@ else
   sed -i "s/^appVersion: \".*\"/appVersion: \"${TAG}\"/" deploy/helm/commoncal-mcp/Chart.yaml
 fi
 
-# Bump HelmRelease image tags (CI checks that production tags are not latest/main)
-if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' "s/tag: \"v[0-9]*\\.[0-9]*\\.[0-9]*\"/tag: \"${TAG}\"/" deploy/flux/overlays/production/charts/core-helmrelease.yaml
-  sed -i '' "s/tag: \"v[0-9]*\\.[0-9]*\\.[0-9]*\"/tag: \"${TAG}\"/" deploy/flux/overlays/production/charts/mcp-helmrelease.yaml
-else
-  sed -i "s/tag: \"v[0-9]*\\.[0-9]*\\.[0-9]*\"/tag: \"${TAG}\"/" deploy/flux/overlays/production/charts/core-helmrelease.yaml
-  sed -i "s/tag: \"v[0-9]*\\.[0-9]*\\.[0-9]*\"/tag: \"${TAG}\"/" deploy/flux/overlays/production/charts/mcp-helmrelease.yaml
-fi
+# Production image tags are NOT bumped here. Flux image automation promotes
+# them only after both versioned images exist in GHCR (registry-triggered
+# promotion). Bumping them before publication would let Flux reconcile a
+# version whose container image does not exist yet.
 
 # Stage and commit
-git add backend/Cargo.toml mcp-server/Cargo.toml frontend/package.json deploy/helm/commoncal/Chart.yaml deploy/helm/commoncal-mcp/Chart.yaml deploy/flux/overlays/production/charts/core-helmrelease.yaml deploy/flux/overlays/production/charts/mcp-helmrelease.yaml
+git add backend/Cargo.toml mcp-server/Cargo.toml frontend/package.json deploy/helm/commoncal/Chart.yaml deploy/helm/commoncal-mcp/Chart.yaml
 git commit -m "chore: bump version to ${NEW_VERSION}"
 
 # Create tag and push

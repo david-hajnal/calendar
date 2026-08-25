@@ -1,14 +1,21 @@
-# Flux image policy for calendar-core — selects newest semver tag
+# Flux image policy for calendar-core
+# Selects the highest stable vX.Y.Z tag (main, SHA, latest, and prerelease
+# tags are ignored). The production label scopes this policy to the
+# production ImageUpdateAutomation.
 ---
-apiVersion: image.toolkit.fluxcd.io/v1beta2
+apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImagePolicy
 metadata:
   name: image-policy-core
   namespace: flux-system
+  labels:
+    image.fluxcd.io/production: "true"
 spec:
   imageRepositoryRef:
     name: image-repository-core
+  filterTags:
+    pattern: '^v(\d+\.\d+\.\d+)$'
+    extract: '$1'
   policy:
     semver:
-      range: ">=0.0.0"
-  sort: desc
+      range: ">=2.1.0"

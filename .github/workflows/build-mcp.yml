@@ -4,10 +4,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Version-tagged (vX.Y.Z) releases are published by release-images.yml,
+# which gates publication on BOTH images building and passing scans so core
+# and MCP promote atomically. This workflow only builds the mutable
+# main/SHA tags.
 on:
   push:
     branches: [main]
-    tags: ['v*']
     paths:
       - 'Dockerfile.mcp'
       - 'mcp-server/**'

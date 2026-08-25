@@ -3,3 +3,8 @@ kind: Kustomization
 resources:
   - charts/core-helmrelease.yaml
   - charts/mcp-helmrelease.yaml
+  - flux-system/image-repository-core.yaml
+  - flux-system/image-repository-mcp.yaml
+  - flux-system/image-policy-core.yaml
+  - flux-system/image-policy-mcp.yaml
+  - flux-system/image-update-automation.yaml

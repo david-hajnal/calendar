@@ -31,9 +31,8 @@ spec:
     replicaCount: 1
     domain: cal.hajnal.space
     image:
-      # fluxcd/image-automation: tag={{ .Values.image.tag }}
       repository: ghcr.io/david-hajnal/calendar-core
-      tag: "v2.1.0"
+      tag: "v2.1.0" # {"$imagepolicy": "flux-system:image-policy-core:tag"}
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

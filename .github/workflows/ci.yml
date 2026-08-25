@@ -79,9 +79,8 @@ jobs:
         with:
           version: v3.14.0
 
-      # TODO: re-enable validate-deploy.sh
-      # - name: Run deploy validation
-      #   run: bash scripts/validate-deploy.sh
+      - name: Run deploy validation
+        run: bash scripts/validate-deploy.sh
 
       - name: Test deployment script contract
         run: sh scripts/test-deploy-prod.sh

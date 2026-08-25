@@ -82,11 +82,13 @@ kubectl create secret generic commoncal-mcp-secrets \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> Bootstrapping Flux (path: deploy/flux/overlays/production)..."
+# flux v2.9.4 reads the PAT from the GITHUB_TOKEN env var (loaded above) and
+# uses it when --token-auth is set (instead of an SSH deploy key).
 flux bootstrap github \
   --owner="$FLUX_OWNER" \
   --repository="$FLUX_REPO" \
   --namespace=flux-system \
-  --personal-access-token="$GITHUB_TOKEN" \
+  --token-auth \
   --path=deploy/flux/overlays/production \
   --version="$FLUX_VERSION" \
   --components-extra=image-reflector-controller,image-automation-controller

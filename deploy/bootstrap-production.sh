@@ -15,15 +15,39 @@ set -euo pipefail
 #   NAMESPACE                   - k8s namespace (default: commoncal)
 #   FLUX_OWNER                  - GitHub owner (default: david-hajnal)
 #   FLUX_REPO                   - GitHub repo name (default: calendar)
+#   FLUX_VERSION                - Flux toolkit version (default: v2.9.4)
+#
+# Values may be provided as environment variables or in deploy/.env (gitignored).
+# Variables already set in the environment take precedence over the file.
 #
 # Usage:
-#   SESSION_SECRET=xxx BACKUP_ENCRYPTION_KEY_HEX=xxx MCP_INTERNAL_API_KEY=xxx MCP_SESSION_SECRET=xxx GITHUB_TOKEN=xxx ./deploy/bootstrap-production.sh
+#   ./deploy/bootstrap-production.sh
+#   (or export the vars above / put them in deploy/.env)
+
+# Load deploy/.env if present. Values already set in the environment win.
+ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  echo "==> Loading environment from $ENV_FILE"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "${line// }" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    if [[ "$value" =~ ^\"(.*)\"$ ]]; then value="${BASH_REMATCH[1]}"; fi
+    if [[ "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+    if [[ -z "${!key:-}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$ENV_FILE"
+fi
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 MCP_DOMAIN="${MCP_DOMAIN:-mcal.hajnal.space}"
 FLUX_OWNER="${FLUX_OWNER:-david-hajnal}"
 FLUX_REPO="${FLUX_REPO:-calendar}"
+FLUX_VERSION="${FLUX_VERSION:-v2.9.4}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 echo "==> Validating required environment variables..."
@@ -64,6 +88,7 @@ flux bootstrap github \
   --namespace=flux-system \
   --personal-access-token="$GITHUB_TOKEN" \
   --path=deploy/flux/overlays/production \
+  --version="$FLUX_VERSION" \
   --components-extra=image-reflector-controller,image-automation-controller
 
 echo "==> Waiting for Flux reconciliation..."

@@ -2,19 +2,38 @@
 
 ## Overview
 
-Core and MCP are deployed to Kubernetes via Flux GitOps. Images are published to GHCR and automatically promoted via Flux image automation.
+Core and MCP are deployed to Kubernetes via Flux GitOps. Images are published
+to GHCR and automatically promoted via Flux image automation.
+
+## Promotion model
+
+Publication of a new `vX.Y.Z` container image is the production deployment
+trigger. `scripts/release.sh` bumps versions, commits the release metadata, and
+pushes the tag — it does **not** change the HelmRelease image tags. CI builds
+and publishes both versioned images, and only then does Flux promote them:
+
+- Flux never reconciles a version before its container image exists: both
+  `vX.Y.Z` images are published to GHCR before either can be promoted.
+- Core and MCP advance **together**: one `ImageUpdateAutomation`
+  (`image-update-automation`) commits both HelmRelease tags. The two
+  ImagePolicies are evaluated independently, so the tags can land in two
+  commits within ~1 minute (a transient mixed state). Both images already
+  exist in that window, so no release ever points at a missing image.
+- Only stable `vX.Y.Z` tags qualify. `main`, SHA, `latest`, and prerelease
+  tags are ignored by the ImagePolicies.
+- Rollback is a Git revert of the promotion commit(s) (or an explicit pin,
+  with the automation suspended).
 
 ## Architecture
 
 ```
-Git push (v* tag)
-  → CI builds image
-  → Immutable tag pushed to GHCR
-  → Flux ImageRepository detects new tag
-  → Flux ImagePolicy selects newest semver
-  → Flux ImageUpdateAutomation commits tag to HelmRelease
-  → Flux Kustomization reconciles
-  → HelmRelease upgrades release
+release tag vX.Y.Z
+  → CI builds both images, publishes vX.Y.Z to GHCR
+  → Flux ImageRepository detects the new tags
+  → Flux ImagePolicy selects the highest stable vX.Y.Z
+  → Flux ImageUpdateAutomation commits both tags to main
+  → Flux Kustomization reconciles the commit
+  → HelmReleases upgrade
   → Kubernetes rolls out new pods
 ```
 
@@ -123,15 +142,12 @@ To pause automatic image promotion during an incident:
 
 ```bash
 # Suspend the ImageUpdateAutomation
-kubectl annotate imageupdateautomation image-update-core \
+kubectl annotate imageupdateautomation image-update-automation \
   fluxcd.io/suspend=true --namespace=flux-system
 
-# Resume
-kubectl annotate imageupdateautomation image-update-core \
-  fluxcd.io/suspend=true --overwrite --namespace=flux-system \
-  -f -  # or remove the annotation
-kubectl delete annotation imageupdateautomation/image-update-core \
-  fluxcd.io/suspend --namespace=flux-system
+# Resume (removes the annotation)
+kubectl annotate imageupdateautomation image-update-automation \
+  fluxcd.io/suspend- --namespace=flux-system
 ```
 
 ## Reconcile Resources
@@ -147,6 +163,9 @@ flux reconcile helmrelease commoncal-mcp --namespace=flux-system
 # Reconcile image policy
 flux reconcile imagepolicy image-policy-core --namespace=flux-system
 flux reconcile imagepolicy image-policy-mcp --namespace=flux-system
+
+# Reconcile image update automation
+flux reconcile imageupdateautomation image-update-automation --namespace=flux-system
 ```
 
 ## Pin Known-Good Tag
@@ -166,7 +185,7 @@ To revert an automated image tag change:
    git log --grep="chore(deploy): update.*image" --oneline
    ```
 
-2. Revert the commit:
+2. Revert the commit (a promotion may be one or two commits — revert each):
    ```bash
    git revert <commit-hash>
    git push
@@ -397,9 +416,15 @@ bash scripts/validate-deploy.sh
 This checks:
 - Helm lint
 - Helm template rendering
-- YAML syntax
+- Kustomize build of the production overlay
 - No mutable tags (latest/main) in production
-- Flux setter comments present
+- Each HelmRelease tag carries a valid `$imagepolicy` setter marker
+  pointing at an existing ImagePolicy
+- Image resources conform to the installed Flux CRD schemas, and
+  `gotk-components.yaml` carries both image controllers and the image CRDs
+- `scripts/release.sh` does not modify production image tags
+- YAML syntax
+- Chart template assertions
 
 ## Ad-hoc SQLite Console
 

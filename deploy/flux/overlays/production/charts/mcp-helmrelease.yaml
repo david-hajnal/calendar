@@ -34,9 +34,8 @@ spec:
     domain: mcal.hajnal.space
     bindAddress: "0.0.0.0:3001"
     image:
-      # fluxcd/image-automation: tag={{ .Values.image.tag }}
       repository: ghcr.io/david-hajnal/calendar-mcp
-      tag: "v2.1.0"
+      tag: "v2.1.0" # {"$imagepolicy": "flux-system:image-policy-mcp:tag"}
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

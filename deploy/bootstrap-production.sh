@@ -63,7 +63,8 @@ flux bootstrap github \
   --repository="$FLUX_REPO" \
   --namespace=flux-system \
   --personal-access-token="$GITHUB_TOKEN" \
-  --path=deploy/flux/overlays/production
+  --path=deploy/flux/overlays/production \
+  --components-extra=image-reflector-controller,image-automation-controller
 
 echo "==> Waiting for Flux reconciliation..."
 sleep 5

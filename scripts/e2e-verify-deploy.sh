@@ -31,12 +31,13 @@ echo "  Run: kubectl describe imgpolicy image-policy-core -n flux-system | grep 
 echo "  Run: kubectl describe imgpolicy image-policy-mcp -n flux-system | grep LatestImage"
 echo ""
 
-# Step 4: Verify ImageUpdateAutomation committed the tag
+# Step 4: Verify ImageUpdateAutomation committed the tags (both releases)
 echo "Step 4: Verify ImageUpdateAutomation commit"
 echo "  Run: kubectl get imageupdateautomation -n flux-system"
 echo "  Expected: LastPushCommit shows recent commit"
-echo "  Run: kubectl describe imageupdateautomation image-update-core -n flux-system | grep LastPushCommit"
+echo "  Run: kubectl describe imageupdateautomation image-update-automation -n flux-system | grep LastPushCommit"
 echo "  Run: git log --oneline -5 | grep 'chore(deploy): update.*image'"
+echo "  Expected: commit(s) updating the core and MCP tags (may be 1 or 2 commits)"
 echo ""
 
 # Step 5: Verify HelmRelease upgraded
@@ -68,7 +69,7 @@ echo ""
 echo "Step 8: Verify ingress and endpoints"
 echo "  Run: kubectl get ingress -n commoncal"
 echo "  Run: curl -sk https://cal.hajnal.space/health/ready"
-echo "  Run: curl -sk https://cal.hajnal.space/mcp/health/live"
+echo "  Run: curl -sk https://mcal.hajnal.space/health/live"
 echo "  Expected: 200 OK responses"
 echo ""
 

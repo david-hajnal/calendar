@@ -822,19 +822,49 @@ fn build_application_router(state: ApplicationState) -> Router {
     router
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .layer(
-            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
-                tracing::span!(
-                    Level::INFO,
-                    "http_request",
-                    method = %request.method(),
-                    path = redact_sensitive_path(request.uri()),
-                    request_id = request
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request<_>| {
+                    let path = redact_sensitive_path(request.uri());
+                    let request_id = request
                         .headers()
                         .get(&REQUEST_ID_HEADER)
                         .and_then(|value| value.to_str().ok())
                         .unwrap_or("")
-                )
-            }),
+                        .to_string();
+                    if request.uri().path().starts_with("/health/") {
+                        tracing::debug_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %path,
+                            request_id = %request_id
+                        )
+                    } else {
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %path,
+                            request_id = %request_id
+                        )
+                    }
+                })
+                .on_response(
+                    |response: &Response, latency: std::time::Duration, span: &tracing::Span| {
+                    let status = response.status().as_u16();
+                    let latency_ms = latency.as_millis();
+                    if span.metadata().is_some_and(|m| m.level() == &Level::DEBUG) {
+                        tracing::debug!(
+                            status = status,
+                            latency_ms = latency_ms,
+                            "finished processing request"
+                        );
+                    } else {
+                        tracing::info!(
+                            status = status,
+                            latency_ms = latency_ms,
+                            "finished processing request"
+                        );
+                    }
+                }),
         )
         .layer(middleware::from_fn_with_state(
             state_for_middleware,
@@ -2289,7 +2319,19 @@ async fn access_log_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
-    if log_level >= tracing::Level::INFO {
+    if path.starts_with("/health/") {
+        if log_level >= tracing::Level::DEBUG {
+            tracing::debug!(
+                http.method = %method,
+                http.path = path,
+                http.status_code = %status,
+                http.response_bytes = body_size,
+                latency_ms = latency.as_millis(),
+                request_id = request_id,
+                "access_log"
+            );
+        }
+    } else if log_level >= tracing::Level::INFO {
         tracing::info!(
             http.method = %method,
             http.path = path,

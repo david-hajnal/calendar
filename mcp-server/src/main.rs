@@ -76,7 +76,45 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/mcp", post(mcp_handler))
         .with_state(gateway)
-        .layer(TraceLayer::new_for_http());
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    if request.uri().path().starts_with("/health/") {
+                        tracing::debug_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %request.uri().path()
+                        )
+                    } else {
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %request.uri().path()
+                        )
+                    }
+                })
+                .on_response(
+                    |response: &Response, latency: std::time::Duration, span: &tracing::Span| {
+                        let status = response.status().as_u16();
+                        let latency_ms = latency.as_millis();
+                        if span
+                            .metadata()
+                            .is_some_and(|m| m.level() == &tracing::Level::DEBUG)
+                        {
+                            tracing::debug!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        } else {
+                            tracing::info!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        }
+                    }),
+        );
 
     let listener = tokio::net::TcpListener::bind(&config.bind_address).await?;
 

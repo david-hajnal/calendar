@@ -463,3 +463,81 @@ sudo ./deploy/sqlite-prod.sh --write
 - **Another session active**: `kubectl delete pod commoncal-sqlite-console -n commoncal`
 - **NetworkPolicy missing**: Deploy the Helm chart or create the policy manually
 - **Database not found**: The database file must exist on the core pod before opening a console
+- **`attempt to write a readonly database (8)`**: The console pod is a *separate* pod
+  mounting the same PVC. SQLite in WAL mode needs to write the `-wal`/`-shm`
+  files, whose ownership (UID 1000, held by the live core pod) the console pod
+  cannot match — so writes fail even in `--write` mode. For one-off writes,
+  exec directly into the core pod instead (see below).
+
+## Change the admin password
+
+There is no `set-password` CLI command or HTTP endpoint. The password is a
+bcrypt hash (cost 12) stored in `users.password_hash`, matched by
+`normalized_email`. The default admin row is `admin@localhost`.
+
+> **Do not use `deploy/sqlite-prod.sh --write` for this.** The console pod
+> hits `attempt to write a readonly database (8)` (WAL/SHM ownership, see
+> Troubleshooting above). Run the write inside the **core pod**, which already
+> holds the database open and has write access.
+
+### 1. Generate a bcrypt hash (cost 12)
+
+```bash
+# Option A: python3 + bcrypt
+HASH=$(python3 -c 'import bcrypt; print(bcrypt.hashpw(b"NEW_PASSWORD", bcrypt.gensalt(12)).decode())')
+
+# Option B: htpasswd (strip the "user:" prefix)
+# HASH=$(htpasswd -BbnC 12 admin NEW_PASSWORD | cut -d: -f2)
+
+echo "$HASH"   # sanity check: 60 chars, starts with $2b$12$ / $2y$12$
+```
+
+### 2. Write it into the core pod's database
+
+```bash
+kubectl exec -n commoncal commoncal-0 -- \
+  sqlite3 /app/data/commoncal.sqlite \
+  "PRAGMA busy_timeout=5000; UPDATE users SET password_hash='$HASH' WHERE normalized_email='admin@localhost'; SELECT changes();"
+```
+
+`SELECT changes();` must print `1`. If it prints `0`, the email did not match —
+check the row with `SELECT normalized_email FROM users;`.
+
+> **Quoting:** the hash is passed as the value of the shell variable `$HASH`,
+> so its `$` characters are **not** re-expanded by the shell (variable
+> expansion is not recursive). If you inline a literal hash inside the
+> double-quoted SQL string instead, you must escape every `$` as `\$` or the
+> shell will mangle it.
+
+### 3. Enable password login and restart the pod
+
+Password login is **off by default in production** (`password_login_enabled`
+defaults to `false`); the `POST /api/v1/auth/password-login` route is only
+registered when it is `true`. Set the env var and restart so the pod picks it
+up:
+
+```bash
+kubectl -n commoncal patch configmap commoncal \
+  --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'
+kubectl -n commoncal rollout restart statefulset commoncal
+```
+
+> **Flux reverts bare `kubectl` edits.** The durable fix is to add
+> `PASSWORD_LOGIN_ENABLED: "1"` to the Helm values source
+> (`deploy/helm/commoncal/templates/configmap.yaml` /
+> `deploy/values-production.yaml`) and let Flux reconcile it, or the patch
+> above will be rolled back on the next reconciliation.
+
+### 4. Verify
+
+```bash
+curl -s -X POST https://cal.hajnal.space/api/v1/auth/password-login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@localhost","password":"NEW_PASSWORD"}'
+```
+
+A `405 Method Not Allowed` means the route is not registered — the env var did
+not reach the running pod (Flux reverted the ConfigMap, or the pod has not
+restarted). Confirm with
+`kubectl -n commoncal get configmap commoncal -o yaml | grep PASSWORD_LOGIN_ENABLED`
+and `kubectl -n commoncal get pods`.

@@ -849,22 +849,23 @@ fn build_application_router(state: ApplicationState) -> Router {
                 })
                 .on_response(
                     |response: &Response, latency: std::time::Duration, span: &tracing::Span| {
-                    let status = response.status().as_u16();
-                    let latency_ms = latency.as_millis();
-                    if span.metadata().is_some_and(|m| m.level() == &Level::DEBUG) {
-                        tracing::debug!(
-                            status = status,
-                            latency_ms = latency_ms,
-                            "finished processing request"
-                        );
-                    } else {
-                        tracing::info!(
-                            status = status,
-                            latency_ms = latency_ms,
-                            "finished processing request"
-                        );
-                    }
-                }),
+                        let status = response.status().as_u16();
+                        let latency_ms = latency.as_millis();
+                        if span.metadata().is_some_and(|m| m.level() == &Level::DEBUG) {
+                            tracing::debug!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        } else {
+                            tracing::info!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        }
+                    },
+                ),
         )
         .layer(middleware::from_fn_with_state(
             state_for_middleware,

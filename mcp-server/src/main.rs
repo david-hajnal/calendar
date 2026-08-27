@@ -113,7 +113,8 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                                 "finished processing request"
                             );
                         }
-                    }),
+                    },
+                ),
         );
 
     let listener = tokio::net::TcpListener::bind(&config.bind_address).await?;

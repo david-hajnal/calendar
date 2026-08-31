@@ -1,0 +1,40 @@
+[package]
+name = "slice1-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+autobins = false
+
+[[bin]]
+name = "mcp-echo"
+path = "src/bin/mcp_echo.rs"
+
+[[bin]]
+name = "lab-prove"
+path = "src/bin/lab_prove.rs"
+
+[[bin]]
+name = "commoncal"
+path = "src/bin/commoncal.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["json", "macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies"] }
+rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
+schemars = "1"
+sha2 = "0.10"
+base64 = "0.22"
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+jsonwebtoken = "9"
+num-bigint = "0.4"
+rsa = "0.9"
+anyhow = "1"
+rand = "0.8"
+thiserror = "2"
+urlencoding = "2"
+uuid = { version = "1", features = ["v4"] }

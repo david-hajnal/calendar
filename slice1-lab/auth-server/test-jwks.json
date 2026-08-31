@@ -1,0 +1,19 @@
+{
+  "description": "Disposable Slice 1 signing key. Never use outside this loopback lab.",
+  "keys": [
+    {
+      "kty": "RSA",
+      "n": "2kzL_DkpPcdSP8Z5vwv6u9pYS8twEY_Rp6tMI0bckp2zaCPsnzlBc6dYudMTAQIpaUI8eyaGIewjH2pqo4IlRtwBqyemZUhZxe4QJTW4DZkHlonPSrPQKA0Zw16OlBGEZTMTAYKZItwTSi0DwePkuofhC4q9VqiAkFoshduy3ydAQ0C-DfWHkwEGmJa4y9-4z10eKSg89lYbrQcqmit182NEisxetHOXmvs64jCXsHSLPI2BdOjMAK24pOPsNHRdEFiHhaiXb5LQzCcAH7djfQGDvmDsWzNLIUxZASZAxtuIQ0ujiuVLzn7Sqad3oMKvMnDUnGwkWjqZ9i1IF7WLQw",
+      "e": "AQAB",
+      "d": "Dadj0z6AbPV65TOugrumyGzwPKr-5lvmyTdzUPnwkUt20-rHTonMvuvQWcZKq00tnObmx7pRnzm_VD3NaYIaGPppMLTcRfwTM8hfm_KZTmE5DC19C_2YmLpOpB2I1z8MCmGTuaXBZ614yv9rLqUb6QTXSrSeghb4_Gf_d-hIoe3Om9BP6PSzAcMU5LbY9Gj71sspmo-i8t9r300jgj8HRGRiEtZBJwjL7IFGeoZbg2tbsdxFYuslYUkVsTD-KYPlcZq_-sreRZRSEXYp58otnWuZNhzOhQkqPKtmgTSyYJ5XT4cHo4fYUjdQnfPYePLJjYzm7eTHJAtFBvgYywcr1Q",
+      "p": "_qbAwSWfjTwngdlmQFPxosoMADqifGtX_QZdg6CH5J2oRywGh0g8v4UoivKbJvcWDjJTcFE_voLh4fvL4n8vK8MobVliw_p_N2a1TqRG2p5cNQp2s5L1gRSzqE1Fw-We4EjcMYYb0vEgz_J2DFeETljcQrG6Tt7iDLrBGU_2G9U",
+      "q": "23TCjgfuG9wsq7-y6uQKH81iVD05Dz7LwuNHVRAmnIgIcINX6BeQD3feGslHfARaBBSQnGwKgqHL09IGv2a9ErsZTtfKOmBfu3vs08C-kaz2uAW7rhWiPWwXMJr-4nVPq9PLFZqGUdi_7Z1nA7PPLMZEO2hS-oI4pxKYgf86Drc",
+      "dp": "YGnoPvissP-egaY69Y4Sxayz4H5SuMK3nKAFVem4qdEbPl8n1Z5_CZAz6m-yWI1id1uMhdDtToclWLdJ2WaICIyqSMR4BXVZJzOm37CI9wrQJHDiwliYxRd-cfFXwbS1c3uCiumYrUQIRVMqaL_V4wf31PSPcn8mnOU0aQ4CQ0U",
+      "dq": "qXp-VZmiNTnP9cNRtTzu5KiEa3Hsgu2IBrXm_LZAW1piyiFk3gR0aL21dRJEdm4V5ljLZUG6zC-PbcIhG-eH1NNRNCZKMtMCm5OUzeNoSLA-yNcEnehvJug28H6CoPjf0l7503FGkibF8gdA6wcN1BI513c1veibP8uIo7wrZfk",
+      "qi": "-802_jkpA45OVrkyhus25l7fyzt9c-EYc1-rM5AZ_r4GwCnxUXv9SGJLHCRxdt-2OJ24DhC0BEiwa0E4-cNUX1wI4HIIjp3lOLAZTdyQUNimPqzUigkHtqMfyWMYma0ubpcUFOZprY8oqPFgLHBJ0yWSrg_NumuhFOTHoOfvGmI",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "slice1-test-rs256"
+    }
+  ]
+}

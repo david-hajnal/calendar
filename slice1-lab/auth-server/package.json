@@ -1,0 +1,16 @@
+{
+  "name": "commoncal-slice1-auth-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "oidc-provider": "9.12.0",
+    "pg": "8.23.0"
+  }
+}

@@ -2,6 +2,7 @@
 backend/target/
 frontend/dist/
 mcp-server/target/
+slice1-lab/target/
 node_modules/
 
 # Local env files

@@ -1,0 +1,40 @@
+# Disposable Slice 1 Hydra configuration. Loopback/dev only.
+# Not a production values file. Do not carry into production.
+
+urls:
+  self:
+    issuer: http://localhost:4444/
+    public: http://localhost:4444/
+  login: http://localhost:8080/oauth/hydra/login
+  consent: http://localhost:8080/oauth/hydra/consent
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+    # Convenience default only. NOT an authorization control — a DCR client can
+    # override this by setting "scope" in the registration payload. Consent
+    # (stub adapter) is the authority boundary and grants only the intersection.
+    default_scope:
+      - commoncal.calendar.metadata.read
+      - commoncal.availability.read
+      - commoncal.event.read.basic
+      - commoncal.event.read.details
+      - commoncal.event.create
+      - commoncal.event.update
+      - commoncal.event.delete
+      - commoncal.reminder.read
+      - commoncal.reminder.write
+
+strategies:
+  # Issue JWT access tokens so the MCP resource server can validate locally.
+  access_token: jwt
+
+ttl:
+  access_token: 10m
+  refresh_token: 720h
+  login_consent_request: 15m
+  auth_code: 10m
+
+serve:
+  cookies:
+    same_site_mode: Lax

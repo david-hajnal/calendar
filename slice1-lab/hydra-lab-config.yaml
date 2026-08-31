@@ -1,0 +1,30 @@
+# Slice 1 isolated lab Hydra configuration.
+# Development/HTTP mode only; bound to loopback. NOT a production values file.
+# No secret values here; DSN + system secret come from the container env.
+
+urls:
+  self:
+    issuer: http://127.0.0.1:4444/
+  login: http://127.0.0.1:9000/login
+  consent: http://127.0.0.1:9000/consent
+
+strategies:
+  access_token: jwt
+
+oidc:
+  dynamic_client_registration:
+    enabled: true
+    default_scope:
+      - openid
+      - offline_access
+
+oauth2:
+  pkce:
+    enforced: true
+    enforced_for_public_clients: true
+
+ttl:
+  login_consent_request: 15m
+  access_token: 10m
+  refresh_token: 720h
+  auth_code: 10m

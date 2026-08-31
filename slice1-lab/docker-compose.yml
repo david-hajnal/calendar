@@ -1,0 +1,57 @@
+# Disposable Slice 1 lab infrastructure. Loopback only. Never used in production.
+# All values here are throwaway test values, not real secrets.
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: hydra
+      POSTGRES_PASSWORD: hydra-lab-only-not-a-real-secret
+      POSTGRES_DB: hydra
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hydra -d hydra"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # One-shot migration runner. Hydra v26.2.0 `serve all` does NOT auto-migrate;
+  # it fails with "Unable to locate the table" on a fresh database. Run migrations
+  # explicitly first, then start the server.
+  hydra-migrate:
+    image: oryd/hydra:v26.2.0
+    command:
+      - migrate
+      - sql
+      - -e
+      - up
+      - -y
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DSN: postgres://hydra:hydra-lab-only-not-a-real-secret@postgres:5432/hydra?sslmode=disable
+    restart: "no"
+
+  hydra:
+    image: oryd/hydra:v26.2.0
+    command:
+      - serve
+      - all
+      - --dev
+      - -c
+      - /etc/hydra/config.yaml
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    environment:
+      DSN: postgres://hydra:hydra-lab-only-not-a-real-secret@postgres:5432/hydra?sslmode=disable
+      SECRETS_SYSTEM: lab-system-secret-not-a-real-secret-000000000000000000
+      SECRETS_COOKIE: lab-cookie-secret-not-a-real-secret-0000000000000000
+    ports:
+      - "127.0.0.1:4444:4444"
+      - "127.0.0.1:4445:4445"
+    volumes:
+      - ./hydra/config.yaml:/etc/hydra/config.yaml:ro
+    # No container healthcheck: the oryd/hydra image may lack curl.
+    # The lab-prove harness polls the discovery endpoint until ready.

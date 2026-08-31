@@ -1,0 +1,21 @@
+# Replacement Slice 1 infrastructure. Loopback-only and disposable.
+# The former Hydra compose/config files remain in this directory as blocker evidence.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: oidc
+      POSTGRES_PASSWORD: oidc-lab-only
+      POSTGRES_DB: oidc
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oidc -d oidc"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - oidc-data:/var/lib/postgresql/data
+
+volumes:
+  oidc-data:

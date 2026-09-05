@@ -9,3 +9,10 @@ data:
   BIND_ADDRESS: 0.0.0.0:3000
   APP_ORIGIN: {{ required "config.appOrigin is required" .Values.config.appOrigin | quote }}
   DATABASE_PATH: /app/data/commoncal.sqlite
+  ACCESS_LOG_LEVEL: "OFF"
+  {{- if .Values.authBridge.enabled }}
+  # Non-secret bridge URL (cluster-internal DNS). The bridge key is injected
+  # from a Secret reference in the StatefulSet — never rendered here.
+  AUTH_BRIDGE_URL: {{ required "authBridge.url is required when authBridge.enabled" .Values.authBridge.url | quote }}
+  AUTH_BRIDGE_TIMEOUT_MS: {{ .Values.authBridge.timeoutMs | quote }}
+  {{- end }}

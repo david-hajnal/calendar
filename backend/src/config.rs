@@ -67,7 +67,7 @@ impl AppConfig {
             .map(|s| s.parse())
             .transpose()
             .map_err(|_| ConfigError::new("invalid ACCESS_LOG_LEVEL"))?
-            .unwrap_or(tracing::level_filters::LevelFilter::INFO);
+            .unwrap_or(tracing::level_filters::LevelFilter::DEBUG);
         let database_path =
             env::var("DATABASE_PATH").unwrap_or_else(|_| DEFAULT_DATABASE_PATH.into());
         let session_secret = env::var("SESSION_SECRET").ok();
@@ -129,7 +129,7 @@ impl AppConfig {
             session_secret,
             database_path,
             app_origin,
-            tracing::level_filters::LevelFilter::INFO,
+            tracing::level_filters::LevelFilter::DEBUG,
             false,
         )
     }

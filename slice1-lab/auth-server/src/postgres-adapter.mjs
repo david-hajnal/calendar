@@ -98,12 +98,29 @@ export default class PostgresAdapter {
     const consumed = epochSeconds();
     await pool().query(
       `UPDATE provider_entity
-          SET payload = payload || jsonb_build_object('consumed', $3::bigint),
-              consumed_at = NOW()
-        WHERE model = $1 AND id = $2
-          AND consumed_at IS NULL
-          AND (expires_at IS NULL OR expires_at > NOW())`,
+           SET payload = payload || jsonb_build_object('consumed', $3::bigint),
+               consumed_at = NOW()
+         WHERE model = $1 AND id = $2
+           AND consumed_at IS NULL
+           AND (expires_at IS NULL OR expires_at > NOW())`,
       [this.modelName, id, consumed],
     );
+  }
+
+  /**
+   * Purge expired and consumed rows for this model. Returns the number of
+   * rows removed. Safe to call repeatedly (idempotent).
+   */
+  async cleanup() {
+    const result = await pool().query(
+      `DELETE FROM provider_entity
+        WHERE model = $1
+          AND (
+            (expires_at IS NOT NULL AND expires_at <= NOW())
+            OR (consumed_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= NOW())
+          )`,
+      [this.modelName],
+    );
+    return result.rowCount;
   }
 }

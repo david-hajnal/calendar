@@ -59,6 +59,11 @@ use crate::{
         PublicViewConfiguration, PublicViewProjection, SharedViewCalendarInput, SharedViewError,
         SharedViewService,
     },
+    user_invitation::{UserInvitationError, UserInvitationService},
+    user_invitation_rate_limit::{
+        UserInvitationRateLimiterState, check_user_invitation_rate_limit,
+        check_user_invitation_resend_rate_limit,
+    },
     write_rate_limit::WriteRateLimiterState,
 };
 
@@ -177,6 +182,8 @@ pub fn build_router_with_readiness(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -203,6 +210,8 @@ pub fn build_router_with_readiness_and_password_login(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -230,6 +239,8 @@ pub fn build_router_with_invitation_consumer(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -260,6 +271,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -291,6 +304,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -318,6 +333,8 @@ pub fn build_router_with_sessions(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -350,6 +367,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -378,6 +397,8 @@ pub fn build_router_with_admin(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -412,6 +433,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -440,6 +463,8 @@ pub fn build_router_with_calendars(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -476,6 +501,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -505,6 +532,8 @@ pub fn build_router_with_calendars_and_events(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -536,6 +565,8 @@ pub fn build_router_with_calendars_events_and_views(
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
     })
 }
 
@@ -557,6 +588,8 @@ pub fn build_router_with_auth_flows_sessions_admin_calendars_views_and_external_
     write_rate_limiter: Option<WriteRateLimiterState>,
     public_rate_limiter: Option<PublicRateLimiterState>,
     admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+    user_invitation_service: UserInvitationService,
+    user_invitation_rate_limiter: Option<UserInvitationRateLimiterState>,
 ) -> Router
 where
     L: LoginFlow + 'static,
@@ -578,6 +611,8 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_service: Some(user_invitation_service),
+        user_invitation_rate_limiter,
     })
 }
 
@@ -615,6 +650,46 @@ where
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_rate_limiter: None,
+        user_invitation_service: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_router_with_auth_flows_sessions_admin_calendars_and_views_and_user_invitations<L>(
+    readiness: Readiness,
+    invitation_consumer: InvitationConsumer,
+    login_flow: L,
+    session_manager: SessionManager,
+    admin_service: AdminService,
+    calendar_service: CalendarService,
+    event_service: EventService,
+    shared_view_service: SharedViewService,
+    user_invitation_service: UserInvitationService,
+    user_invitation_rate_limiter: Option<UserInvitationRateLimiterState>,
+) -> Router
+where
+    L: LoginFlow + 'static,
+{
+    build_application_router(ApplicationState {
+        readiness,
+        invitation_consumer: Some(invitation_consumer),
+        login_flow: Some(Arc::new(login_flow)),
+        session_manager: Some(session_manager),
+        admin_service: Some(admin_service),
+        calendar_service: Some(calendar_service),
+        event_service: Some(event_service),
+        shared_view_service: Some(shared_view_service),
+        external_feed_service: None,
+        notification_service: None,
+        access_log_level: tracing::level_filters::LevelFilter::DEBUG,
+        is_secure: false,
+        password_login_enabled: false,
+        write_rate_limiter: None,
+        public_rate_limiter: None,
+        admin_rate_limiter: None,
+        user_invitation_service: Some(user_invitation_service),
+        user_invitation_rate_limiter,
     })
 }
 
@@ -674,6 +749,11 @@ fn build_application_router(state: ApplicationState) -> Router {
                     "/api/v1/admin/users/:id/revoke-sessions",
                     post(revoke_user_sessions),
                 );
+        }
+        if state.user_invitation_service.is_some() {
+            protected = protected
+                .route("/api/v1/invitations", post(create_user_invitation))
+                .route("/api/v1/invitations/resend", post(resend_user_invitation));
         }
         if state.calendar_service.is_some() {
             protected = protected
@@ -2297,6 +2377,74 @@ fn map_admin_error(error: AdminError) -> ApiError {
     }
 }
 
+async fn create_user_invitation(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(request): Json<CreateUserInvitationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let service = state
+        .user_invitation_service
+        .ok_or_else(ApiError::service_unavailable)?;
+
+    // Apply rate limiting
+    if let Some(ref limiter) = state.user_invitation_rate_limiter {
+        check_user_invitation_rate_limit(limiter, session.user.id)
+            .map_err(|_| ApiError::rate_limited())?;
+    }
+
+    let invitation = service
+        .create_invitation(session.user.id, request.email, request.display_name)
+        .await
+        .map_err(map_user_invitation_error)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(InvitationResponse {
+            id: invitation.invitation_id,
+        }),
+    ))
+}
+
+async fn resend_user_invitation(
+    State(state): State<ApplicationState>,
+    Json(request): Json<ResendUserInvitationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let service = state
+        .user_invitation_service
+        .ok_or_else(ApiError::service_unavailable)?;
+
+    // Apply rate limiting by email
+    if let Some(ref limiter) = state.user_invitation_rate_limiter {
+        check_user_invitation_resend_rate_limit(limiter, &request.email)
+            .map_err(|_| ApiError::rate_limited())?;
+    }
+
+    let invitation = service
+        .resend_invitation_by_email(request.email)
+        .await
+        .map_err(map_user_invitation_error)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(InvitationResponse {
+            id: invitation.invitation_id,
+        }),
+    ))
+}
+
+fn map_user_invitation_error(error: UserInvitationError) -> ApiError {
+    match error {
+        UserInvitationError::InvalidInput => ApiError::bad_request(),
+        UserInvitationError::NotFound => ApiError::not_found(),
+        UserInvitationError::Conflict => ApiError::conflict(),
+        UserInvitationError::Database(_) => {
+            tracing::error!(error_code = "user_invitation_operation_failed");
+            ApiError::internal()
+        }
+        UserInvitationError::DeliveryFailed => ApiError::internal(),
+    }
+}
+
 async fn access_log_middleware(
     State(state): State<ApplicationState>,
     request: Request<axum::body::Body>,
@@ -2743,6 +2891,19 @@ struct InviteUserRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CreateUserInvitationRequest {
+    email: String,
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResendUserInvitationRequest {
+    email: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CalendarMutationRequest {
     name: String,
     description: Option<String>,
@@ -2922,6 +3083,7 @@ struct ApplicationState {
     login_flow: Option<Arc<dyn LoginFlow>>,
     session_manager: Option<SessionManager>,
     admin_service: Option<AdminService>,
+    user_invitation_service: Option<UserInvitationService>,
     calendar_service: Option<CalendarService>,
     event_service: Option<EventService>,
     shared_view_service: Option<SharedViewService>,
@@ -2933,6 +3095,7 @@ struct ApplicationState {
     write_rate_limiter: Option<WriteRateLimiterState>,
     public_rate_limiter: Option<PublicRateLimiterState>,
     admin_rate_limiter: Option<AdminInvitationRateLimiterState>,
+    user_invitation_rate_limiter: Option<UserInvitationRateLimiterState>,
 }
 
 #[derive(Clone, Debug)]

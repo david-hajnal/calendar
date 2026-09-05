@@ -25,6 +25,24 @@ spec:
           port: 53
         - protocol: UDP
           port: 53
+    {{- if .Values.authBridge.enabled }}
+    # Authorization bridge (commoncal-auth internal service). The bridge key
+    # (AUTH_BRIDGE_KEY) authenticates every call; this egress rule only permits
+    # the network path. Both the Service port (80) and the container port
+    # (4001) are allowed to be robust across CNI DNAT ordering.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: authorization
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 4001
+    {{- end }}
   ingress:
     - ports:
         - protocol: TCP

@@ -1,4 +1,4 @@
-.PHONY: all authorization-regression backend-check backend-test check check-no-yarn check-prod-tags ci-script-test deploy deploy-script-test docker-build docker-build-push docker-check docker-push e2e frontend-build frontend-test lint mcp-check mcp-test sqlite-prod-test trivy-check validate-authorization-coverage
+.PHONY: all authorization-regression backend-check backend-test check check-no-yarn check-prod-tags ci-script-test deploy deploy-script-test docker-build docker-build-push docker-check docker-push e2e frontend-build frontend-test lab-verify lint mcp-check mcp-test sqlite-prod-test trivy-check validate-authorization-coverage
 
 all: check
 
@@ -75,10 +75,12 @@ docker-build-push:
 docker-check:
 	scripts/docker-build-push.sh --build-only
 	IMAGE_NAME=calendar-mcp LOCAL_TAG=commoncal-mcp:local DOCKERFILE=Dockerfile.mcp scripts/docker-build-push.sh --build-only
+	IMAGE_NAME=calendar-auth LOCAL_TAG=commoncal-auth:local DOCKERFILE=Dockerfile.auth scripts/docker-build-push.sh --build-only
 
 trivy-check: docker-check
 	@if command -v trivy >/dev/null 2>&1; then \
 		echo "==> Scanning images for CRITICAL/HIGH vulnerabilities..."; \
+		trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 commoncal-auth:local && \
 		trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 commoncal:local && \
 		trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 commoncal-mcp:local; \
 	elif [ "$${SKIP_TRIVY:-0}" = "1" ]; then \
@@ -87,3 +89,17 @@ trivy-check: docker-check
 		echo "ERROR: trivy is not installed. Install trivy or set SKIP_TRIVY=1 to skip." >&2; \
 		exit 1; \
 	fi
+
+# Focused local verification for the slice1-lab (cross-client MCP connector).
+# Starts PostgreSQL, builds the lab binaries, and runs the full proof harness.
+lab-verify:
+	docker compose -f slice1-lab/compose.yaml up -d postgres
+	@echo "==> Waiting for PostgreSQL..."
+	@for i in $$(seq 1 30); do \
+		if docker compose -f slice1-lab/compose.yaml exec -T postgres pg_isready -U oidc >/dev/null 2>&1; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	cargo build --manifest-path slice1-lab/Cargo.toml --bin mcp-echo --bin lab-prove
+	slice1-lab/target/debug/lab-prove

@@ -33,7 +33,7 @@ Run all checks:
 make check
 ```
 
-All linters must pass before pushing to remote.
+All checks must pass before committing. Run `make check` locally first.
 
 Focused commands:
 

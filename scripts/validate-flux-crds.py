@@ -13,7 +13,7 @@ production kustomization whose apiVersion belongs to a Flux CRD group:
 - additionalProperties constraints are honored
 
 Also asserts the bundle contains the expected image automation set:
-2 ImageRepositories, 2 ImagePolicies, 1 ImageUpdateAutomation, and that
+3 ImageRepositories, 3 ImagePolicies, 1 ImageUpdateAutomation, and that
 gotk-components.yaml carries both image controller Deployments and the
 three image CRDs.
 
@@ -147,9 +147,9 @@ def main():
         return sum(1 for d in bundle if d.get("kind") == kind)
 
     expected = {
-        "HelmRelease": 2,
-        "ImageRepository": 2,
-        "ImagePolicy": 2,
+        "HelmRelease": 3,
+        "ImageRepository": 3,
+        "ImagePolicy": 3,
         "ImageUpdateAutomation": 1,
     }
     for kind, want in expected.items():
@@ -179,8 +179,8 @@ def main():
                 f"{kind}/{d['metadata']['name']}: " + "; ".join(res_errors)
             )
 
-    if validated < 5:
-        errors.append(f"expected >=5 Flux CRD resources validated, got {validated}")
+    if validated < 10:
+        errors.append(f"expected >=10 Flux CRD resources validated, got {validated}")
 
     # 4. Each ImagePolicy filter must accept only stable vX.Y.Z tags.
     for d in bundle:
@@ -205,15 +205,15 @@ def main():
             if rx.search(tag):
                 errors.append(f"ImagePolicy/{name}: filter must reject {tag!r}")
 
-    # 5. Exactly two $imagepolicy setter markers exist in the overlay, one
-    #    per HelmRelease, so the automation can only touch those two fields.
+    # 5. Exactly three $imagepolicy setter markers exist in the overlay, one
+    #    per HelmRelease, so the automation can only touch those three fields.
     out = subprocess.run(
         ["grep", "-rn", '--include=*.yaml', '$imagepolicy', "deploy/flux/overlays/production/"],
         capture_output=True, text=True,
     )
     marker_lines = [l for l in out.stdout.splitlines() if l.strip()]
-    if len(marker_lines) != 2:
-        errors.append(f"expected exactly 2 $imagepolicy setter markers in the overlay, got {len(marker_lines)}")
+    if len(marker_lines) != 3:
+        errors.append(f"expected exactly 3 $imagepolicy setter markers in the overlay, got {len(marker_lines)}")
     else:
         for line in marker_lines:
             path = line.split(":", 2)[0]

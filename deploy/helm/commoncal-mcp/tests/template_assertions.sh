@@ -97,3 +97,47 @@ if grep -F -q 'cert-manager.io/cluster-issuer' "$prod_rendered"; then
   echo 'production MCP Ingress must not carry a cert-manager cluster-issuer annotation' >&2
   exit 1
 fi
+
+# --- Hold-issuer assertions (slice 5) --------------------------------------
+# The MCP server can HOLD a new issuer (accept for validation) without
+# cutover: the primary MCP_OAUTH_ISSUER is unchanged, and the held issuer is
+# injected by Secret reference only (no value rendered).
+hold_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$hold_rendered"' EXIT
+helm template commoncal-mcp "$chart_dir" \
+  --set existingSecret.oauthIssuerHoldKeyName=mcp-oauth-issuer-hold \
+  > "$hold_rendered"
+
+# Held issuer must be a Secret reference.
+grep -q 'name: MCP_OAUTH_ISSUER_HOLD' "$hold_rendered"
+if ! awk '
+  /- name: MCP_OAUTH_ISSUER_HOLD/ { in_hold=1; next }
+  in_hold && /valueFrom:/ { has_reference=1 }
+  in_hold && /^[[:space:]]+- name:/ { in_hold=0 }
+  END { exit has_reference ? 0 : 1 }
+' "$hold_rendered"; then
+  echo 'MCP_OAUTH_ISSUER_HOLD must be supplied by a Secret reference' >&2
+  exit 1
+fi
+
+# Primary issuer must still be present and unchanged (no cutover).
+grep -q 'name: MCP_OAUTH_ISSUER' "$hold_rendered"
+grep -q 'key: mcp-oauth-issuer' "$hold_rendered"
+
+# No secret value may be rendered into the issuer wiring.
+if grep -vE '^[[:space:]]*#' "$hold_rendered" | grep -qiE \
+  'oidc-lab-only|https://[^ ]*issuer'; then
+  echo 'issuer wiring must not render secret values' >&2
+  exit 1
+fi
+
+# Default (no hold key) must not render the hold env var.
+default_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$hold_rendered" "$default_rendered"' EXIT
+helm template commoncal-mcp "$chart_dir" > "$default_rendered"
+if grep -q 'name: MCP_OAUTH_ISSUER_HOLD' "$default_rendered"; then
+  echo 'MCP_OAUTH_ISSUER_HOLD must not be rendered when no hold key is set' >&2
+  exit 1
+fi
+
+echo 'commoncal-mcp chart assertions passed'

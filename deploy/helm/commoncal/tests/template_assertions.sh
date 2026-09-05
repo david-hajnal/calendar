@@ -133,3 +133,57 @@ if grep -F -q 'cert-manager.io/cluster-issuer' "$prod_rendered"; then
   echo 'production Ingress must not carry a cert-manager cluster-issuer annotation' >&2
   exit 1
 fi
+
+# --- Authorization bridge assertions (slice 5) -----------------------------
+# Render with the bridge enabled and verify the wiring is correct: the bridge
+# key comes from a Secret reference (no value rendered), the bridge URL is
+# non-secret config, and the NetworkPolicy egress permits the bridge.
+bridge_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered"' EXIT
+helm template commoncal "$chart_dir" \
+  --set image.tag=test-image-tag \
+  --set config.appOrigin=https://cal.example.test \
+  --set authBridge.enabled=true \
+  --set authBridge.url=http://commoncal-auth-internal.commoncal.svc:80 \
+  --set authBridge.secretName=commoncal-auth-secrets \
+  --set authBridge.secretKey=LAB_BRIDGE_KEY \
+  > "$bridge_rendered"
+
+# Bridge key must be a Secret reference.
+grep -q 'name: AUTH_BRIDGE_KEY' "$bridge_rendered"
+if ! awk '
+  /- name: AUTH_BRIDGE_KEY/ { in_bridge=1; next }
+  in_bridge && /valueFrom:/ { has_reference=1 }
+  in_bridge && /^[[:space:]]+- name:/ { in_bridge=0 }
+  END { exit has_reference ? 0 : 1 }
+' "$bridge_rendered"; then
+  echo 'AUTH_BRIDGE_KEY must be supplied by a Secret reference' >&2
+  exit 1
+fi
+
+# Bridge URL must be non-secret config.
+grep -q 'AUTH_BRIDGE_URL: "http://commoncal-auth-internal.commoncal.svc:80"' "$bridge_rendered"
+
+# NetworkPolicy egress must permit the bridge (component: authorization).
+grep -q 'app.kubernetes.io/component: authorization' "$bridge_rendered"
+
+# No secret value may be rendered into the bridge wiring.
+if grep -vE '^[[:space:]]*#' "$bridge_rendered" | grep -qiE \
+  'slice1-loopback-bridge|oidc-lab-only'; then
+  echo 'bridge wiring must not render secret values' >&2
+  exit 1
+fi
+
+# Default (bridge disabled) must not render the bridge env var.
+default_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered" "$default_rendered"' EXIT
+helm template commoncal "$chart_dir" \
+  --set image.tag=test-image-tag \
+  --set config.appOrigin=https://cal.example.test \
+  > "$default_rendered"
+if grep -q 'name: AUTH_BRIDGE_KEY' "$default_rendered"; then
+  echo 'AUTH_BRIDGE_KEY must not be rendered when authBridge.enabled is false' >&2
+  exit 1
+fi
+
+echo 'commoncal chart assertions passed'

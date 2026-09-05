@@ -53,6 +53,18 @@ mcpInternalApiSecret:
   name: commoncal-mcp-secrets
   key: mcp-internal-api-key
 
+# Authorization bridge (slice 5): CommonCal calls the private CommonCal
+# authorization bridge for consent/interaction handoffs. The bridge URL is
+# non-secret (cluster-internal DNS); the bridge key (LAB_BRIDGE_KEY) is
+# injected from the commoncal-auth-secrets Secret — never rendered here.
+# The existing issuer remains primary; this is not an issuer cutover.
+authBridge:
+  enabled: true
+  url: http://commoncal-auth-internal.commoncal.svc:80
+  timeoutMs: 5000
+  secretName: commoncal-auth-secrets
+  secretKey: LAB_BRIDGE_KEY
+
 resources:
   requests:
     cpu: 100m

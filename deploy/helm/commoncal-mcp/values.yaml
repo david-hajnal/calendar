@@ -88,7 +88,12 @@ existingSecret:
   name: commoncal-mcp-secrets
   apiKeyKeyName: mcp-internal-api-key
   sessionSecretKeyName: mcp-session-secret
+  # Primary OAuth issuer (unchanged — no cutover).
   oauthIssuerKeyName: mcp-oauth-issuer
+  # New issuer to HOLD (accept for validation) without making it primary.
+  # Set to empty to disable holding. The value is the issuer of the
+  # commoncal-auth authorization server.
+  oauthIssuerHoldKeyName: ""
 
 env:
   MCP_INTERNAL_API_BASE: https://commoncal.example.com

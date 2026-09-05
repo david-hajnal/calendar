@@ -1,0 +1,62 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commoncal-auth.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commoncal-auth.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commoncal-auth.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Public port: allowed only from the ingress controller namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.public.targetPort }}
+    # Private (bridge) port: allowed ONLY from the CommonCal namespace. This
+    # is the enforcement that keeps the bridge internal — no ingress rule and
+    # no other namespace can reach it.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.commoncalNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.internal.targetPort }}
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Managed PostgreSQL.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.postgres.port }}
+      {{- if .Values.networkPolicy.postgres.host }}
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      {{- else if .Values.networkPolicy.postgres.namespace }}
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.postgres.namespace }}
+      {{- else }}
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      {{- end }}
+{{- end }}

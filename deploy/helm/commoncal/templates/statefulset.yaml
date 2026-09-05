@@ -54,6 +54,16 @@ spec:
                   name: {{ .Values.mcpInternalApiSecret.name }}
                   key: {{ required "mcpInternalApiSecret.key is required when name is set" .Values.mcpInternalApiSecret.key }}
             {{- end }}
+            {{- if .Values.authBridge.enabled }}
+            # Bridge key: injected by Secret reference only — no value is ever
+            # rendered into this manifest. Must match the authorization server's
+            # LAB_BRIDGE_KEY.
+            - name: AUTH_BRIDGE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "authBridge.secretName is required when authBridge.enabled" .Values.authBridge.secretName }}
+                  key: {{ required "authBridge.secretKey is required when authBridge.enabled" .Values.authBridge.secretKey }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 3000

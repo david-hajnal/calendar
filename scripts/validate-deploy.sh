@@ -11,10 +11,21 @@ echo "=== Validating deployment manifests ==="
 
 # 1. Helm lint
 echo ""
-echo "--- Helm lint (core) ---"
+echo "--- Helm lint (auth, core, mcp) ---"
 if command -v helm &>/dev/null; then
+  helm lint deploy/helm/commoncal-auth >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-auth"; ERRORS=$((ERRORS+1)); }
   helm lint deploy/helm/commoncal >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal"; ERRORS=$((ERRORS+1)); }
   helm lint deploy/helm/commoncal-mcp >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-mcp"; ERRORS=$((ERRORS+1)); }
+  
+  echo "--- Helm template (auth) ---"
+  helm template commoncal-auth deploy/helm/commoncal-auth \
+    --set-string image.tag=test \
+    --set-string secrets.name=commoncal-auth-secrets \
+    --set-string secrets.databaseUrlKey=DATABASE_URL \
+    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    >/dev/null 2>&1 || { echo "FAIL: helm template commoncal-auth"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (core) ---"
   helm template commoncal deploy/helm/commoncal \
@@ -139,6 +150,12 @@ fi
 # 9. Run chart template assertions
 echo ""
 echo "--- Chart template assertions ---"
+if [ -f "deploy/helm/commoncal-auth/tests/template_assertions.sh" ]; then
+  sh deploy/helm/commoncal-auth/tests/template_assertions.sh || { echo "FAIL: commoncal-auth template_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal-auth template_assertions.sh not found"
+fi
+
 if [ -f "deploy/helm/commoncal/tests/template_assertions.sh" ]; then
   sh deploy/helm/commoncal/tests/template_assertions.sh || { echo "FAIL: commoncal template_assertions.sh"; ERRORS=$((ERRORS+1)); }
 else
@@ -151,7 +168,61 @@ else
   echo "SKIP: commoncal-mcp template_assertions.sh not found"
 fi
 
-# 10. Check for cert-manager annotations in production-owned deployment files
+# 10. Bridge isolation: the private bridge service must NOT be exposed via
+#     Ingress, and the auth chart must not render secret values.
+echo ""
+echo "--- Checking bridge isolation (no private ingress, no secret values) ---"
+if [ -s "$BUNDLE" ]; then
+  # The auth chart's Ingress must only reference the public service.
+  if grep -q 'commoncal-auth-internal' <(helm template commoncal-auth deploy/helm/commoncal-auth \
+      --set-string image.tag=test \
+      --set-string secrets.name=commoncal-auth-secrets \
+      --set-string secrets.databaseUrlKey=DATABASE_URL \
+      --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
+      --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
+      --set-string secrets.signingKid=AUTH_SIGNING_KID \
+      2>/dev/null | grep -A20 'kind: Ingress'); then
+    echo "FAIL: private bridge service must not be exposed via Ingress"
+    ERRORS=$((ERRORS+1))
+  else
+    echo "OK: private bridge service is not exposed via Ingress"
+  fi
+else
+  echo "SKIP: no bundle to check bridge isolation"
+fi
+
+# 11. Dependency order: auth -> core -> mcp. The core HelmRelease must depend
+#     on the auth HelmRelease; the mcp HelmRelease must depend on core.
+echo ""
+echo "--- Checking Flux dependency order (auth -> core -> mcp) ---"
+CORE_HR="deploy/flux/overlays/production/charts/core-helmrelease.yaml"
+MCP_HR="deploy/flux/overlays/production/charts/mcp-helmrelease.yaml"
+if [ -f "$CORE_HR" ] && grep -q 'name: commoncal-auth' "$CORE_HR"; then
+  echo "OK: core depends on commoncal-auth"
+else
+  echo "FAIL: core HelmRelease must depend on commoncal-auth"
+  ERRORS=$((ERRORS+1))
+fi
+if [ -f "$MCP_HR" ] && grep -q 'name: commoncal' "$MCP_HR"; then
+  echo "OK: mcp depends on commoncal"
+else
+  echo "FAIL: mcp HelmRelease must depend on commoncal"
+  ERRORS=$((ERRORS+1))
+fi
+
+# 12. Issuer consistency: the primary issuer must be unchanged (no cutover).
+#     The MCP chart's primary issuer key must still be mcp-oauth-issuer.
+echo ""
+echo "--- Checking issuer consistency (no cutover) ---"
+MCP_VALUES="deploy/values-mcp-production.yaml"
+if [ -f "$MCP_VALUES" ] && grep -q 'oauthIssuerKeyName: mcp-oauth-issuer' "$MCP_VALUES"; then
+  echo "OK: primary issuer key is unchanged (mcp-oauth-issuer)"
+else
+  echo "FAIL: primary issuer key must remain mcp-oauth-issuer (no cutover)"
+  ERRORS=$((ERRORS+1))
+fi
+
+# 13. Check for cert-manager annotations in production-owned deployment files
 # (scoped to app deployment files; does not scan vendored Flux CRDs)
 echo ""
 echo "--- Checking for cert-manager annotations in production files ---"
@@ -167,7 +238,7 @@ if [ -n "$CERT_MGR" ]; then
   ERRORS=$((ERRORS+1))
 fi
 
-# 11. Run deploy script tests
+# 14. Run deploy script tests
 echo ""
 echo "--- Deploy script tests ---"
 if [ -f "scripts/test-sqlite-prod.sh" ]; then

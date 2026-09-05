@@ -25,7 +25,7 @@ use axum::{
 };
 use rmcp::{
     ServerHandler,
-    handler::server::router::tool::ToolRouter,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
     tool, tool_handler, tool_router,
     transport::{
@@ -35,6 +35,8 @@ use rmcp::{
         },
     },
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::RwLock;
 
@@ -174,15 +176,522 @@ impl CommonCalEcho {
             serde_json::to_string_pretty(&output).unwrap_or_else(|_| "[]".to_string()),
         )]))
     }
+
+    // -- Slice 6: typed read tools ------------------------------------------
+
+    #[tool(description = "Find availability slots for the specified calendars within a time range.")]
+    async fn availability_find(
+        &self,
+        params: Parameters<AvailabilityFindParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_scope(&scopes, "commoncal.availability.read")?;
+        validate_range(&params.0.from, &params.0.to)?;
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let mut all_slots = Vec::new();
+
+        for cal_id in &params.0.calendar_ids {
+            require_calendar(&allowed_ids, *cal_id)?;
+            let url = format!(
+                "{}/internal/availability?calendar_id={}&from={}&to={}",
+                base,
+                cal_id,
+                urlencoding::encode(&params.0.from),
+                urlencoding::encode(&params.0.to)
+            );
+            let resp = ECHO_HTTP
+                .get(&url)
+                .header("Authorization", format!("Bearer {}", key))
+                .send()
+                .await
+                .map_err(|e| err(format!("availability transport: {e}")))?;
+            if !resp.status().is_success() {
+                return Err(err(format!("availability failed: {}", resp.status())));
+            }
+            let body: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| err(format!("availability parse: {e}")))?;
+            if let Some(slots) = body.get("slots").and_then(|v| v.as_array()) {
+                all_slots.extend(slots.iter().cloned());
+            }
+        }
+
+        let output = json!({ "slots": all_slots });
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "[]".to_string()),
+        )]))
+    }
+
+    #[tool(description = "Get the details of a specific event by calendar and event ID.")]
+    async fn event_get(
+        &self,
+        params: Parameters<EventGetParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_calendar(&allowed_ids, params.0.calendar_id)?;
+
+        let has_details = scopes.iter().any(|s| s == "commoncal.event.read.details");
+        let has_basic = scopes.iter().any(|s| s == "commoncal.event.read.basic");
+        if !has_details && !has_basic {
+            return Err(err(
+                "event_get requires commoncal.event.read.basic or commoncal.event.read.details",
+            ));
+        }
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let url = format!(
+            "{}/internal/event?calendar_id={}&event_id={}",
+            base,
+            params.0.calendar_id,
+            params.0.event_id
+        );
+        let resp = ECHO_HTTP
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .send()
+            .await
+            .map_err(|e| err(format!("event_get transport: {e}")))?;
+        if resp.status().as_u16() == 404 {
+            return Err(err("event not found"));
+        }
+        if !resp.status().is_success() {
+            return Err(err(format!("event_get failed: {}", resp.status())));
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| err(format!("event_get parse: {e}")))?;
+        let event = body.get("event").cloned().unwrap_or(json!({}));
+
+        let access = if has_details { "full" } else { "basic" };
+        let output = if has_details {
+            json!({ "event": event, "access": access })
+        } else {
+            let mut ev = event.clone();
+            if let Some(obj) = ev.as_object_mut() {
+                obj.remove("description");
+                obj.remove("location");
+            }
+            json!({ "event": ev, "access": access })
+        };
+
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
+    #[tool(description = "Search events in a calendar within a time range, optionally filtered by query.")]
+    async fn event_search(
+        &self,
+        params: Parameters<EventSearchParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_calendar(&allowed_ids, params.0.calendar_id)?;
+        require_scope(&scopes, "commoncal.event.read.basic")?;
+        validate_range(&params.0.from, &params.0.to)?;
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let mut url = format!(
+            "{}/internal/events?calendar_id={}&from={}&to={}",
+            base,
+            params.0.calendar_id,
+            urlencoding::encode(&params.0.from),
+            urlencoding::encode(&params.0.to)
+        );
+        if let Some(q) = &params.0.query {
+            url.push_str(&format!("&query={}", urlencoding::encode(q)));
+        }
+        let resp = ECHO_HTTP
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", key))
+            .send()
+            .await
+            .map_err(|e| err(format!("event_search transport: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(err(format!("event_search failed: {}", resp.status())));
+        }
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| err(format!("event_search parse: {e}")))?;
+        let events = body.get("events").cloned().unwrap_or(json!([]));
+
+        let has_details = scopes.iter().any(|s| s == "commoncal.event.read.details");
+        let access = if has_details { "full" } else { "basic" };
+
+        let output_events: Vec<serde_json::Value> = if let Some(arr) = events.as_array() {
+            if has_details {
+                arr.iter().cloned().collect()
+            } else {
+                arr.iter()
+                    .map(|e| {
+                        let mut ev = e.clone();
+                        if let Some(obj) = ev.as_object_mut() {
+                            obj.remove("description");
+                            obj.remove("location");
+                        }
+                        ev
+                    })
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let output = json!({ "events": output_events, "access": access });
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "[]".to_string()),
+        )]))
+    }
+
+    // -- Slice 7: mutation tools ---------------------------------------------
+
+    #[tool(description = "Create a new event in the specified calendar.")]
+    async fn event_create(
+        &self,
+        params: Parameters<EventCreateParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_calendar(&allowed_ids, params.0.calendar_id)?;
+        require_scope(&scopes, "commoncal.event.create")?;
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let body = json!({
+            "calendar_id": params.0.calendar_id,
+            "title": params.0.title,
+            "description": params.0.description,
+            "location": params.0.location,
+            "start_utc": parse_ts(&params.0.start_utc).ok_or_else(|| err(format!("invalid start_utc: {}", params.0.start_utc)))?,
+            "end_utc": parse_ts(&params.0.end_utc).ok_or_else(|| err(format!("invalid end_utc: {}", params.0.end_utc)))?,
+            "idempotency_key": params.0.idempotency_key,
+        });
+        let resp = ECHO_HTTP
+            .post(format!("{}/internal/event", base))
+            .header("Authorization", format!("Bearer {}", key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| err(format!("event_create transport: {e}")))?;
+        let status = resp.status();
+        let resp_body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| err(format!("event_create parse: {e}")))?;
+        if !status.is_success() {
+            return Err(err(format!("event_create failed: {status}")));
+        }
+        let output = json!({
+            "event": resp_body.get("event").cloned().unwrap_or(json!({})),
+            "replayed": resp_body.get("replayed").cloned().unwrap_or(json!(false)),
+        });
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
+    #[tool(description = "Update an existing event. Requires the expected_version for optimistic concurrency.")]
+    async fn event_update(
+        &self,
+        params: Parameters<EventUpdateParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_calendar(&allowed_ids, params.0.calendar_id)?;
+        require_scope(&scopes, "commoncal.event.update")?;
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let body = json!({
+            "calendar_id": params.0.calendar_id,
+            "expected_version": params.0.expected_version,
+            "title": params.0.title,
+            "description": params.0.description,
+            "location": params.0.location,
+            "start_utc": params.0.start_utc.as_deref().and_then(parse_ts),
+            "end_utc": params.0.end_utc.as_deref().and_then(parse_ts),
+        });
+        let resp = ECHO_HTTP
+            .patch(format!("{}/internal/event/{}", base, params.0.event_id))
+            .header("Authorization", format!("Bearer {}", key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| err(format!("event_update transport: {e}")))?;
+        let status = resp.status();
+        let resp_body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| err(format!("event_update parse: {e}")))?;
+        if status.as_u16() == 409 {
+            return Err(err("version_conflict: the event was modified by another client"));
+        }
+        if status.as_u16() == 404 {
+            return Err(err("event not found"));
+        }
+        if !status.is_success() {
+            return Err(err(format!("event_update failed: {status}")));
+        }
+        let output = json!({
+            "event": resp_body.get("event").cloned().unwrap_or(json!({})),
+        });
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+
+    #[tool(description = "Set a reminder on an event.")]
+    async fn reminder_set(
+        &self,
+        params: Parameters<ReminderSetParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let claims = CURRENT_CLAIMS
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| err("unauthenticated"))?;
+
+        let (allowed_ids, scopes) = load_grant(&claims).await?;
+        require_calendar(&allowed_ids, params.0.calendar_id)?;
+        require_scope(&scopes, "commoncal.reminder.write")?;
+
+        let base = commoncal_base();
+        let key = commoncal_bridge_key();
+        let body = json!({
+            "calendar_id": params.0.calendar_id,
+            "event_id": params.0.event_id,
+            "offset_minutes": params.0.offset_minutes,
+        });
+        let resp = ECHO_HTTP
+            .post(format!("{}/internal/reminder", base))
+            .header("Authorization", format!("Bearer {}", key))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| err(format!("reminder_set transport: {e}")))?;
+        let status = resp.status();
+        let resp_body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| err(format!("reminder_set parse: {e}")))?;
+        if !status.is_success() {
+            return Err(err(format!("reminder_set failed: {status}")));
+        }
+        let output = json!({
+            "reminder": resp_body.get("reminder").cloned().unwrap_or(json!({})),
+        });
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            serde_json::to_string_pretty(&output).unwrap_or_else(|_| "{}".to_string()),
+        )]))
+    }
+}
+
+// -- Slice 6: typed parameter schemas (module-level for rmcp macro) ----------
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct AvailabilityFindParams {
+    /// Calendar IDs to check availability for.
+    calendar_ids: Vec<i64>,
+    /// Start of the time range (ISO 8601 or Unix epoch seconds).
+    from: String,
+    /// End of the time range (ISO 8601 or Unix epoch seconds).
+    to: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EventGetParams {
+    /// The calendar the event belongs to.
+    calendar_id: i64,
+    /// The event ID to fetch.
+    event_id: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EventSearchParams {
+    /// The calendar to search in.
+    calendar_id: i64,
+    /// Start of the time range (ISO 8601 or Unix epoch seconds).
+    from: String,
+    /// End of the time range (ISO 8601 or Unix epoch seconds).
+    to: String,
+    /// Optional text query to filter events by title/description.
+    query: Option<String>,
+}
+
+// -- Slice 7: typed parameter schemas for mutations --------------------------
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EventCreateParams {
+    /// The calendar to create the event in.
+    calendar_id: i64,
+    /// Event title.
+    title: String,
+    /// Optional description.
+    description: Option<String>,
+    /// Optional location.
+    location: Option<String>,
+    /// Start time (ISO 8601 or Unix epoch seconds).
+    start_utc: String,
+    /// End time (ISO 8601 or Unix epoch seconds).
+    end_utc: String,
+    /// Optional idempotency key for safe retries.
+    idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct EventUpdateParams {
+    /// The calendar the event belongs to.
+    calendar_id: i64,
+    /// The event ID to update.
+    event_id: i64,
+    /// The expected current version (optimistic concurrency).
+    expected_version: i64,
+    /// New title (omit to keep current).
+    title: Option<String>,
+    /// New description (omit to keep current).
+    description: Option<String>,
+    /// New location (omit to keep current).
+    location: Option<String>,
+    /// New start time (omit to keep current).
+    start_utc: Option<String>,
+    /// New end time (omit to keep current).
+    end_utc: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ReminderSetParams {
+    /// The calendar the event belongs to.
+    calendar_id: i64,
+    /// The event to set a reminder on.
+    event_id: i64,
+    /// Minutes before the event to fire the reminder.
+    offset_minutes: i64,
+}
+
+// -- Slice 6: shared helpers -------------------------------------------------
+
+fn require_scope(scopes: &[String], scope: &str) -> Result<(), rmcp::ErrorData> {
+    if scopes.iter().any(|s| s == scope) {
+        Ok(())
+    } else {
+        Err(err(format!("missing required scope: {scope}")))
+    }
+}
+
+fn require_calendar(allowed_ids: &[i64], calendar_id: i64) -> Result<(), rmcp::ErrorData> {
+    if allowed_ids.contains(&calendar_id) {
+        Ok(())
+    } else {
+        Err(err(format!("calendar {calendar_id} not in grant")))
+    }
+}
+
+fn parse_ts(s: &str) -> Option<i64> {
+    if let Ok(ts) = s.parse::<i64>() {
+        return Some(ts);
+    }
+    chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+}
+
+fn validate_range(from: &str, to: &str) -> Result<(i64, i64), rmcp::ErrorData> {
+    let from_ts = parse_ts(from).ok_or_else(|| err(format!("invalid 'from': {from}")))?;
+    let to_ts = parse_ts(to).ok_or_else(|| err(format!("invalid 'to': {to}")))?;
+    if to_ts <= from_ts {
+        return Err(err("'to' must be after 'from'"));
+    }
+    let max_secs = 31 * 24 * 3600;
+    if to_ts - from_ts > max_secs {
+        return Err(err("time range exceeds maximum of 31 days"));
+    }
+    Ok((from_ts, to_ts))
+}
+
+async fn load_grant(
+    claims: &CurrentClaims,
+) -> Result<(Vec<i64>, Vec<String>), rmcp::ErrorData> {
+    let base = commoncal_base();
+    let key = commoncal_bridge_key();
+    let grant_url = format!(
+        "{}/internal/grant?user_id={}&client_id={}",
+        base,
+        claims.user_id,
+        urlencoding::encode(&claims.client_id)
+    );
+    let grant_resp = ECHO_HTTP
+        .get(&grant_url)
+        .header("Authorization", format!("Bearer {}", key))
+        .send()
+        .await
+        .map_err(|e| err(format!("grant lookup transport: {e}")))?;
+    let grant_status = grant_resp.status();
+    if grant_status.as_u16() == 404 {
+        return Err(err("no active MCP grant — consent required"));
+    }
+    if !grant_status.is_success() {
+        return Err(err(format!("grant lookup failed: {grant_status}")));
+    }
+    let grant_body: serde_json::Value = grant_resp
+        .json()
+        .await
+        .map_err(|e| err(format!("grant parse: {e}")))?;
+    let allowed_ids: Vec<i64> = grant_body
+        .pointer("/grant/allowed_calendar_ids")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_i64()).collect())
+        .unwrap_or_default();
+    let scopes: Vec<String> = grant_body
+        .pointer("/grant/scopes")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((allowed_ids, scopes))
 }
 
 #[tool_handler]
 impl ServerHandler for CommonCalEcho {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("commoncal-echo", "0.2.0"))
+            .with_server_info(Implementation::new("commoncal-echo", "0.4.0"))
             .with_instructions(
-                "Slice 2: calendar_list backed by real CommonCal calendars + mcp_grant.",
+                "Slice 7: calendar_list, availability_find, event_get, event_search, event_create, event_update, reminder_set backed by real CommonCal + mcp_grant.",
             )
     }
 }

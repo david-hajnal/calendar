@@ -24,19 +24,31 @@ fi
 : "${MCP_SESSION_SECRET:?ERROR: MCP_SESSION_SECRET is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_DOMAIN:?ERROR: MCP_DOMAIN is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_OAUTH_ISSUER:?ERROR: MCP_OAUTH_ISSUER is required and must be the HTTPS issuer exposing OAuth metadata/JWKS}"
+# Authorization server (slice 5) — required for the private bridge.
+: "${AUTH_DATABASE_URL:?ERROR: AUTH_DATABASE_URL is required (PostgreSQL DSN for the authorization server). Set it in $DEPLOY_DIR/.env or export it}"
+: "${AUTH_BRIDGE_KEY:?ERROR: AUTH_BRIDGE_KEY is required (shared secret for the private bridge). Set it in $DEPLOY_DIR/.env or export it}"
+: "${AUTH_COOKIE_KEYS:?ERROR: AUTH_COOKIE_KEYS is required (JSON array of cookie keys). Set it in $DEPLOY_DIR/.env or export it}"
+: "${AUTH_SIGNING_KID:?ERROR: AUTH_SIGNING_KID is required (JWKS key ID). Set it in $DEPLOY_DIR/.env or export it}"
 
 if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^([[:xdigit:]]{2}){16,}$ ]]; then
   echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must be an even number of hexadecimal characters (at least 32)" >&2
+  exit 1
+fi
+if [[ ! "$AUTH_DATABASE_URL" =~ ^postgres(ql)?:// ]]; then
+  echo "ERROR: AUTH_DATABASE_URL must be a PostgreSQL DSN (postgres:// or postgresql://)" >&2
   exit 1
 fi
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 CORE_RELEASE="${CORE_HELM_RELEASE_NAME:-${HELM_RELEASE_NAME:-commoncal}}"
 MCP_RELEASE="${MCP_HELM_RELEASE_NAME:-commoncal-mcp}"
+AUTH_RELEASE="${AUTH_HELM_RELEASE_NAME:-commoncal-auth}"
 CORE_CHART_DIR="$DEPLOY_DIR/helm/commoncal"
 MCP_CHART_DIR="$DEPLOY_DIR/helm/commoncal-mcp"
+AUTH_CHART_DIR="$DEPLOY_DIR/helm/commoncal-auth"
 CORE_VALUES_FILE="$DEPLOY_DIR/values-production.yaml"
 MCP_VALUES_FILE="$DEPLOY_DIR/values-mcp-production.yaml"
+AUTH_VALUES_FILE="$DEPLOY_DIR/values-auth-production.yaml"
 DOMAIN="${DOMAIN:-cal.hajnal.space}"
 MCP_INTERNAL_API_BASE="${MCP_INTERNAL_API_BASE:-https://$DOMAIN}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
@@ -66,8 +78,8 @@ for command_name in kubectl; do
   fi
 done
 for required_file in \
-  "$CORE_CHART_DIR/Chart.yaml" "$MCP_CHART_DIR/Chart.yaml" \
-  "$CORE_VALUES_FILE" "$MCP_VALUES_FILE"; do
+  "$CORE_CHART_DIR/Chart.yaml" "$MCP_CHART_DIR/Chart.yaml" "$AUTH_CHART_DIR/Chart.yaml" \
+  "$CORE_VALUES_FILE" "$MCP_VALUES_FILE" "$AUTH_VALUES_FILE"; do
   if [[ ! -f "$required_file" ]]; then
     echo "ERROR: required deployment file is missing: $required_file" >&2
     exit 1
@@ -208,7 +220,7 @@ ensure_tls_secret() {
 }
 
 active_flux_releases=0
-for flux_release in commoncal commoncal-mcp; do
+for flux_release in commoncal-auth commoncal commoncal-mcp; do
   flux_status=$(kubectl get helmrelease "$flux_release" --namespace flux-system \
     -o jsonpath='{.metadata.name}{"\t"}{.spec.suspend}' 2>/dev/null || true)
   if [[ "$flux_status" == "$flux_release" || "$flux_status" == "$flux_release"$'\t'* ]]; then
@@ -219,15 +231,15 @@ for flux_release in commoncal commoncal-mcp; do
 done
 
 case "$active_flux_releases" in
-  2)
+  3)
     deploy_mode=flux
     if ! command -v flux >/dev/null 2>&1; then
       echo "ERROR: active Flux HelmReleases manage production, but the flux command is not installed" >&2
       exit 1
     fi
-    if [[ "$NAMESPACE" != commoncal || "$CORE_RELEASE" != commoncal || "$MCP_RELEASE" != commoncal-mcp ]]; then
-      echo "ERROR: Flux manages namespace 'commoncal' with releases 'commoncal' and 'commoncal-mcp'." >&2
-      echo "Remove NAMESPACE, HELM_RELEASE_NAME, CORE_HELM_RELEASE_NAME, and MCP_HELM_RELEASE_NAME overrides for Flux deployment." >&2
+    if [[ "$NAMESPACE" != commoncal || "$AUTH_RELEASE" != commoncal-auth || "$CORE_RELEASE" != commoncal || "$MCP_RELEASE" != commoncal-mcp ]]; then
+      echo "ERROR: Flux manages namespace 'commoncal' with releases 'commoncal-auth', 'commoncal', and 'commoncal-mcp'." >&2
+      echo "Remove NAMESPACE, AUTH_HELM_RELEASE_NAME, CORE_HELM_RELEASE_NAME, and MCP_HELM_RELEASE_NAME overrides for Flux deployment." >&2
       exit 1
     fi
     if [[ -n "$GHCR_TOKEN" ]]; then
@@ -251,8 +263,8 @@ case "$active_flux_releases" in
     done
     ;;
   *)
-    echo "ERROR: production has mixed deployment ownership: only $active_flux_releases of 2 Flux HelmReleases are active." >&2
-    echo "Resume both HelmReleases for Flux deployment, or suspend both for direct Helm deployment." >&2
+    echo "ERROR: production has mixed deployment ownership: only $active_flux_releases of 3 Flux HelmReleases are active." >&2
+    echo "Resume all three HelmReleases for Flux deployment, or suspend all three for direct Helm deployment." >&2
     exit 1
     ;;
 esac
@@ -279,10 +291,28 @@ kubectl create secret generic commoncal-session \
   -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
 
 echo "==> Applying MCP secret '$NAMESPACE/commoncal-mcp-secrets'..."
+# MCP_OAUTH_ISSUER_HOLD is optional: when set, the MCP server holds the new
+# issuer (accepts tokens from it) without making it primary (no cutover).
+MCP_SECRET_ARGS=(
+  --from-literal=mcp-internal-api-key="$MCP_INTERNAL_API_KEY"
+  --from-literal=mcp-session-secret="$MCP_SESSION_SECRET"
+  --from-literal=mcp-oauth-issuer="$MCP_OAUTH_ISSUER"
+)
+if [[ -n "${MCP_OAUTH_ISSUER_HOLD:-}" ]]; then
+  MCP_SECRET_ARGS+=(--from-literal=mcp-oauth-issuer-hold="$MCP_OAUTH_ISSUER_HOLD")
+fi
 kubectl create secret generic commoncal-mcp-secrets \
-  --from-literal=mcp-internal-api-key="$MCP_INTERNAL_API_KEY" \
-  --from-literal=mcp-session-secret="$MCP_SESSION_SECRET" \
-  --from-literal=mcp-oauth-issuer="$MCP_OAUTH_ISSUER" \
+  "${MCP_SECRET_ARGS[@]}" \
+  -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+
+echo "==> Applying auth secret '$NAMESPACE/commoncal-auth-secrets'..."
+# The authorization server's secrets. The chart never creates this Secret;
+# it is created here out-of-band and referenced by the Helm chart.
+kubectl create secret generic commoncal-auth-secrets \
+  --from-literal=DATABASE_URL="$AUTH_DATABASE_URL" \
+  --from-literal=LAB_BRIDGE_KEY="$AUTH_BRIDGE_KEY" \
+  --from-literal=AUTH_COOKIE_KEYS="$AUTH_COOKIE_KEYS" \
+  --from-literal=AUTH_SIGNING_KID="$AUTH_SIGNING_KID" \
   -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
 
 if [[ "$deploy_mode" == flux ]]; then
@@ -294,6 +324,9 @@ if [[ "$deploy_mode" == flux ]]; then
 
   echo "==> Flux owns production; reconciling Git-managed releases (IMAGE_TAG and direct Helm values are ignored)..."
   flux reconcile kustomization flux-system --namespace flux-system --with-source
+  # Rollout order: auth (bridge) -> core -> mcp. Flux enforces this via
+  # dependsOn in the HelmReleases; reconcile in dependency order.
+  flux reconcile helmrelease commoncal-auth --namespace flux-system --with-source
   flux reconcile helmrelease commoncal --namespace flux-system --with-source
   flux reconcile helmrelease commoncal-mcp --namespace flux-system --with-source
 
@@ -321,19 +354,41 @@ if [[ "$deploy_mode" == flux ]]; then
 
   # Secret contents are external to the HelmRelease pod templates. Restart the
   # workloads so rotated credentials take effect even when the chart is unchanged.
+  # Rollout order: auth (bridge) -> core -> mcp.
+  kubectl rollout restart deployment "$AUTH_RELEASE" --namespace "$NAMESPACE"
   kubectl rollout restart statefulset "$CORE_RELEASE" --namespace "$NAMESPACE"
   kubectl rollout restart deployment "$MCP_RELEASE" --namespace "$NAMESPACE"
+  kubectl rollout status deployment "$AUTH_RELEASE" --namespace "$NAMESPACE" --timeout=15m
   kubectl rollout status statefulset "$CORE_RELEASE" --namespace "$NAMESPACE" --timeout=15m
   kubectl rollout status deployment "$MCP_RELEASE" --namespace "$NAMESPACE" --timeout=15m
 
+  auth_image=$(kubectl get deployment "$AUTH_RELEASE" --namespace "$NAMESPACE" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
   core_image=$(kubectl get statefulset "$CORE_RELEASE" --namespace "$NAMESPACE" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
   mcp_image=$(kubectl get deployment "$MCP_RELEASE" --namespace "$NAMESPACE" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
-  echo "==> Done through Flux. Core: ${core_image:-$CORE_RELEASE}, MCP: ${mcp_image:-$MCP_RELEASE}, Namespace: $NAMESPACE"
+  echo "==> Done through Flux. Auth: ${auth_image:-$AUTH_RELEASE}, Core: ${core_image:-$CORE_RELEASE}, MCP: ${mcp_image:-$MCP_RELEASE}, Namespace: $NAMESPACE"
   exit 0
 fi
 
+auth_helm_args=(
+  upgrade --install "$AUTH_RELEASE" "$AUTH_CHART_DIR"
+  --namespace "$NAMESPACE" --reset-values --values "$AUTH_VALUES_FILE"
+  --set-string fullnameOverride="$AUTH_RELEASE"
+  --set-string image.tag="$IMAGE_TAG"
+  --set-string "issuer.url=https://$DOMAIN"
+  --set-string "issuer.resourceUrl=https://$DOMAIN"
+  --set-string "issuer.commoncalUrl=https://$DOMAIN"
+  --set-string "ingress.host=$DOMAIN"
+  --set-string "ingress.tls.secretName=$TLS_SECRET_NAME"
+  --set-string secrets.name=commoncal-auth-secrets
+  --set-string secrets.databaseUrlKey=DATABASE_URL
+  --set-string secrets.bridgeKey=LAB_BRIDGE_KEY
+  --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS
+  --set-string secrets.signingKid=AUTH_SIGNING_KID
+  --timeout=15m
+)
 core_helm_args=(
   upgrade --install "$CORE_RELEASE" "$CORE_CHART_DIR"
   --namespace "$NAMESPACE" --reset-values --values "$CORE_VALUES_FILE"
@@ -349,6 +404,12 @@ core_helm_args=(
   --set-string existingSecret.name=commoncal-session
   --set-string mcpInternalApiSecret.name=commoncal-mcp-secrets
   --set-string mcpInternalApiSecret.key=mcp-internal-api-key
+  # Authorization bridge (slice 5): CommonCal calls the private bridge.
+  --set-string authBridge.enabled=true
+  --set-string authBridge.url="http://commoncal-auth-internal.$NAMESPACE.svc:80"
+  --set-string authBridge.timeoutMs=5000
+  --set-string authBridge.secretName=commoncal-auth-secrets
+  --set-string authBridge.secretKey=LAB_BRIDGE_KEY
   --timeout=15m
 )
 mcp_helm_args=(
@@ -363,11 +424,18 @@ mcp_helm_args=(
   --set-string existingSecret.apiKeyKeyName=mcp-internal-api-key
   --set-string existingSecret.sessionSecretKeyName=mcp-session-secret
   --set-string existingSecret.oauthIssuerKeyName=mcp-oauth-issuer
+  # Hold issuer (slice 5): accept tokens from the new authorization server
+  # without making it primary (no cutover). Optional — only set when provided.
   --set-string "env.MCP_DOMAIN=$MCP_DOMAIN"
   --set-string "env.MCP_INTERNAL_API_BASE=$MCP_INTERNAL_API_BASE"
   --set-string "env.MCP_PUBLIC_RESOURCE_URL=https://$MCP_DOMAIN/mcp"
   --timeout=15m
 )
+# Hold issuer (slice 5): when MCP_OAUTH_ISSUER_HOLD is set, the MCP server
+# accepts tokens from the new authorization server without making it primary.
+if [[ -n "${MCP_OAUTH_ISSUER_HOLD:-}" ]]; then
+  mcp_helm_args+=(--set-string existingSecret.oauthIssuerHoldKeyName=mcp-oauth-issuer-hold)
+fi
 
 if [[ -n "$GHCR_TOKEN" ]]; then
   echo "==> Applying GHCR image pull secret..."
@@ -375,22 +443,29 @@ if [[ -n "$GHCR_TOKEN" ]]; then
     --docker-server=https://ghcr.io --docker-username=_token \
     --docker-password="$GHCR_TOKEN" --docker-email="" \
     -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+  auth_helm_args+=(--set-string 'imagePullSecrets[0].name=commoncal-ghcr-creds')
   core_helm_args+=(--set-string 'imagePullSecrets[0].name=commoncal-ghcr-creds')
   mcp_helm_args+=(--set-string 'imagePullSecrets[0].name=commoncal-ghcr-creds')
 fi
 if ((dry_run)); then
+  auth_helm_args+=(--dry-run)
   core_helm_args+=(--dry-run)
   mcp_helm_args+=(--dry-run)
 fi
 
+# Rollout order: auth (bridge) -> core -> mcp. The bridge must be reachable
+# before CommonCal is wired to call it, and CommonCal before MCP.
+echo "==> Deploying auth release '$AUTH_RELEASE'..."
+helm "${auth_helm_args[@]}"
 echo "==> Deploying core release '$CORE_RELEASE'..."
 helm "${core_helm_args[@]}"
 echo "==> Deploying MCP release '$MCP_RELEASE'..."
 helm "${mcp_helm_args[@]}"
 
 if ((!dry_run)); then
+  kubectl rollout status deployment "$AUTH_RELEASE" --namespace "$NAMESPACE" --timeout=15m
   kubectl rollout status statefulset "$CORE_RELEASE" --namespace "$NAMESPACE" --timeout=15m
   kubectl rollout status deployment "$MCP_RELEASE" --namespace "$NAMESPACE" --timeout=15m
 fi
 
-echo "==> Done. Core: $CORE_RELEASE, MCP: $MCP_RELEASE, Namespace: $NAMESPACE"
+echo "==> Done. Auth: $AUTH_RELEASE, Core: $CORE_RELEASE, MCP: $MCP_RELEASE, Namespace: $NAMESPACE"

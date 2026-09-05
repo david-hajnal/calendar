@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commoncal-auth.publicServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commoncal-auth.labels" . | nindent 4 }}
+    app.kubernetes.io/component: public
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "commoncal-auth.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.public.port }}
+      targetPort: public
+      protocol: TCP

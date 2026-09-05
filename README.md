@@ -33,6 +33,8 @@ Run all checks:
 make check
 ```
 
+All linters must pass before pushing to remote.
+
 Focused commands:
 
 ```sh

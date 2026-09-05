@@ -15,18 +15,26 @@
 {{- end }}
 {{- end }}
 
-{{- define "commoncal-auth.labels" -}}
+{{- define "commoncal-auth.baseLabels" -}}
 helm.sh/chart: {{ include "commoncal-auth.name" . }}-{{ .Chart.Version | replace "+" "_" }}
 app.kubernetes.io/name: {{ include "commoncal-auth.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "commoncal-auth.labels" -}}
+{{ include "commoncal-auth.baseLabels" . }}
 app.kubernetes.io/component: authorization
 {{- end }}
 
-{{- define "commoncal-auth.selectorLabels" -}}
+{{- define "commoncal-auth.selectorBaseLabels" -}}
 app.kubernetes.io/name: {{ include "commoncal-auth.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "commoncal-auth.selectorLabels" -}}
+{{ include "commoncal-auth.selectorBaseLabels" . }}
 app.kubernetes.io/component: authorization
 {{- end }}
 

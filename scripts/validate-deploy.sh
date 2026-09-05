@@ -142,7 +142,7 @@ echo "--- YAML syntax validation ---"
 YAML_FILES=$(find deploy/flux/overlays/production -name '*.yaml' -type f 2>/dev/null || true)
 if [ -n "$YAML_FILES" ]; then
   # shellcheck disable=SC2086
-  python3 -c "import yaml, sys; [list(yaml.safe_load_all(open(f))) for f in sys.argv[1:]]" $YAML_FILES 2>/dev/null || { echo "FAIL: YAML syntax error"; ERRORS=$((ERRORS+1)); }
+  python3 scripts/validate-yaml.py $YAML_FILES || { echo "FAIL: YAML syntax or duplicate mapping key"; ERRORS=$((ERRORS+1)); }
 fi
 
 # 9. Run chart template assertions

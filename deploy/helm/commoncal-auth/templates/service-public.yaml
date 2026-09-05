@@ -4,7 +4,7 @@ metadata:
   name: {{ include "commoncal-auth.publicServiceName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "commoncal-auth.labels" . | nindent 4 }}
+    {{- include "commoncal-auth.baseLabels" . | nindent 4 }}
     app.kubernetes.io/component: public
 spec:
   type: ClusterIP

@@ -646,6 +646,11 @@ registered when it is `true`. Set the env var and restart so the pod picks it
 up:
 
 ```bash
+# Quick one-liner (Flux will revert unless you also update Helm values):
+k -n commoncal set env statefulset/commoncal PASSWORD_LOGIN_ENABLED=true
+k -n commoncal rollout restart statefulset commoncal
+
+# Or via ConfigMap:
 kubectl -n commoncal patch configmap commoncal \
   --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'
 kubectl -n commoncal rollout restart statefulset commoncal

@@ -21,7 +21,7 @@ readonly MAX_DURATION=3600
 NAMESPACE="$DEFAULT_NAMESPACE"
 WRITE_MODE=0
 
-# --- Argument parsing ---
+# --- Argument parsing (before preflight so tests can validate args without root) ---
 while [ $# -gt 0 ]; do
   case "$1" in
     --write) WRITE_MODE=1; shift ;;

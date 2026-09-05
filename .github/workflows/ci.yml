@@ -93,14 +93,14 @@ jobs:
           sh deploy/helm/commoncal/tests/template_assertions.sh
           sh deploy/helm/commoncal-mcp/tests/template_assertions.sh
 
-      - name: Check no mutable tags in production
+      - name: Check immutable production tags
         run: |
           if grep -rn 'tag:.*latest' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then
             echo "ERROR: Found 'latest' tag in production manifests"
             exit 1
           fi
-          if grep -rn 'tag:.*"main"' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then
-            echo "ERROR: Found 'main' tag in production manifests"
+          if [[ "$(grep -hE '^[[:space:]]*tag: "sha-[0-9a-f]{40}"$' deploy/flux/overlays/production/charts/*-helmrelease.yaml | wc -l | tr -d ' ')" != 3 ]]; then
+            echo "ERROR: All three production image tags must use sha-<40 hex commit>"
             exit 1
           fi
         shell: bash

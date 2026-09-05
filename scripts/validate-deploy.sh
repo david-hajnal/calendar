@@ -60,7 +60,7 @@ else
   echo "SKIP: neither kustomize nor kubectl installed"
 fi
 
-# 3. Check for mutable tags in production manifests
+# 3. Check for immutable source-revision tags in production manifests
 echo ""
 echo "--- Checking for mutable tags ---"
 MUTABLE=$(grep -rn 'tag:.*latest' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null || true)
@@ -77,34 +77,23 @@ if [ -n "$MUTABLE" ]; then
   ERRORS=$((ERRORS+1))
 fi
 
-# 4. Check each HelmRelease tag carries a valid $imagepolicy setter marker
-#    and the referenced ImagePolicy exists in the bundle.
+# 4. Each HelmRelease must use the immutable tag published for a source commit.
 echo ""
-echo "--- Checking flux setter markers ---"
-SETTER_ERRORS=0
+echo "--- Checking immutable production tags ---"
 HELMRELEASE_FILES=$(find deploy/flux/overlays/production/charts/ -name '*.yaml' -exec grep -l 'kind: HelmRelease' {} \; 2>/dev/null || true)
 if [ -n "$HELMRELEASE_FILES" ]; then
   while read -r f; do
     name=$(basename "$f")
-    marker=$(grep -oE '# \{"\$imagepolicy": "[a-z0-9.-]+:[a-z0-9.-]+:tag"\}' "$f" || true)
-    if [ -z "$marker" ]; then
-      echo "FAIL: $name has no valid \$imagepolicy setter marker on its tag"
-      SETTER_ERRORS=1
-      continue
-    fi
-    policy=$(echo "$marker" | sed -E 's/.*"([a-z0-9.-]+:[a-z0-9.-]+):tag".*/\1/')
-    if [ -s "$BUNDLE" ] && ! grep -q "name: ${policy##*:}" "$BUNDLE"; then
-      echo "FAIL: $name setter references missing ImagePolicy $policy"
-      SETTER_ERRORS=1
+    if grep -Eq '^[[:space:]]*tag: "sha-[0-9a-f]{40}"$' "$f"; then
+      echo "OK: $name uses an immutable source revision"
     else
-      echo "OK: $name setter -> $policy"
+      echo "FAIL: $name must use tag sha-<40 hex commit>"
+      ERRORS=$((ERRORS+1))
     fi
   done <<< "$HELMRELEASE_FILES"
-  [ "$SETTER_ERRORS" -eq 0 ] || ERRORS=$((ERRORS+1))
 fi
 
-# 5. CRD conformance: image resources must match the installed Flux CRDs,
-#    and gotk-components must carry both image controllers and the CRDs.
+# 5. Flux CRD conformance for the rendered production resources.
 echo ""
 echo "--- Checking Flux CRD conformance ---"
 if command -v python3 &>/dev/null; then
@@ -116,8 +105,7 @@ else
 fi
 
 # 6. The release script must not modify production image tags.
-#    Promotion happens only via Flux image automation after both images
-#    exist in the registry.
+#    Promotion is handled atomically by the image publication workflow.
 echo ""
 echo "--- Checking release script does not touch production image tags ---"
 if grep -nE 'charts/(core|mcp)-helmrelease\.yaml' scripts/release.sh >/dev/null 2>&1; then
@@ -125,7 +113,7 @@ if grep -nE 'charts/(core|mcp)-helmrelease\.yaml' scripts/release.sh >/dev/null 
   grep -nE 'charts/(core|mcp)-helmrelease\.yaml' scripts/release.sh
   ERRORS=$((ERRORS+1))
 else
-  echo "OK: release script leaves production image tags to Flux automation"
+  echo "OK: release script leaves production image tags to the publication workflow"
 fi
 
 # The release script regenerates Rust lockfiles after version bumps; both must

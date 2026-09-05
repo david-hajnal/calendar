@@ -33,7 +33,7 @@ spec:
     domain: cal.hajnal.space
     image:
       repository: ghcr.io/david-hajnal/calendar-core
-      tag: "main" # {"$imagepolicy": "flux-system:image-policy-core:tag"}
+      tag: "v2.3.0" # {"$imagepolicy": "flux-system:image-policy-core:tag"}
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

@@ -28,7 +28,7 @@ spec:
     replicaCount: 1
     image:
       repository: ghcr.io/david-hajnal/calendar-auth
-      tag: "main" # {"$imagepolicy": "flux-system:image-policy-auth:tag"}
+      tag: "main"
       pullPolicy: IfNotPresent
     issuer:
       url: https://cal.hajnal.space

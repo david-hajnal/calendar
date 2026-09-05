@@ -154,7 +154,7 @@ impl Aes256GcmEncryptor {
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, BackupError> {
     let mut decoded = Vec::with_capacity(value.len() / 2);
-    for chunk in value.as_bytes().chunks_exact(2) {
+    for chunk in value.as_bytes().as_chunks::<2>().0 {
         decoded.push((hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?);
     }
     Ok(decoded)

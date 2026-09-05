@@ -40,6 +40,7 @@ if ! command -v helm >/dev/null 2>&1; then
 fi
 
 helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag > "$rendered"
+python3 "$chart_dir/../../../scripts/validate-yaml.py" "$rendered"
 
 grep -q 'replicas: 1' "$rendered"
 grep -q 'runAsNonRoot: true' "$rendered"

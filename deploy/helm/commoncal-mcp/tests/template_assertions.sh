@@ -37,6 +37,7 @@ if ! command -v helm >/dev/null 2>&1; then
 fi
 
 helm template commoncal-mcp "$chart_dir" > "$rendered"
+python3 "$chart_dir/../../../scripts/validate-yaml.py" "$rendered"
 
 grep -q 'name: MCP_DATABASE_PATH' "$rendered"
 grep -q 'value: "/app/data/mcp-server.db"' "$rendered"

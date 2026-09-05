@@ -5,7 +5,7 @@ metadata:
   name: {{ include "commoncal-auth.fullname" . }}-migrate
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "commoncal-auth.labels" . | nindent 4 }}
+    {{- include "commoncal-auth.baseLabels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
     # Re-run the migration on chart change by bumping this checksum. The Job
@@ -20,7 +20,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "commoncal-auth.selectorLabels" . | nindent 8 }}
+        {{- include "commoncal-auth.selectorBaseLabels" . | nindent 8 }}
         app.kubernetes.io/component: migration
     spec:
       serviceAccountName: {{ include "commoncal-auth.serviceAccountName" . }}

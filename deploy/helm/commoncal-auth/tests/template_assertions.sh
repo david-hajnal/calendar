@@ -40,6 +40,10 @@ fi
 
 helm template commoncal-auth "$chart_dir" --namespace commoncal > "$rendered"
 
+# Flux's Helm post-renderer rejects duplicate mapping keys even though
+# `helm lint` and `helm template` accept them.
+python3 "$chart_dir/../../../scripts/validate-yaml.py" "$rendered"
+
 # --- Kinds present ---------------------------------------------------------
 grep -q 'kind: Deployment' "$rendered"
 grep -q 'kind: Service' "$rendered"
@@ -59,6 +63,12 @@ grep -q 'automountServiceAccountToken: false' "$rendered"
 # --- Two services ----------------------------------------------------------
 grep -q 'name: commoncal-auth-public' "$rendered"
 grep -q 'name: commoncal-auth-internal' "$rendered"
+grep -A10 'name: commoncal-auth-public' "$rendered" | grep -q 'app.kubernetes.io/component: public'
+grep -A10 'name: commoncal-auth-internal' "$rendered" | grep -q 'app.kubernetes.io/component: internal'
+
+# Service selectors continue to target the authorization Deployment pods.
+grep -A20 'name: commoncal-auth-public' "$rendered" | grep -q 'app.kubernetes.io/component: authorization'
+grep -A20 'name: commoncal-auth-internal' "$rendered" | grep -q 'app.kubernetes.io/component: authorization'
 
 # --- Ingress is public-only (no internal service reference) -----------------
 # The Ingress must reference the public service, never the internal one.
@@ -102,6 +112,7 @@ grep -q 'port: 4000' "$rendered"
 # --- Migration job uses the migration entrypoint ---------------------------
 grep -q 'src/migrate.mjs' "$rendered"
 grep -q 'name: commoncal-auth-migrate' "$rendered"
+grep -A30 'name: commoncal-auth-migrate' "$rendered" | grep -q 'app.kubernetes.io/component: migration'
 
 # --- PDB -------------------------------------------------------------------
 grep -q 'minAvailable: 1' "$rendered"

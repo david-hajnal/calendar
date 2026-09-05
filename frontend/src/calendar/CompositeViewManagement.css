@@ -386,6 +386,69 @@
   font-size: 0.8125rem;
 }
 
+/* ---- Save bar ---- */
+
+.composite-view-management__save-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--color-primary-container);
+  border-radius: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+/* ---- Color label ---- */
+
+.composite-view-management__color-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-on-surface-variant);
+  margin-left: 0.25rem;
+}
+
+/* ---- CalDAV section ---- */
+
+.composite-view-management__caldav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-outline-variant);
+}
+
+.composite-view-management__caldav-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-on-surface);
+  cursor: pointer;
+}
+
+.composite-view-management__caldav-label input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.composite-view-management__caldav-link {
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  text-decoration: none;
+  word-break: break-all;
+  padding: 0.375rem 0.5rem;
+  background: var(--color-surface-container);
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-outline-variant);
+  transition: background 150ms ease;
+}
+
+.composite-view-management__caldav-link:hover {
+  background: var(--color-surface-container-high);
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

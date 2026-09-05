@@ -80,10 +80,8 @@ else
   sed -i "s/^appVersion: \".*\"/appVersion: \"${TAG}\"/" deploy/helm/commoncal-mcp/Chart.yaml
 fi
 
-# Production image tags are NOT bumped here. Flux image automation promotes
-# them only after both versioned images exist in GHCR (registry-triggered
-# promotion). Bumping them before publication would let Flux reconcile a
-# version whose container image does not exist yet.
+# Production image tags are not bumped here. A push to main publishes all
+# three images, then atomically commits their immutable sha-* tags.
 
 # Stage and commit
 git add \

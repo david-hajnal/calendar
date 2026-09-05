@@ -42,11 +42,13 @@ ci-script-test:
 	sh scripts/test-check-no-yarn-lock.sh
 
 check-prod-tags:
-	@echo "==> Checking production manifests for mutable tags..."
+	@echo "==> Checking production manifests for immutable tags..."
 	@if grep -rn 'tag:.*latest' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then \
 		echo "ERROR: Found 'latest' tag in production manifests"; exit 1; fi
 	@if grep -rn 'tag:.*"main"' deploy/flux/overlays/production/ --include='*.yaml' 2>/dev/null; then \
 		echo "ERROR: Found 'main' tag in production manifests"; exit 1; fi
+	@test "$$(grep -hE '^[[:space:]]*tag: "sha-[0-9a-f]{40}"$$' deploy/flux/overlays/production/charts/*-helmrelease.yaml | wc -l | tr -d ' ')" -eq 3 || \
+		{ echo "ERROR: Expected three immutable sha-<40 hex commit> production tags"; exit 1; }
 
 deploy-script-test:
 	sh scripts/test-deploy-prod.sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate Flux image automation resources against the installed CRD schemas.
+"""Validate production Flux resources against the installed CRD schemas.
 
 Self-contained (PyYAML only). Checks, for every resource rendered by the
 production kustomization whose apiVersion belongs to a Flux CRD group:
@@ -12,16 +12,13 @@ production kustomization whose apiVersion belongs to a Flux CRD group:
 - array items validate against the item schema
 - additionalProperties constraints are honored
 
-Also asserts the bundle contains the expected image automation set:
-3 ImageRepositories, 3 ImagePolicies, 1 ImageUpdateAutomation, and that
-gotk-components.yaml carries both image controller Deployments and the
-three image CRDs.
+Also asserts the bundle contains exactly three HelmReleases and no obsolete
+image-policy resources.
 
 Usage: scripts/validate-flux-crds.py <gotk-components.yaml> <rendered-bundle.yaml>
 Exits 0 on success, 1 on any failure.
 """
 import re
-import subprocess
 import sys
 import yaml
 
@@ -129,35 +126,22 @@ def main():
             schema = v.get("schema", {}).get("openAPIV3Schema", {})
             crd_schemas[(group, v["name"], kind)] = schema
 
-    # 1. gotk-components must carry both image controllers and the 3 image CRDs
-    deployments = {d["metadata"]["name"] for d in components if d.get("kind") == "Deployment"}
-    for ctrl in ("image-reflector-controller", "image-automation-controller"):
-        if ctrl not in deployments:
-            errors.append(f"gotk-components.yaml: missing Deployment {ctrl}")
-    for crd in (
-        "imagerepositories.image.toolkit.fluxcd.io",
-        "imagepolicies.image.toolkit.fluxcd.io",
-        "imageupdateautomations.image.toolkit.fluxcd.io",
-    ):
-        if crd not in crd_names:
-            errors.append(f"gotk-components.yaml: missing CRD {crd}")
-
-    # 2. Bundle must contain the expected image automation set
+    # 1. Bundle must contain the expected deployment resources only.
     def count(kind):
         return sum(1 for d in bundle if d.get("kind") == kind)
 
     expected = {
         "HelmRelease": 3,
-        "ImageRepository": 3,
-        "ImagePolicy": 3,
-        "ImageUpdateAutomation": 1,
+        "ImageRepository": 0,
+        "ImagePolicy": 0,
+        "ImageUpdateAutomation": 0,
     }
     for kind, want in expected.items():
         got = count(kind)
         if got != want:
             errors.append(f"bundle: expected {want} {kind}, got {got}")
 
-    # 3. Validate every Flux-CRD resource in the bundle against its CRD schema
+    # 2. Validate every Flux-CRD resource in the bundle against its CRD schema
     validated = 0
     for d in bundle:
         api_version = d.get("apiVersion", "")
@@ -179,52 +163,14 @@ def main():
                 f"{kind}/{d['metadata']['name']}: " + "; ".join(res_errors)
             )
 
-    if validated < 10:
-        errors.append(f"expected >=10 Flux CRD resources validated, got {validated}")
-
-    # 4. Each ImagePolicy filter must accept only stable vX.Y.Z tags.
-    for d in bundle:
-        if d.get("kind") != "ImagePolicy":
-            continue
-        name = d["metadata"]["name"]
-        pattern = (d.get("spec", {}).get("filterTags") or {}).get("pattern")
-        if not pattern:
-            errors.append(f"ImagePolicy/{name}: no filterTags.pattern set")
-            continue
-        rx = re.compile(pattern)
-        should_match = ["v2.1.0", "v2.2.0", "v2.10.3", "v10.20.30"]
-        should_not_match = [
-            "main", "latest", "sha-49502f9", "49502f9",
-            "v2.2.0-rc1", "v2.2.0-beta.2", "v2.2", "v2.2.0.1",
-            "V2.2.0", "v2.2.0 ", " v2.2.0",
-        ]
-        for tag in should_match:
-            if not rx.search(tag):
-                errors.append(f"ImagePolicy/{name}: filter must accept {tag!r}")
-        for tag in should_not_match:
-            if rx.search(tag):
-                errors.append(f"ImagePolicy/{name}: filter must reject {tag!r}")
-
-    # 5. Exactly three $imagepolicy setter markers exist in the overlay, one
-    #    per HelmRelease, so the automation can only touch those three fields.
-    out = subprocess.run(
-        ["grep", "-rn", '--include=*.yaml', '$imagepolicy', "deploy/flux/overlays/production/"],
-        capture_output=True, text=True,
-    )
-    marker_lines = [l for l in out.stdout.splitlines() if l.strip()]
-    if len(marker_lines) != 3:
-        errors.append(f"expected exactly 3 $imagepolicy setter markers in the overlay, got {len(marker_lines)}")
-    else:
-        for line in marker_lines:
-            path = line.split(":", 2)[0]
-            if "/charts/" not in path:
-                errors.append(f"setter marker outside charts/: {line}")
+    if validated < 3:
+        errors.append(f"expected >=3 Flux CRD resources validated, got {validated}")
 
     if errors:
         fail(errors)
     print(
         f"OK: {validated} Flux CRD resources conform to installed schemas; "
-        "image controllers and CRDs present; expected resource set present"
+        "expected resource set present"
     )
 
 

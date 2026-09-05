@@ -243,7 +243,7 @@ case "$active_flux_releases" in
       exit 1
     fi
     if [[ -n "$GHCR_TOKEN" ]]; then
-      echo "ERROR: GHCR_TOKEN is ignored under Flux ownership: Flux pulls images with its own ImageRepository credentials." >&2
+      echo "ERROR: GHCR_TOKEN is ignored under Flux ownership: Kubernetes pulls images using HelmRelease imagePullSecrets." >&2
       echo "Remove GHCR_TOKEN from '$DEPLOY_DIR/.env', or add the pull Secret to the Flux HelmReleases in Git." >&2
       exit 1
     fi

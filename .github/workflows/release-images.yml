@@ -6,7 +6,7 @@ name: Release images
 # production. All three images are built and scanned first; none is published
 # until all three have passed. The publish job pushes the 'main' tag and a
 # sha-<commit> tag back-to-back, then verifies all registry manifests, so
-# Flux image automation never promotes a version whose image does not exist.
+# The promotion commit never references an image that does not exist.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,7 +17,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 env:
@@ -140,6 +140,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-auth, build-core, build-mcp]
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download images
         uses: actions/download-artifact@v4
         with:
@@ -180,3 +184,31 @@ jobs:
               "https://ghcr.io/v2/david-hajnal/${repo}/manifests/${MAIN_TAG}" >/dev/null
             echo "OK: ghcr.io/david-hajnal/${repo}:${MAIN_TAG} manifest present"
           done
+
+      - name: Promote immutable image tags
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if [[ "$(git rev-parse origin/main)" != "${SOURCE_SHA}" ]]; then
+            echo "A newer main commit exists; its workflow will promote that revision."
+            exit 0
+          fi
+
+          promoted_tag="sha-${SOURCE_SHA}"
+          for manifest in \
+            deploy/flux/overlays/production/charts/auth-helmrelease.yaml \
+            deploy/flux/overlays/production/charts/core-helmrelease.yaml \
+            deploy/flux/overlays/production/charts/mcp-helmrelease.yaml; do
+            sed -i -E "s/^([[:space:]]*tag:).*/\\1 \"${promoted_tag}\"/" "${manifest}"
+          done
+
+          test "$(grep -hE "^[[:space:]]*tag: \"${promoted_tag}\"$" \
+            deploy/flux/overlays/production/charts/*-helmrelease.yaml | wc -l | tr -d ' ')" -eq 3
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add deploy/flux/overlays/production/charts/*-helmrelease.yaml
+          git commit -m "chore(deploy): promote ${SOURCE_SHA}"
+          git push origin HEAD:main

@@ -3,7 +3,7 @@
 ## Overview
 
 Auth, Core, and MCP are deployed to Kubernetes via Flux GitOps. Images are
-published to GHCR and automatically promoted via Flux image automation.
+published to GHCR and promoted by an immutable Git commit.
 
 The auth server is a Node.js OIDC provider that fronts the core and MCP
 applications. It uses a managed PostgreSQL database for user/session state and
@@ -11,31 +11,24 @@ exposes a private bridge endpoint that core uses for authenticated API calls.
 
 ## Promotion model
 
-Publication of a new `vX.Y.Z` container image is the production deployment
-trigger. `scripts/release.sh` bumps versions, commits the release metadata, and
-pushes the tag — it does **not** change the HelmRelease image tags. CI builds
-and publishes both versioned images, and only then does Flux promote them:
+Every push to `main` is a production deployment trigger. CI builds and scans
+all three images before publishing `main` and `sha-<commit>` tags. After all
+registry manifests exist, the workflow atomically commits the immutable SHA
+tag to all three HelmReleases. Flux then reconciles that commit.
 
-- Flux never reconciles a version before its container image exists: both
-  `vX.Y.Z` images are published to GHCR before either can be promoted.
-- Auth, Core, and MCP advance **together**: one `ImageUpdateAutomation`
-  (`image-update-automation`) commits all three HelmRelease tags. The three
-  ImagePolicies are evaluated independently, so the tags can land in up to
-  three commits within ~1 minute (a transient mixed state). All three images
-  already exist in that window, so no release ever points at a missing image.
-- Only stable `vX.Y.Z` tags qualify. `main`, SHA, `latest`, and prerelease
-  tags are ignored by the ImagePolicies.
-- Rollback is a Git revert of the promotion commit(s) (or an explicit pin,
-  with the automation suspended).
+- Flux never reconciles a revision before all three container images exist.
+- Auth, Core, and MCP advance together in one promotion commit.
+- Workloads use immutable `sha-<40 hex commit>` tags; `main` is only a registry
+  convenience tag and is never deployed.
+- Rollback is a Git revert of the promotion commit.
 
 ## Architecture
 
 ```
-release tag vX.Y.Z
-  → CI builds all three images, publishes vX.Y.Z to GHCR
-  → Flux ImageRepository detects the new tags
-  → Flux ImagePolicy selects the highest stable vX.Y.Z
-  → Flux ImageUpdateAutomation commits all three tags to main
+push to main
+  → CI builds and scans all three images
+  → CI publishes main + sha-<commit> for all three images
+  → CI commits all three immutable tags to main
   → Flux Kustomization reconciles the commit
   → HelmReleases upgrade (auth → core → mcp)
   → Kubernetes rolls out new pods
@@ -76,9 +69,8 @@ certificate. Flux deploys the image tags and chart values committed to its Git
 source, so `IMAGE_TAG` and the direct chart overrides are ignored in this mode.
 Flux mode also requires the canonical `commoncal` namespace and
 `commoncal-auth`/`commoncal`/`commoncal-mcp` release names; remove any legacy
-name overrides from `deploy/.env`. `GHCR_TOKEN` is rejected in this mode because
-Flux pulls images with its own ImageRepository credentials; configure the pull
-Secret on the HelmReleases in Git instead.
+name overrides from `deploy/.env`. `GHCR_TOKEN` is rejected in this mode;
+configure Kubernetes image-pull Secrets on the HelmReleases in Git instead.
 
 ### TLS model (two-hop)
 
@@ -166,20 +158,6 @@ To deploy a specific version:
 
 5. Flux will reconcile within 10 minutes.
 
-## Suspend Image Automation
-
-To pause automatic image promotion during an incident:
-
-```bash
-# Suspend the ImageUpdateAutomation
-kubectl annotate imageupdateautomation image-update-automation \
-  fluxcd.io/suspend=true --namespace=flux-system
-
-# Resume (removes the annotation)
-kubectl annotate imageupdateautomation image-update-automation \
-  fluxcd.io/suspend- --namespace=flux-system
-```
-
 ## Reconcile Resources
 
 ```bash
@@ -191,33 +169,25 @@ flux reconcile helmrelease commoncal-auth --namespace=flux-system
 flux reconcile helmrelease commoncal --namespace=flux-system
 flux reconcile helmrelease commoncal-mcp --namespace=flux-system
 
-# Reconcile image policy
-flux reconcile imagepolicy image-policy-auth --namespace=flux-system
-flux reconcile imagepolicy image-policy-core --namespace=flux-system
-flux reconcile imagepolicy image-policy-mcp --namespace=flux-system
-
-# Reconcile image update automation
-flux reconcile imageupdateautomation image-update-automation --namespace=flux-system
 ```
 
 ## Pin Known-Good Tag
 
-To pin to a known-good version (disables automation for that release):
+To pin to a known-good version:
 
-1. Edit the HelmRelease tag to the known-good version
-2. Remove or annotate the ImageUpdateAutomation as suspended
-3. Commit changes
+1. Edit all three HelmRelease tags to known-good immutable tags.
+2. Commit and push the changes.
 
-## Revert Automation Commit
+## Revert Promotion Commit
 
-To revert an automated image tag change:
+To revert an image promotion:
 
-1. Find the automation commit:
+1. Find the promotion commit:
    ```bash
-   git log --grep="chore(deploy): update.*image" --oneline
+   git log --grep="chore(deploy): promote" --oneline
    ```
 
-2. Revert the commit (a promotion may be one or two commits — revert each):
+2. Revert the commit:
    ```bash
    git revert <commit-hash>
    git push
@@ -227,7 +197,7 @@ To revert an automated image tag change:
 
 ## GHCR Credentials
 
-Images are published to `ghcr.io/david-hajnal/`. The repo must be public for Flux ImageRepository to pull without credentials. `GHCR_TOKEN` in `deploy/.env` only applies to direct Helm deployments; under Flux ownership the script rejects it. If the repo is private, create a Secret for the Flux side:
+Images are published to `ghcr.io/david-hajnal/`. `GHCR_TOKEN` in `deploy/.env` only applies to direct Helm deployments; under Flux ownership the script rejects it. If the packages are private, create a Kubernetes pull Secret:
 
 ```bash
 kubectl create secret docker-registry ghcr-credentials \
@@ -315,23 +285,11 @@ server's issuer is an explicit, manual step:
 
 To roll back a release:
 
-1. **Suspend image automation** to prevent re-promotion:
+1. **Revert the promotion commit:**
    ```bash
-   kubectl annotate imageupdateautomation image-update-automation \
-     fluxcd.io/suspend=true --namespace=flux-system
-   ```
-
-2. **Revert the promotion commit(s):**
-   ```bash
-   git log --grep="chore(deploy): update.*image" --oneline
+   git log --grep="chore(deploy): promote" --oneline
    git revert <commit-hash>
    git push
-   ```
-
-3. **Resume image automation** after confirming the rollback:
-   ```bash
-   kubectl annotate imageupdateautomation image-update-automation \
-     fluxcd.io/suspend- --namespace=flux-system
    ```
 
 To roll back the auth server specifically:
@@ -516,15 +474,6 @@ certificate:
 # Check HelmRelease status
 flux get helmreleases --namespace=flux-system
 
-# Check image repositories
-flux get imgrepo --namespace=flux-system
-
-# Check image policies
-flux get imgpolicy --namespace=flux-system
-
-# Check image update automation
-flux get imageupdateautomation --namespace=flux-system
-
 # Check workloads
 kubectl get statefulset -n commoncal
 kubectl get deployment -n commoncal
@@ -543,11 +492,9 @@ This checks:
 - Helm lint (auth, core, mcp)
 - Helm template rendering (auth, core, mcp)
 - Kustomize build of the production overlay
-- No mutable tags (latest/main) in production
-- Each HelmRelease tag carries a valid `$imagepolicy` setter marker
-  pointing at an existing ImagePolicy
-- Image resources conform to the installed Flux CRD schemas, and
-  `gotk-components.yaml` carries both image controllers and the image CRDs
+- No mutable tags (`latest`/`main`) in production; every HelmRelease uses an
+  immutable `sha-<40 hex commit>` tag
+- Rendered Flux resources conform to the installed CRD schemas
 - `scripts/release.sh` does not modify production image tags
 - YAML syntax
 - Chart template assertions (auth, core, mcp)

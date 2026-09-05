@@ -169,7 +169,7 @@ FAILED=0
 assert_pass() {
   local desc="$1"
   shift
-  if "$@" &>/dev/null; then
+  if "$@" >/dev/null 2>&1; then
     echo "PASS: $desc"
     PASSED=$((PASSED + 1))
   else
@@ -181,7 +181,7 @@ assert_pass() {
 assert_fail() {
   local desc="$1"
   shift
-  if "$@" &>/dev/null; then
+  if "$@" >/dev/null 2>&1; then
     echo "FAIL: $desc (expected to fail)" >&2
     FAILED=$((FAILED + 1))
   else

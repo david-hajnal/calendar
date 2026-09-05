@@ -128,6 +128,16 @@ else
   echo "OK: release script leaves production image tags to Flux automation"
 fi
 
+# The release script regenerates Rust lockfiles after version bumps; both must
+# be staged with their manifests or tagged Docker builds fail under --locked.
+RELEASE_STAGE_BLOCK=$(sed -n '/^# Stage and commit$/,/^git commit /p' scripts/release.sh)
+for lockfile in backend/Cargo.lock mcp-server/Cargo.lock; do
+  if ! printf '%s\n' "$RELEASE_STAGE_BLOCK" | grep -F "$lockfile" >/dev/null 2>&1; then
+    echo "FAIL: scripts/release.sh does not stage $lockfile"
+    ERRORS=$((ERRORS+1))
+  fi
+done
+
 # 7. Check no circular dependsOn in Flux resources
 echo ""
 echo "--- Checking for circular dependencies ---"
@@ -174,14 +184,17 @@ echo ""
 echo "--- Checking bridge isolation (no private ingress, no secret values) ---"
 if [ -s "$BUNDLE" ]; then
   # The auth chart's Ingress must only reference the public service.
-  if grep -q 'commoncal-auth-internal' <(helm template commoncal-auth deploy/helm/commoncal-auth \
-      --set-string image.tag=test \
-      --set-string secrets.name=commoncal-auth-secrets \
-      --set-string secrets.databaseUrlKey=DATABASE_URL \
-      --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
-      --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
-      --set-string secrets.signingKid=AUTH_SIGNING_KID \
-      2>/dev/null | grep -A20 'kind: Ingress'); then
+  INGRESS_TEMPLATE="$(mktemp)"
+  trap 'rm -f "$BUNDLE" "$INGRESS_TEMPLATE"' EXIT
+  helm template commoncal-auth deploy/helm/commoncal-auth \
+    --set-string image.tag=test \
+    --set-string secrets.name=commoncal-auth-secrets \
+    --set-string secrets.databaseUrlKey=DATABASE_URL \
+    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    2>/dev/null > "$INGRESS_TEMPLATE" || true
+  if grep -A20 'kind: Ingress' "$INGRESS_TEMPLATE" | grep -q 'commoncal-auth-internal'; then
     echo "FAIL: private bridge service must not be exposed via Ingress"
     ERRORS=$((ERRORS+1))
   else

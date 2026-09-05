@@ -1,6 +1,5 @@
 # Flux image policy for calendar-core
-# Selects the highest stable vX.Y.Z tag (main, SHA, latest, and prerelease
-# tags are ignored). The production label scopes this policy to the
+# Selects the 'main' tag. The production label scopes this policy to the
 # production ImageUpdateAutomation.
 ---
 apiVersion: image.toolkit.fluxcd.io/v1
@@ -14,8 +13,7 @@ spec:
   imageRepositoryRef:
     name: image-repository-core
   filterTags:
-    pattern: '^v(\d+\.\d+\.\d+)$'
-    extract: '$1'
+    pattern: '^main$'
+    extract: 'main'
   policy:
-    semver:
-      range: ">=2.1.0"
+    alphabetical: {}

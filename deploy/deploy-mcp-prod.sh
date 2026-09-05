@@ -2,11 +2,11 @@
 # Deploy commoncal-mcp to production with secrets from environment variables.
 #
 # Required env vars (loaded from deploy/.env when present):
-#   IMAGE_TAG              - Published container image tag
 #   MCP_INTERNAL_API_BASE  - Internal API base URL (origin, no /api suffix)
 #   MCP_DOMAIN             - Production MCP domain
 #
 # Optional env vars:
+#   IMAGE_TAG              - Published container image tag (default: main)
 #   TLS_SECRET_NAME             - TLS secret name (default: commoncal-tls)
 #   HELM_RELEASE_NAME           - Helm release name (default: commoncal-mcp)
 #   NAMESPACE                   - Kubernetes namespace (default: commoncal)
@@ -23,9 +23,9 @@ if [[ -f "$DEPLOY_DIR/.env" ]]; then
 fi
 
 # Fail fast if required env vars are missing
-: "${IMAGE_TAG:?ERROR: IMAGE_TAG is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_INTERNAL_API_BASE:?ERROR: MCP_INTERNAL_API_BASE is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_DOMAIN:?ERROR: MCP_DOMAIN is required. Set it in $DEPLOY_DIR/.env or export it}"
+: "${IMAGE_TAG:-main}"
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"

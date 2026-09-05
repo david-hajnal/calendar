@@ -89,6 +89,7 @@ jobs:
 
       - name: Test Helm chart templates
         run: |
+          sh deploy/helm/commoncal-auth/tests/template_assertions.sh
           sh deploy/helm/commoncal/tests/template_assertions.sh
           sh deploy/helm/commoncal-mcp/tests/template_assertions.sh
 

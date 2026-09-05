@@ -2,8 +2,12 @@
 
 ## Overview
 
-Core and MCP are deployed to Kubernetes via Flux GitOps. Images are published
-to GHCR and automatically promoted via Flux image automation.
+Auth, Core, and MCP are deployed to Kubernetes via Flux GitOps. Images are
+published to GHCR and automatically promoted via Flux image automation.
+
+The auth server is a Node.js OIDC provider that fronts the core and MCP
+applications. It uses a managed PostgreSQL database for user/session state and
+exposes a private bridge endpoint that core uses for authenticated API calls.
 
 ## Promotion model
 
@@ -14,11 +18,11 @@ and publishes both versioned images, and only then does Flux promote them:
 
 - Flux never reconciles a version before its container image exists: both
   `vX.Y.Z` images are published to GHCR before either can be promoted.
-- Core and MCP advance **together**: one `ImageUpdateAutomation`
-  (`image-update-automation`) commits both HelmRelease tags. The two
-  ImagePolicies are evaluated independently, so the tags can land in two
-  commits within ~1 minute (a transient mixed state). Both images already
-  exist in that window, so no release ever points at a missing image.
+- Auth, Core, and MCP advance **together**: one `ImageUpdateAutomation`
+  (`image-update-automation`) commits all three HelmRelease tags. The three
+  ImagePolicies are evaluated independently, so the tags can land in up to
+  three commits within ~1 minute (a transient mixed state). All three images
+  already exist in that window, so no release ever points at a missing image.
 - Only stable `vX.Y.Z` tags qualify. `main`, SHA, `latest`, and prerelease
   tags are ignored by the ImagePolicies.
 - Rollback is a Git revert of the promotion commit(s) (or an explicit pin,
@@ -28,34 +32,53 @@ and publishes both versioned images, and only then does Flux promote them:
 
 ```
 release tag vX.Y.Z
-  → CI builds both images, publishes vX.Y.Z to GHCR
+  → CI builds all three images, publishes vX.Y.Z to GHCR
   → Flux ImageRepository detects the new tags
   → Flux ImagePolicy selects the highest stable vX.Y.Z
-  → Flux ImageUpdateAutomation commits both tags to main
+  → Flux ImageUpdateAutomation commits all three tags to main
   → Flux Kustomization reconciles the commit
-  → HelmReleases upgrade
+  → HelmReleases upgrade (auth → core → mcp)
   → Kubernetes rolls out new pods
 ```
 
+### Component topology
+
+```
+Browser ──(Cloudflare)──► Ingress ──► auth (public)
+                                  │
+                                  ├──► auth (private bridge) ◄── core (egress)
+                                  │
+                                  └──► core (StatefulSet)
+                                           │
+                                           └──► mcp (Deployment)
+```
+
+- **auth** — Node.js OIDC provider. Public service for browser-facing OIDC
+  endpoints; private bridge service for core's authenticated API calls.
+  Backed by managed PostgreSQL.
+- **core** — Rust StatefulSet. The application backend. Talks to the auth
+  bridge for session validation.
+- **mcp** — Rust Deployment. The MCP server. Uses the auth issuer for OAuth.
+
 ## Namespace
 
-Both applications deploy to the `commoncal` namespace.
+All three applications deploy to the `commoncal` namespace.
 
 Flux is the normal production deployment authority. The HelmReleases use the
-explicit release names `commoncal` and `commoncal-mcp`; this avoids Flux's
-cross-namespace `commoncal-commoncal` default.
+explicit release names `commoncal-auth`, `commoncal`, and `commoncal-mcp`;
+this avoids Flux's cross-namespace `commoncal-commoncal` default.
 
-Run `deploy/deploy-prod.sh` for either deployment authority. When both
+Run `deploy/deploy-prod.sh` for either deployment authority. When all three
 HelmReleases are active, the script applies the runtime Secrets and reconciles
-the Flux Kustomization followed by the core and MCP HelmReleases; it does not
-deploy the workloads with direct Helm or create a self-signed certificate.
-Flux deploys the image tags and chart values committed to its Git source, so
-`IMAGE_TAG` and the direct chart overrides are ignored in this mode. Flux mode
-also requires the canonical `commoncal` namespace and
-`commoncal`/`commoncal-mcp` release names; remove any legacy name overrides from
-`deploy/.env`. `GHCR_TOKEN` is rejected in this mode because Flux pulls images with its own
-ImageRepository credentials; configure the pull Secret on the HelmReleases in
-Git instead.
+the Flux Kustomization followed by the auth, core, and MCP HelmReleases; it
+does not deploy the workloads with direct Helm or create a self-signed
+certificate. Flux deploys the image tags and chart values committed to its Git
+source, so `IMAGE_TAG` and the direct chart overrides are ignored in this mode.
+Flux mode also requires the canonical `commoncal` namespace and
+`commoncal-auth`/`commoncal`/`commoncal-mcp` release names; remove any legacy
+name overrides from `deploy/.env`. `GHCR_TOKEN` is rejected in this mode because
+Flux pulls images with its own ImageRepository credentials; configure the pull
+Secret on the HelmReleases in Git instead.
 
 ### TLS model (two-hop)
 
@@ -90,13 +113,13 @@ The MCP NetworkPolicy allows egress HTTPS to non-private IPv4 addresses only.
 On a dual-stack cluster, make sure the OAuth issuer and the core domain resolve
 to IPv4 for MCP egress.
 
-For an emergency direct deployment, first suspend both Flux HelmReleases, then
-run the same script. With both releases suspended (or absent), it deploys both
-workloads directly with Helm and requires `IMAGE_TAG`. It ensures the
+For an emergency direct deployment, first suspend all three Flux HelmReleases,
+then run the same script. With all releases suspended (or absent), it deploys
+all three workloads directly with Helm and requires `IMAGE_TAG`. It ensures the
 `commoncal-tls` TLS Secret exists and is valid (generating a self-signed
-certificate on first run if needed), then deploys both Ingresses referencing
+certificate on first run if needed), then deploys all Ingresses referencing
 that Secret. Resume Flux only after reconciling the direct deployment back into
-Git. A mixed state with only one active HelmRelease is rejected to prevent
+Git. A mixed state with any active HelmRelease is rejected to prevent
 split ownership.
 
 ### Legacy duplicate cleanup
@@ -111,6 +134,7 @@ delete its PVC until the live database location has been confirmed.
 
 ## Images
 
+- Auth: `ghcr.io/david-hajnal/calendar-auth`
 - Core: `ghcr.io/david-hajnal/calendar-core`
 - MCP: `ghcr.io/david-hajnal/calendar-mcp`
 
@@ -120,21 +144,27 @@ Tags follow semver: `v1.0.0`, `v1.0.1`, etc.
 
 To deploy a specific version:
 
-1. Edit `deploy/flux/overlays/production/charts/core-helmrelease.yaml`:
+1. Edit `deploy/flux/overlays/production/charts/auth-helmrelease.yaml`:
    ```yaml
    image:
      tag: "v1.0.0"  # change to desired version
    ```
 
-2. Edit `deploy/flux/overlays/production/charts/mcp-helmrelease.yaml`:
+2. Edit `deploy/flux/overlays/production/charts/core-helmrelease.yaml`:
    ```yaml
    image:
      tag: "v1.0.0"  # change to desired version
    ```
 
-3. Commit and push to `main`.
+3. Edit `deploy/flux/overlays/production/charts/mcp-helmrelease.yaml`:
+   ```yaml
+   image:
+     tag: "v1.0.0"  # change to desired version
+   ```
 
-4. Flux will reconcile within 10 minutes.
+4. Commit and push to `main`.
+
+5. Flux will reconcile within 10 minutes.
 
 ## Suspend Image Automation
 
@@ -157,10 +187,12 @@ kubectl annotate imageupdateautomation image-update-automation \
 flux reconcile kustomization flux-system --namespace=flux-system
 
 # Reconcile specific HelmRelease
+flux reconcile helmrelease commoncal-auth --namespace=flux-system
 flux reconcile helmrelease commoncal --namespace=flux-system
 flux reconcile helmrelease commoncal-mcp --namespace=flux-system
 
 # Reconcile image policy
+flux reconcile imagepolicy image-policy-auth --namespace=flux-system
 flux reconcile imagepolicy image-policy-core --namespace=flux-system
 flux reconcile imagepolicy image-policy-mcp --namespace=flux-system
 
@@ -210,6 +242,11 @@ Then add to each HelmRelease's `imagePullSecrets`.
 
 ## Production Secrets
 
+- `commoncal-auth-secrets` — auth server secrets:
+  - `DATABASE_URL` — PostgreSQL connection string for the auth database
+  - `LAB_BRIDGE_KEY` — shared secret for the private bridge endpoint
+  - `AUTH_COOKIE_KEYS` — JSON array of cookie signing keys (for rotation)
+  - `AUTH_SIGNING_KID` — current signing key ID
 - `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
 - `commoncal-mcp-secrets` — the shared internal API key, MCP session secret, and HTTPS OAuth issuer (`mcp-oauth-issuer`)
 - `commoncal-tls` — self-signed TLS certificate for the origin hop (covers both `cal.hajnal.space` and `mcal.hajnal.space`)
@@ -219,6 +256,94 @@ reference the same Secret. Browsers receive Cloudflare Universal SSL; the
 self-signed certificate is only presented on the Cloudflare-to-origin hop.
 
 `BACKUP_ENCRYPTION_KEY_HEX` must be an even number of hexadecimal characters (at least 32); 64-hex (32-byte) keys remain backward-compatible.
+
+## Auth Migration
+
+The auth server uses a managed PostgreSQL database. Schema migrations run
+automatically via a Helm pre-install/pre-upgrade Job in the `commoncal-auth`
+chart. The migration Job:
+
+1. Runs before the auth Deployment starts
+2. Applies all pending migrations in order
+3. Exits 0 on success, non-zero on failure
+4. Blocks the auth Deployment rollout on failure
+
+To run migrations manually (e.g., after a failed rollout):
+
+```bash
+kubectl create job --namespace=commoncal \
+  --from=cronjob/commoncal-auth-migrate \
+  commoncal-auth-migrate-manual
+kubectl logs -n commoncal job/commoncal-auth-migrate-manual --follow
+```
+
+To inspect migration status:
+
+```bash
+kubectl get jobs -n commoncal -l app.kubernetes.io/name=commoncal-auth
+kubectl logs -n commoncal job/commoncal-auth-migrate --tail=50
+```
+
+## Issuer Cutover
+
+The MCP OAuth issuer is held at `mcp-oauth-issuer` (the MCP server's own
+issuer) until the auth server is fully operational. The cutover to the auth
+server's issuer is an explicit, manual step:
+
+1. **Verify the auth server is healthy:**
+   ```bash
+   curl -s https://auth.hajnal.space/.well-known/openid-configuration
+   ```
+
+2. **Update the MCP issuer:**
+   ```bash
+   kubectl -n commoncal patch secret commoncal-mcp-secrets \
+     --type merge -p '{"data":{"OAUTH_ISSUER":"https://auth.hajnal.space"}}'
+   kubectl -n commoncal rollout restart deployment commoncal-mcp
+   ```
+
+3. **Verify MCP OAuth flow:**
+   ```bash
+   curl -sI https://mcal.hajnal.space/mcp | head -5
+   ```
+
+> **Warning:** The issuer cutover is irreversible without a rollback. If the
+> auth server is not healthy, do not cutover. The MCP server will reject
+> tokens from the new issuer if the JWKS endpoint is unreachable.
+
+## Rollback
+
+To roll back a release:
+
+1. **Suspend image automation** to prevent re-promotion:
+   ```bash
+   kubectl annotate imageupdateautomation image-update-automation \
+     fluxcd.io/suspend=true --namespace=flux-system
+   ```
+
+2. **Revert the promotion commit(s):**
+   ```bash
+   git log --grep="chore(deploy): update.*image" --oneline
+   git revert <commit-hash>
+   git push
+   ```
+
+3. **Resume image automation** after confirming the rollback:
+   ```bash
+   kubectl annotate imageupdateautomation image-update-automation \
+     fluxcd.io/suspend- --namespace=flux-system
+   ```
+
+To roll back the auth server specifically:
+
+1. Revert the auth HelmRelease tag to the previous version
+2. The migration Job is idempotent — it will not re-run if the schema is
+   already at the target version
+3. If the migration was destructive, restore the database from backup:
+   ```bash
+   pg_restore --dbname=commoncal_auth --clean --if-exists \
+     --username=auth < backup-file.dump
+   ```
 
 ## TLS Cutover Checklist
 
@@ -403,6 +528,7 @@ flux get imageupdateautomation --namespace=flux-system
 # Check workloads
 kubectl get statefulset -n commoncal
 kubectl get deployment -n commoncal
+kubectl get job -n commoncal -l app.kubernetes.io/name=commoncal-auth
 ```
 
 ## Validation
@@ -414,8 +540,8 @@ bash scripts/validate-deploy.sh
 ```
 
 This checks:
-- Helm lint
-- Helm template rendering
+- Helm lint (auth, core, mcp)
+- Helm template rendering (auth, core, mcp)
 - Kustomize build of the production overlay
 - No mutable tags (latest/main) in production
 - Each HelmRelease tag carries a valid `$imagepolicy` setter marker
@@ -424,7 +550,10 @@ This checks:
   `gotk-components.yaml` carries both image controllers and the image CRDs
 - `scripts/release.sh` does not modify production image tags
 - YAML syntax
-- Chart template assertions
+- Chart template assertions (auth, core, mcp)
+- Bridge isolation (no private ingress, no secret values)
+- Flux dependency order (auth → core → mcp)
+- Issuer consistency (no cutover)
 
 ## Ad-hoc SQLite Console
 

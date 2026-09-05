@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# commoncal-auth — repository-owned authorization image.
+#
+# Multi-stage, non-root, immutable entrypoint. The same image serves two
+# entrypoints selected by the container command:
+#   - server:    node src/server.mjs   (long-lived OIDC provider + CommonCal bridge)
+#   - migration: node src/migrate.mjs  (one-shot schema migration, used by the Job)
+#
+# Secrets (DATABASE_URL, LAB_BRIDGE_KEY, cookie keys, JWKS) are injected at
+# runtime from Kubernetes Secrets — never baked into the image.
+
+FROM node:22-bookworm-slim AS build
+WORKDIR /build
+COPY slice1-lab/auth-server/package.json slice1-lab/auth-server/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile --prod
+
+FROM node:22-bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system commoncal \
+    && useradd --system --gid commoncal --home-dir /app --shell /usr/sbin/nologin commoncal \
+    && mkdir -p /app \
+    && chown -R commoncal:commoncal /app
+WORKDIR /app
+
+COPY --from=build /build/node_modules ./node_modules
+COPY slice1-lab/auth-server/src ./src
+COPY slice1-lab/auth-server/migrations ./migrations
+COPY slice1-lab/auth-server/package.json ./package.json
+
+USER commoncal
+ENV NODE_ENV=production \
+    AUTH_PUBLIC_BIND=0.0.0.0 \
+    AUTH_PRIVATE_BIND=0.0.0.0 \
+    AUTH_PUBLIC_PORT=4000 \
+    AUTH_PRIVATE_PORT=4001
+EXPOSE 4000 4001
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:4000/.well-known/openid-configuration').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["node", "src/server.mjs"]

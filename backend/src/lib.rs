@@ -26,4 +26,6 @@ pub mod recurrence;
 pub mod security;
 pub mod sessions;
 pub mod shared_view;
+pub mod user_invitation;
+pub mod user_invitation_rate_limit;
 pub mod write_rate_limit;

@@ -38,3 +38,4 @@ rand = "0.8"
 thiserror = "2"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"

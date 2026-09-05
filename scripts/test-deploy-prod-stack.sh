@@ -321,6 +321,10 @@ run_stack() {
     MCP_INTERNAL_API_BASE=https://calendar.example.test \
     MCP_INTERNAL_API_KEY=test-internal-api-key \
     MCP_SESSION_SECRET=test-mcp-session-secret \
+    AUTH_DATABASE_URL=postgresql://auth:auth@localhost:5432/commoncal_auth \
+    AUTH_BRIDGE_KEY=test-bridge-key \
+    AUTH_COOKIE_KEYS='["test-cookie-key"]' \
+    AUTH_SIGNING_KID=test-kid \
     GHCR_TOKEN="${GHCR_TOKEN_OVERRIDE-}" \
     TLS_EXISTING="${TLS_EXISTING_OVERRIDE:-0}" \
     TLS_CERT_SANS="${TLS_CERT_SANS_OVERRIDE:-DNS:calendar.example.test, DNS:mcp.example.test}" \
@@ -368,6 +372,10 @@ require_text() {
 }
 
 require_line \
+  "BEGIN release=commoncal-auth chart=commoncal-auth resource=commoncal-auth" \
+  "$fixture/helm.log" \
+  "auth must deploy as release/resource 'commoncal-auth'"
+require_line \
   "BEGIN release=commoncal chart=commoncal resource=commoncal" \
   "$fixture/helm.log" \
   "core must deploy as release/resource 'commoncal'"
@@ -375,6 +383,10 @@ require_line \
   "BEGIN release=commoncal-mcp chart=commoncal-mcp resource=commoncal-mcp" \
   "$fixture/helm.log" \
   "MCP must deploy as the distinct release/resource 'commoncal-mcp'"
+require_line \
+  'fullnameOverride=commoncal-auth' \
+  "$fixture/helm.log" \
+  "auth workload names must be pinned to the auth release name"
 require_line \
   'fullnameOverride=commoncal' \
   "$fixture/helm.log" \
@@ -438,16 +450,21 @@ require_line \
   "MCP TLS ingress host must use MCP_DOMAIN"
 
 dry_run_count=$(grep -F -x -c -- '--dry-run' "$fixture/helm.log" || true)
-if [ "$dry_run_count" -ne 2 ]; then
-  echo "DRY_RUN=1 must propagate to both Helm releases; found $dry_run_count dry-run argument(s)" >&2
+if [ "$dry_run_count" -ne 3 ]; then
+  echo "DRY_RUN=1 must propagate to all three Helm releases; found $dry_run_count dry-run argument(s)" >&2
   failures=$((failures + 1))
 fi
 
 pull_secret_count=$(grep -F -x -c -- 'imagePullSecrets[0].name=commoncal-ghcr-creds' "$fixture/helm.log" || true)
-if [ "$pull_secret_count" -ne 2 ]; then
-  echo "GHCR pull secret must be passed to both Helm releases; found $pull_secret_count reference(s)" >&2
+if [ "$pull_secret_count" -ne 3 ]; then
+  echo "GHCR pull secret must be passed to all three Helm releases; found $pull_secret_count reference(s)" >&2
   failures=$((failures + 1))
 fi
+
+require_text \
+  'create secret generic commoncal-auth-secrets --from-literal=DATABASE_URL=postgresql://auth:auth@localhost:5432/commoncal_auth --from-literal=LAB_BRIDGE_KEY=test-bridge-key --from-literal=AUTH_COOKIE_KEYS=["test-cookie-key"] --from-literal=AUTH_SIGNING_KID=test-kid -n commoncal --dry-run=client -o yaml' \
+  "$fixture/kubectl.log" \
+  "deploy must create commoncal-auth-secrets from all auth secret inputs"
 
 require_text \
   '{{- range .Values.ingress.hosts }}' \
@@ -486,6 +503,10 @@ require_line \
   "$guard_flux_log" \
   "Flux-owned deployment must load the latest HelmRelease manifests from Git"
 require_line \
+  'reconcile helmrelease commoncal-auth --namespace flux-system --with-source' \
+  "$guard_flux_log" \
+  "Flux-owned deployment must reconcile the auth HelmRelease"
+require_line \
   'reconcile helmrelease commoncal --namespace flux-system --with-source' \
   "$guard_flux_log" \
   "Flux-owned deployment must reconcile the core HelmRelease"
@@ -502,9 +523,21 @@ require_text \
   "$guard_kubectl_log" \
   "Flux-owned deployment must apply the MCP runtime Secret"
 require_text \
+  'create secret generic commoncal-auth-secrets' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must apply the auth runtime Secret"
+require_text \
+  'rollout restart deployment commoncal-auth --namespace commoncal' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must restart auth after applying external Secrets"
+require_text \
   'rollout restart statefulset commoncal --namespace commoncal' \
   "$guard_kubectl_log" \
   "Flux-owned deployment must restart core after applying external Secrets"
+require_text \
+  'rollout status deployment commoncal-auth --namespace commoncal --timeout=15m' \
+  "$guard_kubectl_log" \
+  "Flux-owned deployment must wait for the auth rollout"
 require_text \
   'rollout status deployment commoncal-mcp --namespace commoncal --timeout=15m' \
   "$guard_kubectl_log" \
@@ -627,6 +660,10 @@ require_text \
   'create secret tls commoncal-tls' \
   "$direct_gen_kubectl_log" \
   "direct deployment must create the shared origin TLS Secret"
+require_text \
+  'BEGIN release=commoncal-auth chart=commoncal-auth resource=commoncal-auth' \
+  "$direct_gen_helm_log" \
+  "direct deployment must deploy the auth release after generating TLS"
 require_text \
   'BEGIN release=commoncal chart=commoncal resource=commoncal' \
   "$direct_gen_helm_log" \
@@ -909,6 +946,10 @@ if ! (DRY_RUN_OVERRIDE=0 \
   echo "direct deployment must wait for the core and MCP rollouts" >&2
   failures=$((failures + 1))
 fi
+require_text \
+  'rollout status deployment commoncal-auth --namespace commoncal --timeout=15m' \
+  "$rollout_log" \
+  "direct deploy must wait for the auth Deployment rollout"
 require_text \
   'rollout status statefulset commoncal --namespace commoncal --timeout=15m' \
   "$rollout_log" \

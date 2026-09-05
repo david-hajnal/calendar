@@ -57,13 +57,23 @@ export class HandoffStore {
   async consume(token, expectedUid) {
     const result = await this.pool.query(
       `UPDATE interaction_handoff
-          SET consumed_at = NOW()
-        WHERE token_hash = $1 AND interaction_uid = $2
-          AND expires_at > NOW() AND consumed_at IS NULL
-          AND decision IS NOT NULL
-      RETURNING decision`,
+           SET consumed_at = NOW()
+         WHERE token_hash = $1 AND interaction_uid = $2
+           AND expires_at > NOW() AND consumed_at IS NULL
+           AND decision IS NOT NULL
+       RETURNING decision`,
       [digest(token), expectedUid],
     );
     return result.rows[0]?.decision;
+  }
+
+  /**
+   * Purge expired handoffs. Returns the number of rows removed.
+   */
+  async cleanup() {
+    const result = await this.pool.query(
+      `DELETE FROM interaction_handoff WHERE expires_at <= NOW()`,
+    );
+    return result.rowCount;
   }
 }

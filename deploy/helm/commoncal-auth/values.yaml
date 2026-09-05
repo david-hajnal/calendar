@@ -1,0 +1,166 @@
+# Default values for the commoncal-auth chart.
+#
+# Security model:
+#   - Two Services: `public` (OIDC provider, exposed via Ingress) and
+#     `internal` (CommonCal bridge, NO Ingress — reachable only from CommonCal
+#     via NetworkPolicy).
+#   - All secrets (DATABASE_URL, LAB_BRIDGE_KEY, cookie keys, JWKS) are
+#     injected at runtime from a pre-existing Kubernetes Secret. No secret
+#     value is ever rendered into a manifest.
+#   - The private bridge port is never exposed: no Ingress rule targets it, and
+#     the NetworkPolicy restricts ingress to that port to the CommonCal
+#     namespace only.
+
+image:
+  repository: ghcr.io/david-hajnal/calendar-auth
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 2
+
+# Name overrides.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# --- Public service (OIDC provider) ----------------------------------------
+# Exposed via Ingress. This is the only auth port that is ever public.
+public:
+  port: 80
+  targetPort: 4000
+
+# --- Internal service (CommonCal bridge) -----------------------------------
+# NOT exposed via Ingress. Reachable only from the CommonCal namespace via
+# NetworkPolicy. The bridge key (LAB_BRIDGE_KEY) authenticates every call.
+internal:
+  port: 80
+  targetPort: 4001
+
+# --- Ingress (public only) --------------------------------------------------
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  host: auth.example.com
+  tls:
+    enabled: true
+    secretName: commoncal-auth-tls
+
+# --- Network policy ---------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Namespace of the ingress controller (traefik) allowed to reach the public
+  # port.
+  ingressNamespace: traefik
+  # Namespace of CommonCal allowed to reach the private bridge port.
+  commoncalNamespace: commoncal
+  # Managed PostgreSQL egress target.
+  postgres:
+    # Hostname of the managed PostgreSQL instance (e.g. a CNAME or the
+    # managed service DNS name). Empty means "do not pin egress to a host"
+    # (rely on namespace + port).
+    host: ""
+    port: 5432
+    # Namespace of the PostgreSQL service when it is cluster-internal. Empty
+    # for a fully external managed instance.
+    namespace: ""
+
+# --- Migration job ----------------------------------------------------------
+# Runs the schema migrations once before the Deployment becomes ready. Uses
+# the same image with a different entrypoint (node src/migrate.mjs).
+migration:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  # Run the migration as a Job that blocks the Deployment (via an initContainer
+  # alternative is not used; the Job is a separate workload that the operator
+  # gates rollout on). Set `blockDeployment` to true to render an initContainer
+  # in the Deployment that runs the migration inline (simpler, single workload).
+  blockDeployment: true
+
+# --- Pod disruption budget --------------------------------------------------
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# --- Resources --------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# --- Security context -------------------------------------------------------
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+# --- Secrets (external, must pre-exist) -------------------------------------
+# The Secret must contain these keys. No value is rendered into a manifest.
+secrets:
+  # Name of the pre-existing Secret.
+  name: commoncal-auth-secrets
+  # Key within the Secret holding the PostgreSQL DSN (with TLS params).
+  databaseUrlKey: DATABASE_URL
+  # Key within the Secret holding the CommonCal bridge key (>= 32 chars).
+  bridgeKeyKey: LAB_BRIDGE_KEY
+  # Key within the Secret holding comma-separated cookie keys.
+  cookieKeysKey: AUTH_COOKIE_KEYS
+  # Key within the Secret holding the JWKS document (JSON).
+  jwksKey: AUTH_JWKS
+  # Key within the Secret holding the signing kid (must match a JWKS key).
+  signingKidKey: AUTH_SIGNING_KID
+
+# --- Non-secret config ------------------------------------------------------
+config:
+  # OIDC issuer (must match the Ingress host + scheme).
+  issuer: https://auth.example.com
+  # MCP resource URL (audience for tokens).
+  resourceUrl: https://mcp.example.com/mcp
+  # CommonCal base URL (the bridge calls this for consent/interaction).
+  commoncalUrl: http://commoncal.commoncal.svc:3000
+  # DCR rate limit (requests per window).
+  dcrRateLimit: 10
+
+# --- Observability ----------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /.well-known/openid-configuration
+    port: 80
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /.well-known/openid-configuration
+    port: 80
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commoncal-auth.internalServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commoncal-auth.labels" . | nindent 4 }}
+    app.kubernetes.io/component: internal
+spec:
+  type: ClusterIP
+  # The internal (bridge) service is intentionally NOT exposed via any Ingress.
+  # It is reachable only from the CommonCal namespace, enforced by the
+  # NetworkPolicy in networkpolicy.yaml. The bridge key (LAB_BRIDGE_KEY)
+  # authenticates every call.
+  selector:
+    {{- include "commoncal-auth.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: bridge
+      port: {{ .Values.internal.port }}
+      targetPort: private
+      protocol: TCP

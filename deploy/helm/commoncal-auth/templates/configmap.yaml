@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "commoncal-auth.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commoncal-auth.labels" . | nindent 4 }}
+data:
+  # Non-secret configuration only. Secrets (DATABASE_URL, LAB_BRIDGE_KEY,
+  # cookie keys, JWKS) are injected from the pre-existing Secret referenced in
+  # .Values.secrets — never rendered here.
+  LAB_ISSUER: {{ .Values.config.issuer | quote }}
+  LAB_RESOURCE_URL: {{ .Values.config.resourceUrl | quote }}
+  LAB_COMMONCAL_URL: {{ .Values.config.commoncalUrl | quote }}
+  AUTH_PUBLIC_BIND: "0.0.0.0"
+  AUTH_PRIVATE_BIND: "0.0.0.0"
+  AUTH_PUBLIC_PORT: {{ .Values.public.targetPort | quote }}
+  AUTH_PRIVATE_PORT: {{ .Values.internal.targetPort | quote }}
+  AUTH_DCR_RATE_LIMIT: {{ .Values.config.dcrRateLimit | quote }}
+  NODE_ENV: "production"

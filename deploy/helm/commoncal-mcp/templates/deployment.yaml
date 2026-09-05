@@ -62,6 +62,16 @@ spec:
                   name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.oauthIssuerKeyName }}
             {{- end }}
+            {{- if .Values.existingSecret.oauthIssuerHoldKeyName }}
+            # New issuer to HOLD (accept for validation) without cutover. The
+            # primary MCP_OAUTH_ISSUER is unchanged. Injected by Secret
+            # reference only — no value is rendered into this manifest.
+            - name: MCP_OAUTH_ISSUER_HOLD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "existingSecret.name is required" .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.oauthIssuerHoldKeyName }}
+            {{- end }}
             {{- range $key, $val := .Values.env }}
             - name: {{ $key }}
               value: {{ $val | quote }}

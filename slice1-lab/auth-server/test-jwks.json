@@ -1,5 +1,5 @@
 {
-  "description": "Disposable Slice 1 signing key. Never use outside this loopback lab.",
+  "description": "Disposable lab signing keys (two, for key-overlap proof). Never use outside this loopback lab.",
   "keys": [
     {
       "kty": "RSA",
@@ -14,6 +14,20 @@
       "use": "sig",
       "alg": "RS256",
       "kid": "slice1-test-rs256"
+    },
+    {
+      "kty": "RSA",
+      "n": "neouZ7DBDCcwZ0MO58YvLa-Pt5vspbgtsjshjkDJq911JQtybHCv59HANY5rNuOwncHUJIiO0bFowsT78lzsI9lfaD-FY93gBVZinYSStkqRn76FGJidXGW2RcsPti6BaMoVrejE0jcUOCHM3qd3Q8pxAtbzv_X4mDI9T5FR9MqzbdtJe4t4xembLLJQQB111Q-Y8OtBEJg4xtgmIEhJFxTdbcGoBkXxWu1U6BIvBq_Z-Lv3PKrXPPjpnzILrDPRm7cd-2QpKWeMS1M75UKdPRYLH0fgPMe6f6IOLBf_GX5VTv68PnuncoRhNwr7n149nPqTsYE_Fucww6xGad7XAw",
+      "e": "AQAB",
+      "d": "D72k0TKDQQze_EwTk52OXQV0_p5iS8U8zi6qvPKkUlIJjUnDfB-3c7-ADgFGRVBo7dtrpBX19oeyo5zdvbOZg5v1W1Te8ld5hHlZ7HhR5NiGBOBe2qwhHhwIET5D21XDZzNNpJThRFBiiZMvnWTKtKKHT_smjOnzKmic8pjPtztyjBuocZk8-4kW3GVoPJLjbX4SFfD2QimLSxDurDmgUtTcvP739WmEkMbWHPtykdbErU-Ka7D2kH_DrkhbYnhYwRdAd0IiuHVWjagucwucg0TQaUbMadGolj1Pu8btr--KuCgew0Dh3PWTnSkUWKuVFM-8tD1BMRTOMJX33UKpoQ",
+      "p": "0fc7ULhQkkc-49-9cdPXNYektPWr6E_8R13TAS6Uen1n5aaqIvfpyjuVj3fU-YSFKTYRpTeOqGpUqBGNQRtgCl3ZRCu-xCnLBEi7VlsKb4egZnZSSGQnPpNPGom2KWjMiVlQ0R0rIWGhfqO4EQS2RaskJ1Cjcq1ebszjjWv0_2k",
+      "q": "wIl6q2i-wdZJpUtg5cPNPVXZd_QgYW8h9cZ8ppwoMvR-CbSAlWvvPPOUok6oz08Q28--1tFhYNjsxbfppNxkQSMqn7BZyg2jajBB43rvEljzZVr0YJ6gVmlWMTiF_Jvge5Wi_P-FxnHHt_ZxCClUAxxdA0cpMRXUVw7Jb726wYs",
+      "dp": "gEASpCChXmhUWt6Mmh26o8Dh84LoaXOJ9pGx1FP-b79wGg-udsOVs2in10Vr-qleqSiUqKWB5w9j_HEUJgOxq0Nd9cz-rlWU414FyB6-BhgC-vMlGYDLk-Zo-B3L_gk8flznB4RYlwBKo88fHI4TRATghX81B1QsjWNrTzP1J5k",
+      "dq": "QPwmE0S_Xd1d7hSLGAIGe_VF-V7Erx47cCEWYYXDa69p-wyZedV8Yi40tLOn9pDRN9_eodL58x5EjFeO3L4meHXOJSf4pmIEDgtLseQEXUT4ofUZFqNzqrbTCLnzP1e9ZPkUkiAMnvY4WrcrX33ThVlFa53RIWgky12KT9TR_BE",
+      "qi": "L4yW-lTo7Qj2mzClmAbkoEeJqFBy7lTYT-qZxFa2crtXJG39M_mTcdNEbEFhM-cBj1tuz9awaigcY3LsFAhh4mwV3X4ose4Gkc7LA0Wx4OrLKDnCns-NuSdye0bO7Gr7SDeC78PpSyTzB44ULw2XWdgMq-ENrVd0Yz6EiavrVXA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "slice4-test-rs256-b"
     }
   ]
 }

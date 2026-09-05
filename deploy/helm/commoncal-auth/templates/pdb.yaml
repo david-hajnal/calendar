@@ -1,0 +1,14 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "commoncal-auth.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "commoncal-auth.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "commoncal-auth.selectorLabels" . | nindent 6 }}
+{{- end }}

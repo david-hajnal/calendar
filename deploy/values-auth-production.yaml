@@ -1,0 +1,81 @@
+# Production values for commoncal-auth — override with --set or values files
+#
+# The authorization server (calendar-auth) provides OIDC for CommonCal and a
+# private bridge for consent/interaction handoffs. Secrets (DATABASE_URL,
+# LAB_BRIDGE_KEY, AUTH_COOKIE_KEYS, AUTH_SIGNING_KID) are injected from the
+# pre-existing commoncal-auth-secrets Secret — never rendered into a manifest.
+#
+# The issuer is held by CommonCal/MCP without cutover: the existing issuer
+# remains primary until an explicit operator cutover.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/david-hajnal/calendar-auth
+  pullPolicy: IfNotPresent
+  # tag is supplied from deploy/.env by deploy-prod.sh
+
+# Issuer / resource identifiers (non-secret).
+issuer:
+  url: https://cal.hajnal.space
+  resourceUrl: https://cal.hajnal.space
+  commoncalUrl: https://cal.hajnal.space
+
+# Public service (OIDC endpoints) — exposed via Ingress.
+public:
+  port: 80
+  targetPort: 4000
+
+# Private service (bridge) — cluster-internal only, never exposed via Ingress.
+internal:
+  port: 80
+  targetPort: 4001
+
+ingress:
+  enabled: true
+  className: traefik
+  host: cal.hajnal.space
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: commoncal-tls
+
+# Pre-existing Secret holding the auth server's secrets. The chart never
+# creates this Secret; it is created out-of-band (see bootstrap-production.sh).
+secrets:
+  name: commoncal-auth-secrets
+  databaseUrlKey: DATABASE_URL
+  bridgeKey: LAB_BRIDGE_KEY
+  cookieKeys: AUTH_COOKIE_KEYS
+  signingKid: AUTH_SIGNING_KID
+
+networkPolicy:
+  enabled: true
+  ingressNamespace: traefik
+  commoncalNamespace: commoncal
+  postgres:
+    port: 5432
+
+# Migration Job: runs the PostgreSQL migration entrypoint before the server
+# starts. Re-runs on each release (helm upgrade) to apply pending migrations.
+migration:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+
+# Pod Disruption Budget: keep at least one replica available during voluntary
+# disruptions (node drain, etc.).
+pdb:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+terminationGracePeriodSeconds: 30

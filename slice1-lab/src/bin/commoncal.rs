@@ -20,7 +20,7 @@ use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -59,6 +59,40 @@ struct McpGrant {
     scopes: Vec<String>,
     created_at: i64,
     revoked_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Event {
+    id: i64,
+    calendar_id: i64,
+    title: Option<String>,
+    description: Option<String>,
+    location: Option<String>,
+    status: String,
+    event_kind: String,
+    start_utc: Option<i64>,
+    end_utc: Option<i64>,
+    version: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Reminder {
+    id: i64,
+    event_id: i64,
+    offset_minutes: i64,
+    created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DeleteIntent {
+    intent_id: String,
+    user_id: i64,
+    oauth_client_id: String,
+    event_id: i64,
+    calendar_id: i64,
+    event_version: i64,
+    expires_at: i64,
+    confirmation_state: String, // "pending" or "committed"
 }
 
 #[derive(Debug, Clone)]
@@ -112,8 +146,14 @@ struct InnerState {
     grants: HashMap<String, McpGrant>,
     csrf: HashMap<String, CsrfEntry>,
     magic_links: HashMap<String, MagicLink>,
+    events: HashMap<i64, Event>,
+    reminders: HashMap<i64, Reminder>,
+    idempotency_keys: HashMap<String, i64>,
     next_calendar_id: i64,
     next_user_id: i64,
+    next_event_id: i64,
+    next_reminder_id: i64,
+    delete_intents: HashMap<String, DeleteIntent>,
     /// Lab test hook: when > 0, the next `decide_interaction` call(s) fail and
     /// the counter decrements. Simulates a bridge timeout so the harness can
     /// prove grant-first / bridge-second idempotent retry.
@@ -134,8 +174,14 @@ impl AppState {
             grants: HashMap::new(),
             csrf: HashMap::new(),
             magic_links: HashMap::new(),
+            events: HashMap::new(),
+            reminders: HashMap::new(),
+            idempotency_keys: HashMap::new(),
             next_calendar_id: 1,
             next_user_id: 1,
+            next_event_id: 1,
+            next_reminder_id: 1,
+            delete_intents: HashMap::new(),
             decide_fail_remaining: 0,
         };
 
@@ -162,6 +208,50 @@ impl AppState {
         inner.calendars.insert(1, cal1);
         inner.calendars.insert(2, cal2);
         inner.next_calendar_id = 3;
+
+        // Seed test events for the lab user (calendar 1 = Work, calendar 2 = Personal).
+        // Times are relative to "now" so availability/search ranges always cover them.
+        let now = Self::now();
+        let ev1 = Event {
+            id: 1,
+            calendar_id: 1,
+            title: Some("Team Standup".to_string()),
+            description: Some("Daily sync with the platform team".to_string()),
+            location: Some("Room 5".to_string()),
+            status: "confirmed".to_string(),
+            event_kind: "default".to_string(),
+            start_utc: Some(now + 3600),
+            end_utc: Some(now + 4200),
+            version: 1,
+        };
+        let ev2 = Event {
+            id: 2,
+            calendar_id: 1,
+            title: Some("Design Review".to_string()),
+            description: Some("Review Q3 mockups".to_string()),
+            location: None,
+            status: "confirmed".to_string(),
+            event_kind: "default".to_string(),
+            start_utc: Some(now + 7200),
+            end_utc: Some(now + 8100),
+            version: 1,
+        };
+        let ev3 = Event {
+            id: 3,
+            calendar_id: 2,
+            title: Some("Gym".to_string()),
+            description: None,
+            location: Some("FitLab".to_string()),
+            status: "confirmed".to_string(),
+            event_kind: "default".to_string(),
+            start_utc: Some(now + 10800),
+            end_utc: Some(now + 11400),
+            version: 1,
+        };
+        inner.events.insert(1, ev1);
+        inner.events.insert(2, ev2);
+        inner.events.insert(3, ev3);
+        inner.next_event_id = 4;
 
         Self {
             inner: Arc::new(RwLock::new(inner)),
@@ -477,6 +567,294 @@ impl AppState {
             .filter(|c| c.owner_id == user_id)
             .cloned()
             .collect()
+    }
+
+    // -- Slice 6: event + availability helpers ------------------------------
+
+    /// Parse a UTC timestamp (ISO 8601 or Unix epoch) to i64 seconds.
+    fn parse_ts(s: &str) -> Option<i64> {
+        if let Ok(ts) = s.parse::<i64>() {
+            return Some(ts);
+        }
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.timestamp())
+    }
+
+    /// Compute availability slots for a calendar in [from, to].
+    /// A slot is "busy" if an event overlaps it, otherwise "free".
+    /// Slots are 1-hour blocks aligned to the hour.
+    async fn compute_availability(
+        &self,
+        calendar_id: i64,
+        from: &str,
+        to: &str,
+    ) -> Vec<serde_json::Value> {
+        let from_ts = Self::parse_ts(from).unwrap_or(0);
+        let to_ts = Self::parse_ts(to).unwrap_or(0);
+        let events: Vec<Event> = {
+            let st = self.inner.read().await;
+            st.events
+                .values()
+                .filter(|e| e.calendar_id == calendar_id)
+                .cloned()
+                .collect()
+        };
+
+        let mut slots = Vec::new();
+        let mut t = from_ts;
+        while t < to_ts {
+            let slot_end = (t + 3600).min(to_ts);
+            let busy = events.iter().any(|e| {
+                e.start_utc.is_some_and(|s| s < slot_end)
+                    && e.end_utc.is_some_and(|en| en > t)
+            });
+            slots.push(serde_json::json!({
+                "start": t,
+                "end": slot_end,
+                "status": if busy { "busy" } else { "free" },
+            }));
+            t = slot_end;
+        }
+        slots
+    }
+
+    /// Get a single event by (calendar_id, event_id).
+    async fn get_event(&self, calendar_id: i64, event_id: i64) -> Option<Event> {
+        let st = self.inner.read().await;
+        st.events
+            .get(&event_id)
+            .filter(|e| e.calendar_id == calendar_id)
+            .cloned()
+    }
+
+    /// Search events in a calendar within [from, to], optionally filtered by query.
+    async fn search_events(
+        &self,
+        calendar_id: i64,
+        from: &str,
+        to: &str,
+        query: Option<&str>,
+    ) -> Vec<Event> {
+        let from_ts = Self::parse_ts(from).unwrap_or(0);
+        let to_ts = Self::parse_ts(to).unwrap_or(0);
+        let st = self.inner.read().await;
+        let mut results: Vec<Event> = st
+            .events
+            .values()
+            .filter(|e| e.calendar_id == calendar_id)
+            .filter(|e| {
+                e.start_utc.is_some_and(|s| s >= from_ts && s <= to_ts)
+                    || e.end_utc.is_some_and(|en| en >= from_ts && en <= to_ts)
+            })
+            .filter(|e| {
+                query.is_none_or(|q| {
+                    let q_lower = q.to_lowercase();
+                    e.title
+                        .as_deref()
+                        .is_some_and(|t| t.to_lowercase().contains(&q_lower))
+                        || e.description
+                            .as_deref()
+                            .is_some_and(|d| d.to_lowercase().contains(&q_lower))
+                })
+            })
+            .cloned()
+            .collect();
+        drop(st);
+        results.sort_by_key(|e| e.start_utc.unwrap_or(0));
+        results
+    }
+
+    /// Test hook: add an event. Returns the new event id.
+    async fn test_add_event(
+        &self,
+        calendar_id: i64,
+        title: Option<String>,
+        description: Option<String>,
+        location: Option<String>,
+        status: String,
+        event_kind: String,
+        start_utc: Option<i64>,
+        end_utc: Option<i64>,
+    ) -> i64 {
+        let mut st = self.inner.write().await;
+        let id = st.next_event_id;
+        st.next_event_id += 1;
+        st.events.insert(
+            id,
+            Event {
+                id,
+                calendar_id,
+                title,
+                description,
+                location,
+                status,
+                event_kind,
+                start_utc,
+                end_utc,
+                version: 1,
+            },
+        );
+        id
+    }
+
+    // -- Slice 7: mutation methods ------------------------------------------
+
+    /// Create an event. Returns (event, was_idempotent_replay).
+    async fn create_event(
+        &self,
+        calendar_id: i64,
+        title: Option<String>,
+        description: Option<String>,
+        location: Option<String>,
+        start_utc: Option<i64>,
+        end_utc: Option<i64>,
+        idempotency_key: Option<&str>,
+    ) -> Result<(Event, bool), String> {
+        let mut st = self.inner.write().await;
+        if let Some(key) = idempotency_key {
+            if let Some(&existing_id) = st.idempotency_keys.get(key) {
+                if let Some(ev) = st.events.get(&existing_id) {
+                    return Ok((ev.clone(), true));
+                }
+            }
+        }
+        let id = st.next_event_id;
+        st.next_event_id += 1;
+        let event = Event {
+            id,
+            calendar_id,
+            title,
+            description,
+            location,
+            status: "confirmed".to_string(),
+            event_kind: "default".to_string(),
+            start_utc,
+            end_utc,
+            version: 1,
+        };
+        st.events.insert(id, event.clone());
+        if let Some(key) = idempotency_key {
+            st.idempotency_keys.insert(key.to_string(), id);
+        }
+        Ok((event, false))
+    }
+
+    /// Update an event with optimistic concurrency. Returns the updated event.
+    async fn update_event(
+        &self,
+        calendar_id: i64,
+        event_id: i64,
+        expected_version: i64,
+        title: Option<String>,
+        description: Option<String>,
+        location: Option<String>,
+        start_utc: Option<i64>,
+        end_utc: Option<i64>,
+    ) -> Result<Event, String> {
+        let mut st = self.inner.write().await;
+        let ev = st
+            .events
+            .get_mut(&event_id)
+            .filter(|e| e.calendar_id == calendar_id)
+            .ok_or_else(|| "event_not_found".to_string())?;
+        if ev.version != expected_version {
+            return Err("version_conflict".to_string());
+        }
+        if let Some(t) = title {
+            ev.title = Some(t);
+        }
+        if let Some(d) = description {
+            ev.description = Some(d);
+        }
+        if let Some(l) = location {
+            ev.location = Some(l);
+        }
+        if let Some(s) = start_utc {
+            ev.start_utc = Some(s);
+        }
+        if let Some(e) = end_utc {
+            ev.end_utc = Some(e);
+        }
+        ev.version += 1;
+        Ok(ev.clone())
+    }
+
+    /// Create a delete intent for two-phase deletion. Returns the intent.
+    async fn create_delete_intent(
+        &self,
+        user_id: i64,
+        oauth_client_id: String,
+        event_id: i64,
+        calendar_id: i64,
+        event_version: i64,
+        expires_at: i64,
+    ) -> DeleteIntent {
+        let mut st = self.inner.write().await;
+        let intent_id = format!("del_{}", uuid::Uuid::new_v4().simple());
+        let intent = DeleteIntent {
+            intent_id: intent_id.clone(),
+            user_id,
+            oauth_client_id,
+            event_id,
+            calendar_id,
+            event_version,
+            expires_at,
+            confirmation_state: "pending".to_string(),
+        };
+        st.delete_intents.insert(intent_id, intent.clone());
+        intent
+    }
+
+    /// Get a delete intent by ID. Returns None if not found or expired.
+    /// Returns intents in any state (pending or committed) so callers can
+    /// inspect the intent data (user_id, oauth_client_id, event_version).
+    async fn get_delete_intent(&self, intent_id: &str) -> Option<DeleteIntent> {
+        let st = self.inner.read().await;
+        st.delete_intents.get(intent_id).cloned()
+    }
+
+    /// Commit a delete intent, changing its state to "committed" and
+    /// deleting the associated event from the events store.
+    async fn commit_delete_intent(&self, intent_id: &str) -> Result<(), String> {
+        let mut st = self.inner.write().await;
+        let intent = st
+            .delete_intents
+            .get_mut(intent_id)
+            .ok_or("delete_intent_not_found".to_string())?;
+        if intent.confirmation_state != "pending" {
+            return Err("delete_intent_already_committed".to_string());
+        }
+        intent.confirmation_state = "committed".to_string();
+        // Actually delete the event.
+        st.events.remove(&intent.event_id);
+        Ok(())
+    }
+
+    /// Set a reminder on an event. Returns the reminder.
+    async fn set_reminder(
+        &self,
+        calendar_id: i64,
+        event_id: i64,
+        offset_minutes: i64,
+    ) -> Result<Reminder, String> {
+        let mut st = self.inner.write().await;
+        let ev = st
+            .events
+            .get(&event_id)
+            .filter(|e| e.calendar_id == calendar_id)
+            .ok_or_else(|| "event_not_found".to_string())?;
+        let _ = ev;
+        let id = st.next_reminder_id;
+        st.next_reminder_id += 1;
+        let reminder = Reminder {
+            id,
+            event_id,
+            offset_minutes,
+            created_at: Self::now(),
+        };
+        st.reminders.insert(id, reminder.clone());
+        Ok(reminder)
     }
 
     // -- auth server bridge -------------------------------------------------
@@ -1031,6 +1409,304 @@ async fn internal_revoke_grant(
     }
 }
 
+// -- Slice 6 internal API: availability, event_get, event_search ------------
+
+/// GET /internal/availability?calendar_id=&from=&to=
+#[derive(Deserialize)]
+struct AvailabilityQuery {
+    calendar_id: i64,
+    from: String,
+    to: String,
+}
+
+async fn internal_availability(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<AvailabilityQuery>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let slots = state.compute_availability(q.calendar_id, &q.from, &q.to).await;
+    (StatusCode::OK, Json(serde_json::json!({ "slots": slots }))).into_response()
+}
+
+/// GET /internal/event?calendar_id=&event_id=
+#[derive(Deserialize)]
+struct EventGetQuery {
+    calendar_id: i64,
+    event_id: i64,
+}
+
+async fn internal_event_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<EventGetQuery>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state.get_event(q.calendar_id, q.event_id).await {
+        Some(ev) => (StatusCode::OK, Json(serde_json::json!({ "event": ev }))).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "event_not_found"})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /internal/events?calendar_id=&from=&to=&query=
+#[derive(Deserialize)]
+struct EventSearchQuery {
+    calendar_id: i64,
+    from: String,
+    to: String,
+    query: Option<String>,
+}
+
+async fn internal_event_search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<EventSearchQuery>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let events = state.search_events(q.calendar_id, &q.from, &q.to, q.query.as_deref()).await;
+    (StatusCode::OK, Json(serde_json::json!({ "events": events }))).into_response()
+}
+
+// -- Slice 7 internal API: event_create, event_update, reminder_set ---------
+
+/// POST /internal/event  body: {calendar_id, title?, description?, location?, start_utc?, end_utc?, idempotency_key?}
+#[derive(Deserialize)]
+struct EventCreateRequest {
+    calendar_id: i64,
+    title: Option<String>,
+    description: Option<String>,
+    location: Option<String>,
+    start_utc: Option<i64>,
+    end_utc: Option<i64>,
+    idempotency_key: Option<String>,
+}
+
+async fn internal_event_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<EventCreateRequest>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state
+        .create_event(
+            req.calendar_id,
+            req.title,
+            req.description,
+            req.location,
+            req.start_utc,
+            req.end_utc,
+            req.idempotency_key.as_deref(),
+        )
+        .await
+    {
+        Ok((event, replay)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "event": event, "replayed": replay })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// PATCH /internal/event/:id  body: {calendar_id, expected_version, title?, description?, location?, start_utc?, end_utc?}
+#[derive(Deserialize)]
+struct EventUpdateRequest {
+    calendar_id: i64,
+    expected_version: i64,
+    title: Option<String>,
+    description: Option<String>,
+    location: Option<String>,
+    start_utc: Option<i64>,
+    end_utc: Option<i64>,
+}
+
+async fn internal_event_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(event_id): axum::extract::Path<i64>,
+    Json(req): Json<EventUpdateRequest>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state
+        .update_event(
+            req.calendar_id,
+            event_id,
+            req.expected_version,
+            req.title,
+            req.description,
+            req.location,
+            req.start_utc,
+            req.end_utc,
+        )
+        .await
+    {
+        Ok(event) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "event": event })),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = if e == "version_conflict" {
+                StatusCode::CONFLICT
+            } else if e == "event_not_found" {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(serde_json::json!({ "error": e }))).into_response()
+        }
+    }
+}
+
+/// POST /internal/reminder  body: {calendar_id, event_id, offset_minutes}
+#[derive(Deserialize)]
+struct ReminderSetRequest {
+    calendar_id: i64,
+    event_id: i64,
+    offset_minutes: i64,
+}
+
+async fn internal_reminder_set(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ReminderSetRequest>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state
+        .set_reminder(req.calendar_id, req.event_id, req.offset_minutes)
+        .await
+    {
+        Ok(reminder) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "reminder": reminder })),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = if e == "event_not_found" {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(serde_json::json!({ "error": e }))).into_response()
+        }
+    }
+}
+
+// -- Slice 8 internal API: delete intent ------------------------------------
+
+/// POST /internal/delete-intent  body: {user_id, oauth_client_id, event_id, calendar_id, event_version, expires_at}
+#[derive(Deserialize)]
+struct DeleteIntentCreateRequest {
+    user_id: i64,
+    oauth_client_id: String,
+    event_id: i64,
+    calendar_id: i64,
+    event_version: i64,
+    expires_at: i64,
+}
+
+async fn internal_delete_intent_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeleteIntentCreateRequest>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let intent = state
+        .create_delete_intent(
+            req.user_id,
+            req.oauth_client_id,
+            req.event_id,
+            req.calendar_id,
+            req.event_version,
+            req.expires_at,
+        )
+        .await;
+    (StatusCode::OK, Json(serde_json::json!({ "delete_intent": intent }))).into_response()
+}
+
+/// GET /internal/delete-intent/:intent_id
+async fn internal_delete_intent_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(intent_id): axum::extract::Path<String>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state.get_delete_intent(&intent_id).await {
+        Some(intent) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            if intent.expires_at <= now {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "delete_intent_expired"})),
+                )
+                    .into_response()
+            } else {
+                (StatusCode::OK, Json(serde_json::json!({ "delete_intent": intent }))).into_response()
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "delete_intent_not_found"})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal/delete-intent/:intent_id/commit
+async fn internal_delete_intent_commit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(intent_id): axum::extract::Path<String>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    match state.commit_delete_intent(&intent_id).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "committed": true })),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = if e == "delete_intent_not_found" {
+                StatusCode::NOT_FOUND
+            } else if e == "delete_intent_already_committed" {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(serde_json::json!({ "error": e }))).into_response()
+        }
+    }
+}
+
 // -- Lab test hooks (bridge-keyed, harness-only) ----------------------------
 
 /// POST /internal/test/add-user  body: {email, password}
@@ -1116,6 +1792,46 @@ async fn test_fail_next_decide(
 #[derive(Deserialize)]
 struct UserIdQuery {
     user_id: i64,
+}
+
+/// POST /internal/test/add-event  body: {calendar_id, title, description, location, status, event_kind, start_utc, end_utc}
+async fn test_add_event(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    if !check_internal_key(&headers, &state.bridge_key) {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let calendar_id = req.get("calendar_id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let title = req
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let description = req
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let location = req
+        .get("location")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let status = req
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("confirmed")
+        .to_string();
+    let event_kind = req
+        .get("event_kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .to_string();
+    let start_utc = req.get("start_utc").and_then(|v| v.as_i64());
+    let end_utc = req.get("end_utc").and_then(|v| v.as_i64());
+    let id = state
+        .test_add_event(calendar_id, title, description, location, status, event_kind, start_utc, end_utc)
+        .await;
+    (StatusCode::OK, Json(serde_json::json!({ "event_id": id }))).into_response()
 }
 
 /// GET /internal/test/grants?user_id= — list ALL grants (active + revoked)
@@ -1234,6 +1950,105 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
+/// GET /confirm-delete/:intent_id — renders the confirmation page.
+/// Requires an authenticated session. Shows delete intent details and a
+/// confirmation button that POSTs to /confirm-delete/:intent_id/confirm.
+async fn confirm_delete_page(
+    State(state): State<AppState>,
+    axum::extract::Path(intent_id): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let session_token = match extract_session_cookie(&headers) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "login required".to_string(),
+            ).into_response()
+        }
+    };
+    let session = match state.get_session(&session_token).await {
+        Some(user_id) => user_id,
+        None => {
+            return (StatusCode::FORBIDDEN, "invalid session").into_response()
+        }
+    };
+    let intent = match state.get_delete_intent(&intent_id).await {
+        Some(i) => i,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                "delete intent not found".to_string(),
+            ).into_response()
+        }
+    };
+    // Verify the intent belongs to the current user
+    if intent.user_id != session {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    let html = format!(
+        "<!DOCTYPE html><html><head><title>Confirm Deletion</title></head><body>
+<h2>Confirm Deletion</h2>
+<p>Are you sure you want to delete this event?</p>
+<p><strong>Event ID:</strong> {}</p>
+<p><strong>Calendar ID:</strong> {}</p>
+<p><strong>Expires at:</strong> {}</p>
+<form method='post' action='/confirm-delete/{}/confirm'>
+  <button type='submit'>Confirm Delete</button>
+</form>
+</body></html>",
+        intent.event_id, intent.calendar_id, intent.expires_at, intent_id
+    );
+    (StatusCode::OK, html).into_response()
+}
+
+/// POST /confirm-delete/:intent_id/confirm — commits the deletion.
+async fn confirm_delete_commit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(intent_id): axum::extract::Path<String>,
+) -> Response {
+    let session_token = match extract_session_cookie(&headers) {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "login required".to_string(),
+            ).into_response()
+        }
+    };
+    let session = match state.get_session(&session_token).await {
+        Some(user_id) => user_id,
+        None => {
+            return (StatusCode::FORBIDDEN, "invalid session").into_response()
+        }
+    };
+    let intent = match state.get_delete_intent(&intent_id).await {
+        Some(i) => i,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                "delete intent not found".to_string(),
+            ).into_response()
+        }
+    };
+    if intent.user_id != session {
+        return (StatusCode::FORBIDDEN, "intent does not belong to you").into_response();
+    }
+    if let Err(e) = state.commit_delete_intent(&intent_id).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("deletion failed: {}", e),
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        "Deletion confirmed".to_string(),
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1323,12 +2138,32 @@ async fn main() -> anyhow::Result<()> {
             "/grants/:id",
             delete(mgmt_revoke_grant).patch(mgmt_update_grant),
         )
+        .route("/confirm-delete/:intent_id", get(confirm_delete_page))
+        .route(
+            "/confirm-delete/:intent_id/confirm",
+            post(confirm_delete_commit),
+        )
         .route("/internal/calendars/:user_id", get(internal_list_calendars))
         .route("/internal/grant", get(internal_get_grant))
         .route("/internal/grant/revoke", post(internal_revoke_grant))
+        .route("/internal/availability", get(internal_availability))
+        .route("/internal/event", get(internal_event_get).post(internal_event_create))
+        .route("/internal/events", get(internal_event_search))
+        .route("/internal/event/:id", patch(internal_event_update))
+        .route("/internal/reminder", post(internal_reminder_set))
+        .route("/internal/delete-intent", post(internal_delete_intent_create))
+        .route(
+            "/internal/delete-intent/:intent_id",
+            get(internal_delete_intent_get),
+        )
+        .route(
+            "/internal/delete-intent/:intent_id/commit",
+            post(internal_delete_intent_commit),
+        )
         .route("/internal/test/add-user", post(test_add_user))
         .route("/internal/test/add-calendar", post(test_add_calendar))
         .route("/internal/test/remove-calendar", post(test_remove_calendar))
+        .route("/internal/test/add-event", post(test_add_event))
         .route(
             "/internal/test/fail-next-decide",
             post(test_fail_next_decide),

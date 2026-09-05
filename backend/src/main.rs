@@ -22,6 +22,11 @@ use commoncal_backend::{
     security::SecretKey,
     sessions::{SessionManager, SessionSecurityConfig},
     shared_view::SharedViewService,
+    user_invitation::UserInvitationService,
+    user_invitation_rate_limit::{
+        USER_INVITATION_MAX_REQUESTS, USER_INVITATION_WINDOW_SECONDS,
+        UserInvitationRateLimiterState,
+    },
     write_rate_limit::WriteRateLimiterState,
 };
 use std::{
@@ -136,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     );
     let external_feed_service = ExternalFeedService::new(database.clone(), secret_key.clone());
-    let shared_view_service = SharedViewService::new_with_key(database.clone(), secret_key);
+    let shared_view_service = SharedViewService::new_with_key(database.clone(), secret_key.clone());
 
     let write_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
         None
@@ -163,6 +168,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    let user_invitation_rate_limiter =
+        if std::env::var("APP_ENV").ok().as_deref() == Some("production") {
+            let limiter = FixedWindowRateLimiter::new(
+                USER_INVITATION_MAX_REQUESTS,
+                USER_INVITATION_WINDOW_SECONDS,
+            );
+            Some(UserInvitationRateLimiterState {
+                limiter: Arc::new(limiter),
+            })
+        } else {
+            None
+        };
+
+    let user_invitation_service = UserInvitationService::with_email_sender(
+        database.clone(),
+        secret_key.clone(),
+        24 * 60 * 60,
+        format!("{}/invitations/accept", config.app_origin()),
+        email_sender.clone(),
+    );
+
     let mut router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
         readiness,
         invitation_consumer,
@@ -180,6 +206,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         write_rate_limiter,
         public_rate_limiter,
         admin_rate_limiter,
+        user_invitation_service,
+        user_invitation_rate_limiter,
     );
 
     // Add MCP internal API routes (separate router with its own state).

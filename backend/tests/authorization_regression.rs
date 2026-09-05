@@ -366,6 +366,8 @@ impl EndpointHarness {
             None,
             None,
             None,
+            commoncal_backend::user_invitation::UserInvitationService::new_for_test(),
+            None,
         )
     }
 

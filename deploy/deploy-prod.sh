@@ -5,7 +5,7 @@
 #   SESSION_SECRET, BACKUP_ENCRYPTION_KEY_HEX
 #   MCP_INTERNAL_API_KEY, MCP_SESSION_SECRET, MCP_DOMAIN, MCP_OAUTH_ISSUER
 # Optional:
-#   IMAGE_TAG (required only for direct Helm deployment; Flux uses Git's tags)
+#   IMAGE_TAG (default: main; used only for direct Helm deployment)
 #   DOMAIN (default: cal.hajnal.space)
 #   MCP_INTERNAL_API_BASE (default: https://$DOMAIN)
 #   TLS_SECRET_NAME, CORE_HELM_RELEASE_NAME, MCP_HELM_RELEASE_NAME, NAMESPACE
@@ -254,7 +254,7 @@ case "$active_flux_releases" in
     ;;
   0)
     deploy_mode=helm
-    : "${IMAGE_TAG:?ERROR: IMAGE_TAG is required for direct Helm deployment. Set it in $DEPLOY_DIR/.env or export it}"
+    : "${IMAGE_TAG:-main}"
     for command_name in helm openssl; do
       if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "ERROR: required command not found: $command_name" >&2

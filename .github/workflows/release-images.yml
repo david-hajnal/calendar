@@ -1,12 +1,12 @@
 name: Release images
 
-# Promotion gate for version-tagged releases.
+# Promotes whatever is on main to production.
 #
-# Auth, Core, and MCP share a monorepo version and must advance atomically in
+# Auth, Core, and MCP share a monorepo and must advance atomically in
 # production. All three images are built and scanned first; none is published
-# until all three have passed. The publish job then pushes all vX.Y.Z tags
-# back-to-back and verifies all registry manifests, so Flux image
-# automation never promotes a version whose image does not exist.
+# until all three have passed. The publish job pushes the 'main' tag and a
+# sha-<commit> tag back-to-back, then verifies all registry manifests, so
+# Flux image automation never promotes a version whose image does not exist.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,14 +14,14 @@ concurrency:
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 
 permissions:
   contents: read
   packages: write
 
 env:
-  IMAGE_TAG: ${{ github.ref_name }}
+  MAIN_TAG: main
   SHA_TAG: sha-${{ github.sha }}
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
           file: Dockerfile.auth
           push: false
           load: true
-          tags: ghcr.io/david-hajnal/calendar-auth:${{ env.IMAGE_TAG }}
+          tags: ghcr.io/david-hajnal/calendar-auth:${{ env.MAIN_TAG }}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -48,13 +48,13 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/david-hajnal/calendar-auth:${{ env.IMAGE_TAG }}
+          image-ref: ghcr.io/david-hajnal/calendar-auth:${{ env.MAIN_TAG }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
 
       - name: Save image
-        run: docker save -o auth-image.tar "ghcr.io/david-hajnal/calendar-auth:${{ env.IMAGE_TAG }}"
+        run: docker save -o auth-image.tar "ghcr.io/david-hajnal/calendar-auth:${{ env.MAIN_TAG }}"
 
       - name: Upload auth image
         uses: actions/upload-artifact@v4
@@ -77,7 +77,7 @@ jobs:
           file: Dockerfile
           push: false
           load: true
-          tags: ghcr.io/david-hajnal/calendar-core:${{ env.IMAGE_TAG }}
+          tags: ghcr.io/david-hajnal/calendar-core:${{ env.MAIN_TAG }}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -85,13 +85,13 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/david-hajnal/calendar-core:${{ env.IMAGE_TAG }}
+          image-ref: ghcr.io/david-hajnal/calendar-core:${{ env.MAIN_TAG }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
 
       - name: Save image
-        run: docker save -o core-image.tar "ghcr.io/david-hajnal/calendar-core:${{ env.IMAGE_TAG }}"
+        run: docker save -o core-image.tar "ghcr.io/david-hajnal/calendar-core:${{ env.MAIN_TAG }}"
 
       - name: Upload core image
         uses: actions/upload-artifact@v4
@@ -114,7 +114,7 @@ jobs:
           file: Dockerfile.mcp
           push: false
           load: true
-          tags: ghcr.io/david-hajnal/calendar-mcp:${{ env.IMAGE_TAG }}
+          tags: ghcr.io/david-hajnal/calendar-mcp:${{ env.MAIN_TAG }}
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -122,13 +122,13 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/david-hajnal/calendar-mcp:${{ env.IMAGE_TAG }}
+          image-ref: ghcr.io/david-hajnal/calendar-mcp:${{ env.MAIN_TAG }}
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
 
       - name: Save image
-        run: docker save -o mcp-image.tar "ghcr.io/david-hajnal/calendar-mcp:${{ env.IMAGE_TAG }}"
+        run: docker save -o mcp-image.tar "ghcr.io/david-hajnal/calendar-mcp:${{ env.MAIN_TAG }}"
 
       - name: Upload MCP image
         uses: actions/upload-artifact@v4
@@ -158,17 +158,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push all versioned images
+      - name: Push all images
         run: |
           set -euo pipefail
-          docker tag "ghcr.io/david-hajnal/calendar-auth:${IMAGE_TAG}" "ghcr.io/david-hajnal/calendar-auth:${SHA_TAG}"
-          docker tag "ghcr.io/david-hajnal/calendar-core:${IMAGE_TAG}" "ghcr.io/david-hajnal/calendar-core:${SHA_TAG}"
-          docker tag "ghcr.io/david-hajnal/calendar-mcp:${IMAGE_TAG}" "ghcr.io/david-hajnal/calendar-mcp:${SHA_TAG}"
-          docker push "ghcr.io/david-hajnal/calendar-auth:${IMAGE_TAG}"
+          docker tag "ghcr.io/david-hajnal/calendar-auth:${MAIN_TAG}" "ghcr.io/david-hajnal/calendar-auth:${SHA_TAG}"
+          docker tag "ghcr.io/david-hajnal/calendar-core:${MAIN_TAG}" "ghcr.io/david-hajnal/calendar-core:${SHA_TAG}"
+          docker tag "ghcr.io/david-hajnal/calendar-mcp:${MAIN_TAG}" "ghcr.io/david-hajnal/calendar-mcp:${SHA_TAG}"
+          docker push "ghcr.io/david-hajnal/calendar-auth:${MAIN_TAG}"
           docker push "ghcr.io/david-hajnal/calendar-auth:${SHA_TAG}"
-          docker push "ghcr.io/david-hajnal/calendar-core:${IMAGE_TAG}"
+          docker push "ghcr.io/david-hajnal/calendar-core:${MAIN_TAG}"
           docker push "ghcr.io/david-hajnal/calendar-core:${SHA_TAG}"
-          docker push "ghcr.io/david-hajnal/calendar-mcp:${IMAGE_TAG}"
+          docker push "ghcr.io/david-hajnal/calendar-mcp:${MAIN_TAG}"
           docker push "ghcr.io/david-hajnal/calendar-mcp:${SHA_TAG}"
 
       - name: Verify all registry manifests
@@ -177,6 +177,6 @@ jobs:
           for repo in calendar-auth calendar-core calendar-mcp; do
             token=$(curl -s "https://ghcr.io/token?scope=repository:david-hajnal/${repo}:pull" | jq -r .token)
             curl -sf -H "Authorization: Bearer ${token}" \
-              "https://ghcr.io/v2/david-hajnal/${repo}/manifests/${IMAGE_TAG}" >/dev/null
-            echo "OK: ghcr.io/david-hajnal/${repo}:${IMAGE_TAG} manifest present"
+              "https://ghcr.io/v2/david-hajnal/${repo}/manifests/${MAIN_TAG}" >/dev/null
+            echo "OK: ghcr.io/david-hajnal/${repo}:${MAIN_TAG} manifest present"
           done

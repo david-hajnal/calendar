@@ -68,6 +68,8 @@ spec:
     pdb:
       enabled: true
       minAvailable: 1
+    env:
+      TZ: Europe/Budapest
     resources:
       requests:
         cpu: 100m

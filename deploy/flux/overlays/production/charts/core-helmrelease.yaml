@@ -56,6 +56,8 @@ spec:
         - ReadWriteOnce
     config:
       appOrigin: https://cal.hajnal.space
+    env:
+      TZ: Europe/Budapest
     existingSecret:
       name: commoncal-session
       sessionSecretKey: SESSION_SECRET

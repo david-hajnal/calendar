@@ -86,7 +86,12 @@ fi
 # version whose container image does not exist yet.
 
 # Stage and commit
-git add backend/Cargo.toml mcp-server/Cargo.toml frontend/package.json deploy/helm/commoncal/Chart.yaml deploy/helm/commoncal-mcp/Chart.yaml
+git add \
+  backend/Cargo.toml backend/Cargo.lock \
+  mcp-server/Cargo.toml mcp-server/Cargo.lock \
+  frontend/package.json \
+  deploy/helm/commoncal/Chart.yaml \
+  deploy/helm/commoncal-mcp/Chart.yaml
 git commit -m "chore: bump version to ${NEW_VERSION}"
 
 # Create tag and push

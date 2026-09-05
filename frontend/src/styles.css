@@ -427,11 +427,6 @@ textarea {
   background: var(--color-surface-container-low);
 }
 
-.app-shell {
-  min-block-size: 100vh;
-  background: var(--color-surface);
-}
-
 .app-shell__content {
   padding-top: 4rem;
 }
@@ -563,6 +558,41 @@ textarea {
   font-weight: 500;
   line-height: 1.33;
   letter-spacing: 0.01em;
+}
+
+.typography-headline-sm {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.375;
+  letter-spacing: -0.008em;
+}
+
+.typography-body-sm {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.384;
+}
+
+.typography-label-sm {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.455;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.typography-title-md {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.333;
+  letter-spacing: -0.008em;
+}
+
+.typography-title-sm {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.333;
+  letter-spacing: -0.008em;
 }
 
 /* Material Symbols */

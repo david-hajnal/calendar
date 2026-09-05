@@ -464,6 +464,11 @@
   border: 1.5px solid var(--color-on-primary);
 }
 
+.color-swatch-picker--active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.2rem rgb(70 72 212 / 18%);
+}
+
 /* Modal footer */
 .calendar-modal__footer {
   display: flex;

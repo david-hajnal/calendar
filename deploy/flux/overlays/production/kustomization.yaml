@@ -3,4 +3,3 @@ kind: Kustomization
 resources:
   - charts/core-helmrelease.yaml
   - charts/mcp-helmrelease.yaml
-  - charts/auth-helmrelease.yaml

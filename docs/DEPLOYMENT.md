@@ -7,9 +7,10 @@ published to GHCR and promoted by an immutable Git commit referencing the
 exact `sha-<40 hex commit>` that CI built and scanned.
 
 The auth server is a Node.js OIDC provider retained for a future authentication
-cutover. Its production release is currently suspended because its PostgreSQL
-dependency is unavailable. Core therefore deploys without an auth dependency
-or private bridge configuration, and MCP continues to use its existing issuer.
+cutover. Its HelmRelease manifest is retained for future use but excluded from
+the production Kustomization because its PostgreSQL dependency is unavailable.
+Core therefore deploys without an auth dependency or private bridge
+configuration, and MCP continues to use its existing issuer.
 
 ## Promotion model
 
@@ -37,7 +38,7 @@ push to main
   → CI verifies all registry manifests
   → CI commits all three immutable tags to main (bot guard active)
   → Flux Kustomization reconciles the commit
-  → active HelmReleases upgrade (core → mcp; auth remains suspended)
+  → active HelmReleases upgrade (core → mcp; auth remains excluded)
   → Kubernetes rolls out new pods
 ```
 
@@ -48,11 +49,11 @@ Browser ──(Cloudflare)──► Ingress ──► core (StatefulSet)
                                            │
                                            └──► mcp (Deployment)
 
-auth (HelmRelease suspended; no core dependency or bridge wiring)
+auth (HelmRelease excluded; no installed resources or core bridge wiring)
 ```
 
-- **auth** — Node.js OIDC provider retained in Git, but currently suspended in
-  production while managed PostgreSQL is unavailable.
+- **auth** — Node.js OIDC provider HelmRelease retained in Git, but excluded
+  from production while managed PostgreSQL is unavailable.
 - **core** — Rust StatefulSet. The application backend; currently has no auth
   HelmRelease dependency or auth bridge configuration.
 - **mcp** — Rust Deployment. The MCP server. Depends on core and continues to
@@ -60,22 +61,17 @@ auth (HelmRelease suspended; no core dependency or bridge wiring)
 
 ## Namespace
 
-All three applications deploy to the `commoncal` namespace.
+Core and MCP deploy to the `commoncal` namespace. Auth resources are absent
+while the auth HelmRelease is excluded from production.
 
-Flux is the normal production deployment authority. The HelmReleases use the
-explicit release names `commoncal-auth`, `commoncal`, and `commoncal-mcp`;
-this avoids Flux's cross-namespace `commoncal-commoncal` default.
+Flux is the normal production deployment authority. Active HelmReleases use
+the explicit release names `commoncal` and `commoncal-mcp`; this avoids Flux's
+cross-namespace `commoncal-commoncal` default.
 
-Run `deploy/deploy-prod.sh` for either deployment authority. When all three
-HelmReleases are active, the script applies the runtime Secrets and reconciles
-the Flux Kustomization followed by the auth, core, and MCP HelmReleases; it
-does not deploy the workloads with direct Helm or create a self-signed
-certificate. Flux deploys the image tags and chart values committed to its Git
-source, so `IMAGE_TAG` and the direct chart overrides are ignored in this mode.
-Flux mode also requires the canonical `commoncal` namespace and
-`commoncal-auth`/`commoncal`/`commoncal-mcp` release names; remove any legacy
-name overrides from `deploy/.env`. `GHCR_TOKEN` is rejected in this mode;
-configure Kubernetes image-pull Secrets on the HelmReleases in Git instead.
+Reconcile Flux directly while auth is excluded; `deploy/deploy-prod.sh` still
+supports the legacy three-release and direct-Helm workflows. Flux deploys the
+image tags and chart values committed to its Git source, so local `IMAGE_TAG`
+and direct chart overrides do not affect Flux reconciliation.
 
 ### TLS model (two-hop)
 
@@ -164,7 +160,6 @@ To pin to a known-good version:
 flux reconcile kustomization flux-system --namespace=flux-system
 
 # Reconcile specific HelmRelease
-flux reconcile helmrelease commoncal-auth --namespace=flux-system
 flux reconcile helmrelease commoncal --namespace=flux-system
 flux reconcile helmrelease commoncal-mcp --namespace=flux-system
 ```
@@ -470,7 +465,6 @@ flux get helmreleases --namespace=flux-system
 # Check workloads
 kubectl get statefulset -n commoncal
 kubectl get deployment -n commoncal
-kubectl get job -n commoncal -l app.kubernetes.io/name=commoncal-auth
 ```
 
 ## Validation
@@ -492,7 +486,7 @@ This checks:
 - YAML syntax
 - Chart template assertions (auth, core, mcp)
 - Bridge isolation (no private ingress, no secret values)
-- Flux dependency topology (core → mcp, with auth suspended and no core
+- Flux dependency topology (core → mcp, with auth excluded and no core
   auth dependency or bridge configuration)
 - Issuer consistency (no cutover)
 

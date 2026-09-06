@@ -204,12 +204,19 @@ else
   echo "SKIP: no bundle to check bridge isolation"
 fi
 
-# 11. Dependency topology: auth is suspended, so core must not depend on auth or
+# 11. Dependency topology: auth is excluded, so core must not depend on auth or
 #     configure the auth bridge. The mcp HelmRelease must still depend on core.
 echo ""
-echo "--- Checking Flux dependency topology (core -> mcp, auth suspended) ---"
+echo "--- Checking Flux dependency topology (core -> mcp, auth excluded) ---"
 CORE_HR="deploy/flux/overlays/production/charts/core-helmrelease.yaml"
 MCP_HR="deploy/flux/overlays/production/charts/mcp-helmrelease.yaml"
+PRODUCTION_KUSTOMIZATION="deploy/flux/overlays/production/kustomization.yaml"
+if [ -f "$PRODUCTION_KUSTOMIZATION" ] && ! grep -q 'auth-helmrelease.yaml' "$PRODUCTION_KUSTOMIZATION"; then
+  echo "OK: auth HelmRelease is excluded from production"
+else
+  echo "FAIL: auth HelmRelease must be excluded so Flux prunes stale resources"
+  ERRORS=$((ERRORS+1))
+fi
 if [ -f "$CORE_HR" ] && ! grep -q 'name: commoncal-auth' "$CORE_HR"; then
   echo "OK: core does not depend on commoncal-auth"
 else
@@ -226,6 +233,12 @@ if [ -f "$MCP_HR" ] && grep -q 'name: commoncal' "$MCP_HR"; then
   echo "OK: mcp depends on commoncal"
 else
   echo "FAIL: mcp HelmRelease must depend on commoncal"
+  ERRORS=$((ERRORS+1))
+fi
+if [ -f "$MCP_HR" ] && ! grep -q 'oauthIssuerHoldKeyName:' "$MCP_HR"; then
+  echo "OK: mcp does not require suspended auth issuer hold secret"
+else
+  echo "FAIL: mcp must not require auth issuer hold secret while auth is suspended"
   ERRORS=$((ERRORS+1))
 fi
 

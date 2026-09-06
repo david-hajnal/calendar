@@ -71,10 +71,6 @@ spec:
       sessionSecretKeyName: mcp-session-secret
       # Primary OAuth issuer (unchanged — no cutover).
       oauthIssuerKeyName: mcp-oauth-issuer
-      # New issuer to HOLD (accept for validation) without making it primary.
-      # The value is the issuer of the commoncal-auth authorization server.
-      # Set to empty to disable holding.
-      oauthIssuerHoldKeyName: mcp-oauth-issuer-hold
     env:
       APP_ENV: production
       MCP_INTERNAL_API_BASE: https://cal.hajnal.space

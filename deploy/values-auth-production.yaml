@@ -46,13 +46,15 @@ ingress:
 secrets:
   name: commoncal-auth-secrets
   databaseUrlKey: DATABASE_URL
-  bridgeKey: LAB_BRIDGE_KEY
-  cookieKeys: AUTH_COOKIE_KEYS
-  signingKid: AUTH_SIGNING_KID
+  bridgeKeyKey: LAB_BRIDGE_KEY
+  cookieKeysKey: AUTH_COOKIE_KEYS
+  signingKidKey: AUTH_SIGNING_KID
 
 networkPolicy:
   enabled: true
-  ingressNamespace: traefik
+  # k3s installs the Traefik controller in kube-system. This value is a
+  # namespace name, not the IngressClass name.
+  ingressNamespace: kube-system
   commoncalNamespace: commoncal
   postgres:
     port: 5432

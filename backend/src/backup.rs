@@ -82,6 +82,33 @@ pub struct BackupService {
 
 pub struct RestoreService;
 
+struct TemporaryArtifact {
+    path: PathBuf,
+    remove_on_drop: bool,
+}
+
+impl TemporaryArtifact {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            remove_on_drop: true,
+        }
+    }
+
+    fn keep(mut self) -> PathBuf {
+        self.remove_on_drop = false;
+        self.path.clone()
+    }
+}
+
+impl Drop for TemporaryArtifact {
+    fn drop(&mut self) {
+        if self.remove_on_drop {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Encrypts backup artifacts before they leave the local recovery directory.
 pub trait BackupEncryptor: Send + Sync {
     fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, BackupError>;
@@ -196,11 +223,78 @@ impl BackupService {
         destination_directory: impl AsRef<Path>,
         created_at: i64,
     ) -> Result<BackupMetadata, BackupError> {
-        let destination_directory = destination_directory.as_ref();
+        let (metadata, compressed) = self
+            .create_compressed(destination_directory.as_ref(), created_at)
+            .await?;
+
+        sqlx::query(
+            "INSERT INTO backup_metadata (id, artifact_path, snapshot_sha256, compressed_sha256, snapshot_bytes, compressed_bytes, integrity_check, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ok', ?)",
+        )
+        .bind(&metadata.id)
+        .bind(metadata.artifact_path.display().to_string())
+        .bind(&metadata.snapshot_sha256)
+        .bind(&metadata.compressed_sha256)
+        .bind(metadata.snapshot_bytes as i64)
+        .bind(metadata.compressed_bytes as i64)
+        .bind(metadata.created_at)
+        .execute(&self.database)
+        .await
+        .map_err(BackupError::Metadata)?;
+
+        compressed.keep();
+        Ok(metadata)
+    }
+
+    /// The encrypted artifact is retained locally even when remote upload fails, so recovery
+    /// never depends on the remote service being available.
+    pub async fn create_encrypted_and_upload(
+        &self,
+        destination_directory: impl AsRef<Path>,
+        created_at: i64,
+        encryptor: &dyn BackupEncryptor,
+        uploader: Option<&dyn BackupUploader>,
+    ) -> Result<BackupMetadata, BackupError> {
+        // Backup jobs mount the live database read-only. Metadata travels with the returned
+        // result; it must not be persisted back into the database being backed up.
+        let (mut metadata, compressed_artifact) = self
+            .create_compressed(destination_directory.as_ref(), created_at)
+            .await?;
+        let encrypted_path = metadata.artifact_path.with_extension("gz.enc");
+        let compressed = fs::read(&metadata.artifact_path).map_err(BackupError::Io)?;
+        let encrypted = encryptor.encrypt(&compressed)?;
+        let encrypted_artifact = TemporaryArtifact::new(encrypted_path.clone());
+        fs::write(&encrypted_path, encrypted).map_err(BackupError::Io)?;
+
+        let upload_status = if let Some(uploader) = uploader {
+            if uploader.upload(&encrypted_path, &metadata.id).is_ok() {
+                "uploaded"
+            } else {
+                "failed"
+            }
+        } else {
+            "not_requested"
+        };
+
+        drop(compressed_artifact);
+        metadata.artifact_path = encrypted_path;
+        encrypted_artifact.keep();
+        if upload_status == "failed" {
+            return Err(BackupError::Upload);
+        }
+        Ok(metadata)
+    }
+
+    async fn create_compressed(
+        &self,
+        destination_directory: &Path,
+        created_at: i64,
+    ) -> Result<(BackupMetadata, TemporaryArtifact), BackupError> {
         fs::create_dir_all(destination_directory).map_err(BackupError::Io)?;
         let id = Uuid::new_v4().to_string();
         let snapshot_path = destination_directory.join(format!("{id}.sqlite"));
+        let snapshot = TemporaryArtifact::new(snapshot_path.clone());
         let artifact_path = destination_directory.join(format!("{id}.sqlite.gz"));
+        let compressed = TemporaryArtifact::new(artifact_path.clone());
 
         // `VACUUM INTO` creates a transactionally consistent snapshot while the source remains live.
         let escaped_path = snapshot_path.display().to_string().replace('\'', "''");
@@ -215,80 +309,20 @@ impl BackupService {
         compress(&snapshot_path, &artifact_path)?;
         let compressed_bytes = fs::metadata(&artifact_path).map_err(BackupError::Io)?.len();
         let compressed_sha256 = sha256_file(&artifact_path)?;
+        drop(snapshot);
 
-        sqlx::query(
-            "INSERT INTO backup_metadata (id, artifact_path, snapshot_sha256, compressed_sha256, snapshot_bytes, compressed_bytes, integrity_check, created_at) VALUES (?, ?, ?, ?, ?, ?, 'ok', ?)",
-        )
-        .bind(&id)
-        .bind(artifact_path.display().to_string())
-        .bind(&snapshot_sha256)
-        .bind(&compressed_sha256)
-        .bind(snapshot_bytes as i64)
-        .bind(compressed_bytes as i64)
-        .bind(created_at)
-        .execute(&self.database)
-        .await
-        .map_err(BackupError::Metadata)?;
-
-        fs::remove_file(&snapshot_path).map_err(BackupError::Io)?;
-        Ok(BackupMetadata {
-            id,
-            artifact_path,
-            snapshot_sha256,
-            compressed_sha256,
-            snapshot_bytes,
-            compressed_bytes,
-            created_at,
-        })
-    }
-
-    /// The encrypted artifact is retained locally even when remote upload fails, so recovery
-    /// never depends on the remote service being available.
-    pub async fn create_encrypted_and_upload(
-        &self,
-        destination_directory: impl AsRef<Path>,
-        created_at: i64,
-        encryptor: &dyn BackupEncryptor,
-        uploader: Option<&dyn BackupUploader>,
-    ) -> Result<BackupMetadata, BackupError> {
-        let mut metadata = self.create(destination_directory, created_at).await?;
-        let encrypted_path = metadata.artifact_path.with_extension("gz.enc");
-        let compressed = fs::read(&metadata.artifact_path).map_err(BackupError::Io)?;
-        let encrypted = encryptor.encrypt(&compressed)?;
-        fs::write(&encrypted_path, encrypted).map_err(BackupError::Io)?;
-        fs::remove_file(&metadata.artifact_path).map_err(BackupError::Io)?;
-
-        let encrypted_bytes = fs::metadata(&encrypted_path)
-            .map_err(BackupError::Io)?
-            .len();
-        let encrypted_sha256 = sha256_file(&encrypted_path)?;
-        let upload_status = if let Some(uploader) = uploader {
-            if uploader.upload(&encrypted_path, &metadata.id).is_ok() {
-                "uploaded"
-            } else {
-                "failed"
-            }
-        } else {
-            "not_requested"
-        };
-
-        sqlx::query(
-            "UPDATE backup_metadata SET artifact_path = ?, encryption_algorithm = 'AES-256-GCM', encrypted_sha256 = ?, encrypted_bytes = ?, upload_status = ? WHERE id = ?",
-        )
-        .bind(encrypted_path.display().to_string())
-        .bind(encrypted_sha256)
-        .bind(encrypted_bytes as i64)
-        .bind(upload_status)
-        .bind(&metadata.id)
-        .execute(&self.database)
-        .await
-        .map_err(BackupError::Metadata)?;
-
-        metadata.artifact_path = encrypted_path;
-        if upload_status == "failed" {
-            return Err(BackupError::Upload);
-        }
-        Ok(metadata)
+        Ok((
+            BackupMetadata {
+                id,
+                artifact_path,
+                snapshot_sha256,
+                compressed_sha256,
+                snapshot_bytes,
+                compressed_bytes,
+                created_at,
+            },
+            compressed,
+        ))
     }
 }
 

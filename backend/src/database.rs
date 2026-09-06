@@ -41,6 +41,23 @@ pub async fn connect_and_migrate(
     Ok(pool)
 }
 
+/// Opens an existing database for operations that must not mutate the source.
+///
+/// In particular, backup uses SQLite's `VACUUM INTO`, which can write the
+/// destination while the source connection itself remains read-only. Keep this
+/// path free of migrations and write-oriented connection pragmas.
+pub async fn connect_read_only(config: &AppConfig) -> Result<SqlitePool, DatabaseError> {
+    let options = SqliteConnectOptions::new()
+        .filename(config.database_path())
+        .read_only(true)
+        .busy_timeout(Duration::from_secs(5));
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(DatabaseError::Connect)
+}
+
 #[derive(Debug)]
 pub enum DatabaseError {
     Connect(sqlx::Error),

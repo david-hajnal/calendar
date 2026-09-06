@@ -36,6 +36,8 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/templates/statefulset.yaml" 'key: {{ required "existingSecret.sessionSecretKey is required" .Values.existingSecret.sessionSecretKey }}'
   require_source "$chart_dir/templates/statefulset.yaml" 'required "image.tag is required" .Values.image.tag'
   require_source "$chart_dir/templates/statefulset.yaml" 'name: MCP_INTERNAL_API_KEY'
+  require_source "$chart_dir/templates/cronjob-backup.yaml" 'backoffLimit: {{ .Values.backup.backoffLimit }}'
+  require_source "$chart_dir/values.yaml" '  backoffLimit: 1'
   exit 0
 fi
 
@@ -135,6 +137,44 @@ if grep -F -q 'cert-manager.io/cluster-issuer' "$prod_rendered"; then
   exit 1
 fi
 
+# External calendar feeds are fetched by the CommonCal pod over HTTPS. Once an
+# Egress NetworkPolicy selects that pod, port 443 must therefore be reachable
+# beyond cluster namespaces. A namespaceSelector-only rule permits Kubernetes
+# workloads, but cannot match public calendar servers.
+python3 - "$prod_rendered" <<'PY'
+import sys
+
+import yaml
+
+documents = list(yaml.safe_load_all(open(sys.argv[1], encoding="utf-8")))
+policy = next(
+    document
+    for document in documents
+    if document and document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "commoncal"
+)
+
+def permits_public_https(rule):
+    permits_https = any(
+        port.get("protocol", "TCP") == "TCP" and port.get("port") == 443
+        for port in rule.get("ports", [])
+    )
+    if not permits_https:
+        return False
+    destinations = rule.get("to")
+    if not destinations:
+        return True
+    return any(
+        destination.get("ipBlock", {}).get("cidr") in {"0.0.0.0/0", "::/0"}
+        for destination in destinations
+    )
+
+if not any(permits_public_https(rule) for rule in policy["spec"].get("egress", [])):
+    raise SystemExit(
+        "CommonCal NetworkPolicy must permit public HTTPS egress for external calendar feeds"
+    )
+PY
+
 # --- Authorization bridge assertions (slice 5) -----------------------------
 # Render with the bridge enabled and verify the wiring is correct: the bridge
 # key comes from a Secret reference (no value rendered), the bridge URL is
@@ -184,6 +224,32 @@ helm template commoncal "$chart_dir" \
   > "$default_rendered"
 if grep -q 'name: AUTH_BRIDGE_KEY' "$default_rendered"; then
   echo 'AUTH_BRIDGE_KEY must not be rendered when authBridge.enabled is false' >&2
+  exit 1
+fi
+
+# A persistent backup failure must not fan out into Kubernetes' default seven
+# failed pods per schedule. The production incident that motivated this check
+# left seven Error pods for each failed Job because backoffLimit was omitted.
+backup_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered" "$default_rendered" "$backup_rendered"' EXIT
+helm template commoncal "$chart_dir" \
+  --set image.tag=test-image-tag \
+  --set backup.enabled=true \
+  > "$backup_rendered"
+if ! grep -q 'backoffLimit: 1' "$backup_rendered"; then
+  echo 'backup CronJob must cap failed Job retries at one' >&2
+  exit 1
+fi
+if ! awk '
+  /^kind: CronJob$/ { in_cronjob = 1; next }
+  /^---$/ { in_cronjob = 0 }
+  in_cronjob && /name: data/ { in_data_mount = 1; next }
+  in_data_mount && /mountPath: \/app\/data/ { saw_data_path = 1; next }
+  saw_data_path && /readOnly: true/ { found = 1; exit }
+  saw_data_path && /^[[:space:]]*- name:/ { exit }
+  END { exit !found }
+' "$backup_rendered"; then
+  echo 'backup CronJob must mount the live data PVC read-only' >&2
   exit 1
 fi
 

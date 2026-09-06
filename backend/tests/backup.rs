@@ -19,6 +19,17 @@ use tempfile::tempdir;
 
 struct FailingUploader;
 
+struct FailingEncryptor;
+
+impl BackupEncryptor for FailingEncryptor {
+    fn encrypt(
+        &self,
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>, commoncal_backend::backup::BackupError> {
+        Err(commoncal_backend::backup::BackupError::Encryption)
+    }
+}
+
 impl BackupUploader for FailingUploader {
     fn upload(&self, _artifact_path: &Path, _backup_id: &str) -> Result<(), UploadError> {
         Err(UploadError::new(
@@ -104,6 +115,81 @@ async fn creates_verified_compressed_snapshot_during_controlled_writes() {
         result.artifact_path.display().to_string()
     );
     assert_eq!(metadata.get::<String, _>(1), result.snapshot_sha256);
+}
+
+#[tokio::test]
+async fn creates_an_encrypted_backup_when_the_source_database_is_read_only() {
+    let (directory, database) = database().await;
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('readonly-backup@example.test', 'active', 1)")
+        .execute(&database)
+        .await
+        .unwrap();
+    database.close().await;
+
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(directory.path().join("live.sqlite"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+
+    let result = BackupService::new(source)
+        .create_encrypted_and_upload(
+            directory.path().join("backups"),
+            123,
+            &Aes256GcmEncryptor::new([7; 32]),
+            None,
+        )
+        .await
+        .expect("a backup must not require write access to its source database");
+
+    assert!(result.artifact_path.exists());
+    assert_eq!(result.artifact_path.extension().unwrap(), "enc");
+    assert!(result.compressed_bytes > 0);
+    let artifacts = fs::read_dir(directory.path().join("backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(artifacts, vec![result.artifact_path]);
+}
+
+#[tokio::test]
+async fn encryption_failure_removes_plaintext_backup_artifacts() {
+    let (directory, database) = database().await;
+    let backup_directory = directory.path().join("backups");
+
+    BackupService::new(database)
+        .create_encrypted_and_upload(&backup_directory, 123, &FailingEncryptor, None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(fs::read_dir(backup_directory).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn metadata_failure_removes_plaintext_backup_artifacts() {
+    let (directory, database) = database().await;
+    database.close().await;
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(directory.path().join("live.sqlite"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let backup_directory = directory.path().join("backups");
+
+    BackupService::new(source)
+        .create(&backup_directory, 123)
+        .await
+        .unwrap_err();
+
+    assert_eq!(fs::read_dir(backup_directory).unwrap().count(), 0);
 }
 
 #[tokio::test]
@@ -413,6 +499,69 @@ async fn backup_cli_round_trips_with_a_48_hex_key() {
 }
 
 #[tokio::test]
+async fn backup_cli_does_not_apply_pending_migrations_to_the_source_database() {
+    let (directory, database) = database().await;
+
+    // Put the source at the schema immediately before migration 0016. A backup
+    // command must snapshot the database it was given, not upgrade that live
+    // database as a side effect of starting the CLI.
+    for column in [
+        "upload_status",
+        "encrypted_bytes",
+        "encrypted_sha256",
+        "encryption_algorithm",
+    ] {
+        sqlx::query(&format!("ALTER TABLE backup_metadata DROP COLUMN {column}"))
+            .execute(&database)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 16")
+        .execute(&database)
+        .await
+        .unwrap();
+    database.close().await;
+
+    let database_path = directory.path().join("live.sqlite");
+    let backups = directory.path().join("backups");
+    let output = Command::new(env!("CARGO_BIN_EXE_commoncal-backend"))
+        .arg("backup")
+        .arg(&backups)
+        .env("APP_ENV", "development")
+        .env("DATABASE_PATH", &database_path)
+        .env(
+            "BACKUP_ENCRYPTION_KEY_HEX",
+            "0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "backup command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&database_path)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let migration_was_applied: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 16")
+            .fetch_one(&source)
+            .await
+            .unwrap();
+    assert_eq!(
+        migration_was_applied, 0,
+        "backup CLI must not migrate or otherwise mutate its source database"
+    );
+}
+
+#[tokio::test]
 async fn upload_failure_retains_encrypted_local_recovery_artifact_without_logging_secret() {
     let (directory, database) = database().await;
     let encryptor = Aes256GcmEncryptor::new([9; 32]);
@@ -437,18 +586,14 @@ async fn upload_failure_retains_encrypted_local_recovery_artifact_without_loggin
     assert!(!error.to_string().contains("access-token"));
     assert!(!error.to_string().contains("secret"));
 
-    let metadata = sqlx::query(
-        "SELECT artifact_path, encryption_algorithm, upload_status FROM backup_metadata",
-    )
-    .fetch_one(&database)
-    .await
-    .unwrap();
+    let metadata_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backup_metadata")
+        .fetch_one(&database)
+        .await
+        .unwrap();
     assert_eq!(
-        metadata.get::<String, _>(0),
-        local_artifacts[0].display().to_string()
+        metadata_count, 0,
+        "encrypted backups must not modify the source database"
     );
-    assert_eq!(metadata.get::<String, _>(1), "AES-256-GCM");
-    assert_eq!(metadata.get::<String, _>(2), "failed");
 }
 
 #[tokio::test]

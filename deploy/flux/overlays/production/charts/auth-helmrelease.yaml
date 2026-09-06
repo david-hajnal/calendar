@@ -31,8 +31,8 @@ spec:
       repository: ghcr.io/david-hajnal/calendar-auth
       tag: "sha-03078da4a055b1e024fe221f9d9ceaa35a0a1bf5"
       pullPolicy: IfNotPresent
-    issuer:
-      url: https://cal.hajnal.space
+    config:
+      issuer: https://cal.hajnal.space
       resourceUrl: https://cal.hajnal.space
       commoncalUrl: https://cal.hajnal.space
     public:
@@ -53,12 +53,14 @@ spec:
     secrets:
       name: commoncal-auth-secrets
       databaseUrlKey: DATABASE_URL
-      bridgeKey: LAB_BRIDGE_KEY
-      cookieKeys: AUTH_COOKIE_KEYS
-      signingKid: AUTH_SIGNING_KID
+      bridgeKeyKey: LAB_BRIDGE_KEY
+      cookieKeysKey: AUTH_COOKIE_KEYS
+      signingKidKey: AUTH_SIGNING_KID
     networkPolicy:
       enabled: true
-      ingressNamespace: traefik
+      # k3s installs the Traefik controller in kube-system. This value is a
+      # namespace name, not the IngressClass name.
+      ingressNamespace: kube-system
       commoncalNamespace: commoncal
       postgres:
         port: 5432

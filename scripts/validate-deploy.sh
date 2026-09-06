@@ -27,9 +27,9 @@ if command -v helm &>/dev/null; then
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
     --set-string secrets.databaseUrlKey=DATABASE_URL \
-    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
-    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
-    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKidKey=AUTH_SIGNING_KID \
     >/dev/null 2>&1 || { echo "FAIL: helm template commoncal-auth"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (core) ---"
@@ -160,6 +160,12 @@ else
   echo "SKIP: commoncal-auth template_assertions.sh not found"
 fi
 
+if [ -f "deploy/helm/commoncal-auth/tests/production_values_assertions.sh" ]; then
+  sh deploy/helm/commoncal-auth/tests/production_values_assertions.sh || { echo "FAIL: commoncal-auth production_values_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal-auth production_values_assertions.sh not found"
+fi
+
 if [ -f "deploy/helm/commoncal/tests/template_assertions.sh" ]; then
   sh deploy/helm/commoncal/tests/template_assertions.sh || { echo "FAIL: commoncal template_assertions.sh"; ERRORS=$((ERRORS+1)); }
 else
@@ -184,9 +190,9 @@ if [ -s "$BUNDLE" ]; then
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
     --set-string secrets.databaseUrlKey=DATABASE_URL \
-    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
-    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
-    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKidKey=AUTH_SIGNING_KID \
     2>/dev/null > "$INGRESS_TEMPLATE" || true
   if grep -A20 'kind: Ingress' "$INGRESS_TEMPLATE" | grep -q 'commoncal-auth-internal'; then
     echo "FAIL: private bridge service must not be exposed via Ingress"
@@ -264,6 +270,12 @@ if [ -f "scripts/test-deploy-prod-stack.sh" ]; then
   bash scripts/test-deploy-prod-stack.sh || { echo "FAIL: test-deploy-prod-stack.sh"; ERRORS=$((ERRORS+1)); }
 else
   echo "SKIP: test-deploy-prod-stack.sh not found"
+fi
+
+if [ -f "scripts/test-production-ingress-network-policies.sh" ]; then
+  sh scripts/test-production-ingress-network-policies.sh || { echo "FAIL: test-production-ingress-network-policies.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: test-production-ingress-network-policies.sh not found"
 fi
 
 echo ""

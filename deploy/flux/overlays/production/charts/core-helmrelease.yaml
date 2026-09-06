@@ -80,6 +80,13 @@ spec:
       schedule: "0 2 * * *"
       persistence:
         size: 5Gi
+    networkPolicy:
+      enabled: true
+      ingress:
+        from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
     resources:
       requests:
         cpu: 100m

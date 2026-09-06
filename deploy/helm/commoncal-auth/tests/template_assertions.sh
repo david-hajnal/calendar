@@ -100,6 +100,25 @@ for workload in workloads:
         assert "fsGroup" not in container.get("securityContext", {}), (
             f"{name}/{container['name']}: fsGroup is invalid in container securityContext"
         )
+
+deployments = [workload for workload in workloads if workload.get("kind") == "Deployment"]
+assert len(deployments) == 1, "expected exactly one commoncal-auth Deployment"
+auth_container = next(
+    container
+    for container in deployments[0]["spec"]["template"]["spec"]["containers"]
+    if container["name"] == "auth"
+)
+container_ports = {
+    port.get("name"): port["containerPort"]
+    for port in auth_container.get("ports", [])
+}
+for probe_name in ("livenessProbe", "readinessProbe"):
+    probe_port = auth_container[probe_name]["httpGet"]["port"]
+    resolved_port = container_ports.get(probe_port, probe_port)
+    assert resolved_port == container_ports.get("public"), (
+        f"auth {probe_name} must target the public container port "
+        f"({container_ports.get('public')} or 'public'), rendered {probe_port!r}"
+    )
 PY
 
 # --- Two services ----------------------------------------------------------

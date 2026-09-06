@@ -272,6 +272,12 @@ else
   echo "SKIP: test-deploy-prod-stack.sh not found"
 fi
 
+if [ -f "scripts/test-production-ingress-network-policies.sh" ]; then
+  sh scripts/test-production-ingress-network-policies.sh || { echo "FAIL: test-production-ingress-network-policies.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: test-production-ingress-network-policies.sh not found"
+fi
+
 echo ""
 if [ $ERRORS -gt 0 ]; then
   echo "FAILED: $ERRORS error(s) found"

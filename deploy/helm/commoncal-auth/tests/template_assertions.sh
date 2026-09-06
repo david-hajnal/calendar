@@ -90,6 +90,40 @@ assert migration_annotations.get("helm.sh/hook-delete-policy") == (
     "before-hook-creation,hook-succeeded"
 ), "migration Job must be recreated for each Helm revision and cleaned up after success"
 
+# Helm runs pre-install hooks before creating ordinary chart resources. Any
+# chart-owned ConfigMap or ServiceAccount consumed by this Job must therefore
+# be a pre-install hook too, otherwise a fresh install cannot start the pod.
+pre_install_hooks = {
+    (document.get("kind"), document.get("metadata", {}).get("name"))
+    for document in documents
+    if "pre-install"
+    in document.get("metadata", {}).get("annotations", {}).get("helm.sh/hook", "").split(",")
+}
+chart_resources = {
+    (document.get("kind"), document.get("metadata", {}).get("name"))
+    for document in documents
+}
+migration_pod_spec = migration_jobs[0]["spec"]["template"]["spec"]
+migration_config_maps = {
+    source["configMapRef"]["name"]
+    for container in migration_pod_spec.get("containers", [])
+    for source in container.get("envFrom", [])
+    if "configMapRef" in source
+}
+for config_map in migration_config_maps:
+    assert ("ConfigMap", config_map) not in chart_resources or (
+        "ConfigMap", config_map
+    ) in pre_install_hooks, (
+        f"pre-install migration Job depends on ordinary chart ConfigMap {config_map!r}"
+    )
+migration_service_account = migration_pod_spec.get("serviceAccountName", "default")
+assert ("ServiceAccount", migration_service_account) not in chart_resources or (
+    "ServiceAccount", migration_service_account
+) in pre_install_hooks, (
+    "pre-install migration Job depends on ordinary chart ServiceAccount "
+    f"{migration_service_account!r}"
+)
+
 for workload in workloads:
     pod_spec = workload["spec"]["template"]["spec"]
     name = workload["metadata"]["name"]

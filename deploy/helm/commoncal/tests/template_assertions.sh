@@ -137,6 +137,44 @@ if grep -F -q 'cert-manager.io/cluster-issuer' "$prod_rendered"; then
   exit 1
 fi
 
+# External calendar feeds are fetched by the CommonCal pod over HTTPS. Once an
+# Egress NetworkPolicy selects that pod, port 443 must therefore be reachable
+# beyond cluster namespaces. A namespaceSelector-only rule permits Kubernetes
+# workloads, but cannot match public calendar servers.
+python3 - "$prod_rendered" <<'PY'
+import sys
+
+import yaml
+
+documents = list(yaml.safe_load_all(open(sys.argv[1], encoding="utf-8")))
+policy = next(
+    document
+    for document in documents
+    if document and document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "commoncal"
+)
+
+def permits_public_https(rule):
+    permits_https = any(
+        port.get("protocol", "TCP") == "TCP" and port.get("port") == 443
+        for port in rule.get("ports", [])
+    )
+    if not permits_https:
+        return False
+    destinations = rule.get("to")
+    if not destinations:
+        return True
+    return any(
+        destination.get("ipBlock", {}).get("cidr") in {"0.0.0.0/0", "::/0"}
+        for destination in destinations
+    )
+
+if not any(permits_public_https(rule) for rule in policy["spec"].get("egress", [])):
+    raise SystemExit(
+        "CommonCal NetworkPolicy must permit public HTTPS egress for external calendar feeds"
+    )
+PY
+
 # --- Authorization bridge assertions (slice 5) -----------------------------
 # Render with the bridge enabled and verify the wiring is correct: the bridge
 # key comes from a Secret reference (no value rendered), the bridge URL is

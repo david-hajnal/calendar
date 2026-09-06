@@ -4,9 +4,43 @@ set -eu
 chart_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 repo_root=$(CDPATH= cd -- "$chart_dir/../../.." && pwd)
 helmrelease="$repo_root/deploy/flux/overlays/production/charts/auth-helmrelease.yaml"
+standalone_values="$repo_root/deploy/values-auth-production.yaml"
 values=$(mktemp)
 rendered=$(mktemp)
-trap 'rm -f "$values" "$rendered"' EXIT
+standalone_rendered=$(mktemp)
+trap 'rm -f "$values" "$rendered" "$standalone_rendered"' EXIT
+
+# deploy-prod.sh and rollback.sh install this chart directly with the standalone
+# production values file. Keep that operator path schema-valid and verify its
+# non-secret URLs reach the ConfigMap, independently of Flux's inline values.
+helm template commoncal-auth "$chart_dir" \
+  --namespace commoncal \
+  --values "$standalone_values" > "$standalone_rendered"
+
+python3 - "$standalone_rendered" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    documents = [document for document in yaml.safe_load_all(stream) if document]
+
+config_map = next(
+    document
+    for document in documents
+    if document.get("kind") == "ConfigMap"
+    and document.get("metadata", {}).get("name") == "commoncal-auth"
+)
+
+expected = {
+    "LAB_ISSUER": "https://cal.hajnal.space",
+    "LAB_RESOURCE_URL": "https://cal.hajnal.space",
+    "LAB_COMMONCAL_URL": "https://cal.hajnal.space",
+}
+for key, value in expected.items():
+    actual = config_map["data"].get(key)
+    assert actual == value, f"standalone {key}: expected {value!r}, rendered {actual!r}"
+PY
 
 # Render the chart with exactly the values Flux passes from the production
 # HelmRelease. Helm silently accepts unknown keys, so a successful render alone

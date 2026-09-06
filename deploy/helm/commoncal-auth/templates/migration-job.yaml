@@ -14,7 +14,6 @@ metadata:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
     "helm.sh/hook-weight": "-5"
-    checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
 spec:
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
@@ -25,7 +24,10 @@ spec:
         {{- include "commoncal-auth.selectorBaseLabels" . | nindent 8 }}
         app.kubernetes.io/component: migration
     spec:
-      serviceAccountName: {{ include "commoncal-auth.serviceAccountName" . }}
+      # Pre-install hooks run before chart-owned ServiceAccounts exist. The
+      # migration needs no Kubernetes API access, so use the namespace's
+      # always-present default ServiceAccount without mounting its token.
+      serviceAccountName: default
       automountServiceAccountToken: false
       restartPolicy: Never
       securityContext:
@@ -40,9 +42,6 @@ spec:
           command:
             - node
             - src/migrate.mjs
-          envFrom:
-            - configMapRef:
-                name: {{ include "commoncal-auth.fullname" . }}
           env:
             - name: DATABASE_URL
               valueFrom:

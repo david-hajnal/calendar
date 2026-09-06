@@ -31,8 +31,8 @@ spec:
       repository: ghcr.io/david-hajnal/calendar-auth
       tag: "sha-9db9f85457809b81daf0c767caf03f88d8f4c67e"
       pullPolicy: IfNotPresent
-    issuer:
-      url: https://cal.hajnal.space
+    config:
+      issuer: https://cal.hajnal.space
       resourceUrl: https://cal.hajnal.space
       commoncalUrl: https://cal.hajnal.space
     public:

@@ -58,6 +58,13 @@ spec:
       limits:
         cpu: 500m
         memory: 256Mi
+    networkPolicy:
+      enabled: true
+      ingress:
+        from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
     existingSecret:
       name: commoncal-mcp-secrets
       apiKeyKeyName: mcp-internal-api-key

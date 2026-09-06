@@ -52,7 +52,9 @@ secrets:
 
 networkPolicy:
   enabled: true
-  ingressNamespace: traefik
+  # k3s installs the Traefik controller in kube-system. This value is a
+  # namespace name, not the IngressClass name.
+  ingressNamespace: kube-system
   commoncalNamespace: commoncal
   postgres:
     port: 5432

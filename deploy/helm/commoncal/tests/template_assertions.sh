@@ -203,7 +203,9 @@ if ! grep -q 'backoffLimit: 1' "$backup_rendered"; then
   exit 1
 fi
 if ! awk '
-  /name: data/ { in_data_mount = 1; next }
+  /^kind: CronJob$/ { in_cronjob = 1; next }
+  /^---$/ { in_cronjob = 0 }
+  in_cronjob && /name: data/ { in_data_mount = 1; next }
   in_data_mount && /mountPath: \/app\/data/ { saw_data_path = 1; next }
   saw_data_path && /readOnly: true/ { found = 1; exit }
   saw_data_path && /^[[:space:]]*- name:/ { exit }

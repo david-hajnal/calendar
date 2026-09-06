@@ -103,7 +103,6 @@ securityContext:
   runAsNonRoot: true
   runAsUser: 65534
   runAsGroup: 65534
-  fsGroup: 65534
   seccompProfile:
     type: RuntimeDefault
 
@@ -146,7 +145,7 @@ config:
 livenessProbe:
   httpGet:
     path: /.well-known/openid-configuration
-    port: 80
+    port: public
   initialDelaySeconds: 10
   periodSeconds: 30
   timeoutSeconds: 5
@@ -154,7 +153,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /.well-known/openid-configuration
-    port: 80
+    port: public
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5

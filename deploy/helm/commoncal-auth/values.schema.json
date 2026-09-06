@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "issuer": {
+      "not": {},
+      "description": "Unsupported legacy key. Configure config.issuer, config.resourceUrl, and config.commoncalUrl instead."
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "format": "uri"
+        },
+        "resourceUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "commoncalUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "dcrRateLimit": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "databaseUrlKey": { "type": "string", "minLength": 1 },
+        "bridgeKeyKey": { "type": "string", "minLength": 1 },
+        "cookieKeysKey": { "type": "string", "minLength": 1 },
+        "jwksKey": { "type": "string", "minLength": 1 },
+        "signingKidKey": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

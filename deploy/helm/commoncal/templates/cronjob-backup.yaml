@@ -12,6 +12,7 @@ spec:
   successfulJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      backoffLimit: {{ .Values.backup.backoffLimit }}
       template:
         spec:
           serviceAccountName: {{ include "commoncal.serviceAccountName" . }}
@@ -40,6 +41,7 @@ spec:
               volumeMounts:
                 - name: data
                   mountPath: /app/data
+                  readOnly: true
                 - name: backup
                   mountPath: /backup
               resources:

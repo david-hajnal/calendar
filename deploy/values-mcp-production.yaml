@@ -43,6 +43,11 @@ terminationGracePeriodSeconds: 30
 
 networkPolicy:
   enabled: true
+  ingress:
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
 
 existingSecret:
   name: commoncal-mcp-secrets

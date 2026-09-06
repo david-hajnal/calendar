@@ -27,6 +27,18 @@
         }
       },
       "additionalProperties": false
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "databaseUrlKey": { "type": "string", "minLength": 1 },
+        "bridgeKeyKey": { "type": "string", "minLength": 1 },
+        "cookieKeysKey": { "type": "string", "minLength": 1 },
+        "jwksKey": { "type": "string", "minLength": 1 },
+        "signingKidKey": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
     }
   }
 }

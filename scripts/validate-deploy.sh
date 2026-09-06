@@ -160,6 +160,12 @@ else
   echo "SKIP: commoncal-auth template_assertions.sh not found"
 fi
 
+if [ -f "deploy/helm/commoncal-auth/tests/production_values_assertions.sh" ]; then
+  sh deploy/helm/commoncal-auth/tests/production_values_assertions.sh || { echo "FAIL: commoncal-auth production_values_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal-auth production_values_assertions.sh not found"
+fi
+
 if [ -f "deploy/helm/commoncal/tests/template_assertions.sh" ]; then
   sh deploy/helm/commoncal/tests/template_assertions.sh || { echo "FAIL: commoncal template_assertions.sh"; ERRORS=$((ERRORS+1)); }
 else

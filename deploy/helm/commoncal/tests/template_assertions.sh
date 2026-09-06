@@ -36,6 +36,8 @@ if ! command -v helm >/dev/null 2>&1; then
   require_source "$chart_dir/templates/statefulset.yaml" 'key: {{ required "existingSecret.sessionSecretKey is required" .Values.existingSecret.sessionSecretKey }}'
   require_source "$chart_dir/templates/statefulset.yaml" 'required "image.tag is required" .Values.image.tag'
   require_source "$chart_dir/templates/statefulset.yaml" 'name: MCP_INTERNAL_API_KEY'
+  require_source "$chart_dir/templates/cronjob-backup.yaml" 'backoffLimit: {{ .Values.backup.backoffLimit }}'
+  require_source "$chart_dir/values.yaml" '  backoffLimit: 1'
   exit 0
 fi
 
@@ -184,6 +186,20 @@ helm template commoncal "$chart_dir" \
   > "$default_rendered"
 if grep -q 'name: AUTH_BRIDGE_KEY' "$default_rendered"; then
   echo 'AUTH_BRIDGE_KEY must not be rendered when authBridge.enabled is false' >&2
+  exit 1
+fi
+
+# A persistent backup failure must not fan out into Kubernetes' default seven
+# failed pods per schedule. The production incident that motivated this check
+# left seven Error pods for each failed Job because backoffLimit was omitted.
+backup_rendered=$(mktemp)
+trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered" "$default_rendered" "$backup_rendered"' EXIT
+helm template commoncal "$chart_dir" \
+  --set image.tag=test-image-tag \
+  --set backup.enabled=true \
+  > "$backup_rendered"
+if ! grep -q 'backoffLimit: 1' "$backup_rendered"; then
+  echo 'backup CronJob must cap failed Job retries at one' >&2
   exit 1
 fi
 

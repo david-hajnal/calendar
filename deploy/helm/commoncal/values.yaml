@@ -114,6 +114,7 @@ networkPolicy:
 backup:
   enabled: false
   schedule: "0 2 * * *"
+  backoffLimit: 1
   resources:
     requests:
       cpu: 50m

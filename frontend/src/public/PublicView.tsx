@@ -175,9 +175,9 @@ export function PublicViewPage({ token, fetcher = fetch, now = defaultNow }: { t
           <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>calendar_today</span>
           Subscribe in Apple Calendar
         </a>}
-        <div className="segmented-control" role="tablist" aria-label="View mode">
-          <button type="button" role="button" aria-pressed={mode === "month"} aria-label="Month view" className={`segmented-control__button ${mode === "month" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("month")}>Month view</button>
-          <button type="button" role="button" aria-pressed={mode === "agenda"} aria-label="Agenda view" className={`segmented-control__button ${mode === "agenda" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("agenda")}>Agenda view</button>
+        <div className="segmented-control" role="group" aria-label="View mode">
+          <button type="button" aria-pressed={mode === "month"} aria-label="Month view" className={`segmented-control__button ${mode === "month" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("month")}>Month view</button>
+          <button type="button" aria-pressed={mode === "agenda"} aria-label="Agenda view" className={`segmented-control__button ${mode === "agenda" ? "segmented-control__button--active" : ""}`} onClick={() => setMode("agenda")}>Agenda view</button>
         </div>
       </div>
     </header>

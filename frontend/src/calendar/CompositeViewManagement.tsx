@@ -260,12 +260,12 @@ export function CompositeViewManagement({ api }: { api: ApiClient }) {
             </div>
             <div className="composite-view-management__form-section">
               <h3 className="typography-title-md" style={{ color: "var(--color-on-surface)", margin: "0 0 0.75rem" }}>Calendars</h3>
-              {selectedCalendars.length === 0 ? <p className="typography-body-sm" style={{ color: "var(--color-on-surface-variant)" }}>No calendars added yet.</p> : <ul role="listbox" aria-label="Calendars in view" className="composite-view-management__calendar-list">
+              {selectedCalendars.length === 0 ? <p className="typography-body-sm" style={{ color: "var(--color-on-surface-variant)" }}>No calendars added yet.</p> : <ul aria-label="Calendars in view" className="composite-view-management__calendar-list">
                 {selectedCalendars.map((entry) => {
                   const cal = calendars.find((c) => c.id === entry.calendar_id);
                   if (!cal) return null;
                   const idx = selectedCalendars.findIndex((e) => e.calendar_id === entry.calendar_id);
-                  return <li key={entry.calendar_id} role="option" aria-label={cal.name} className="composite-view-management__calendar-item">
+                  return <li key={entry.calendar_id} className="composite-view-management__calendar-item">
                     <span className="material-symbols-outlined composite-view-management__drag-handle" style={{ color: "var(--color-on-surface-variant)" }}>drag_indicator</span>
                     <span className="composite-view-management__swatch" style={{ backgroundColor: calendarColors[entry.calendar_id] || cal.color }} />
                     <span className="typography-body-md" style={{ color: "var(--color-on-surface)" }}>{cal.name}</span>

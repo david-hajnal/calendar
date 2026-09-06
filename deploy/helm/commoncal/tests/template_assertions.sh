@@ -202,5 +202,15 @@ if ! grep -q 'backoffLimit: 1' "$backup_rendered"; then
   echo 'backup CronJob must cap failed Job retries at one' >&2
   exit 1
 fi
+if ! awk '
+  /name: data/ { in_data_mount = 1; next }
+  in_data_mount && /mountPath: \/app\/data/ { saw_data_path = 1; next }
+  saw_data_path && /readOnly: true/ { found = 1; exit }
+  saw_data_path && /^[[:space:]]*- name:/ { exit }
+  END { exit !found }
+' "$backup_rendered"; then
+  echo 'backup CronJob must mount the live data PVC read-only' >&2
+  exit 1
+fi
 
 echo 'commoncal chart assertions passed'

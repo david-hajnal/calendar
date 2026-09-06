@@ -499,6 +499,71 @@ async fn backup_cli_round_trips_with_a_48_hex_key() {
 }
 
 #[tokio::test]
+async fn backup_cli_does_not_apply_pending_migrations_to_the_source_database() {
+    let (directory, database) = database().await;
+
+    // Put the source at the schema immediately before migration 0016. A backup
+    // command must snapshot the database it was given, not upgrade that live
+    // database as a side effect of starting the CLI.
+    for column in [
+        "upload_status",
+        "encrypted_bytes",
+        "encrypted_sha256",
+        "encryption_algorithm",
+    ] {
+        sqlx::query(&format!(
+            "ALTER TABLE backup_metadata DROP COLUMN {column}"
+        ))
+        .execute(&database)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 16")
+        .execute(&database)
+        .await
+        .unwrap();
+    database.close().await;
+
+    let database_path = directory.path().join("live.sqlite");
+    let backups = directory.path().join("backups");
+    let output = Command::new(env!("CARGO_BIN_EXE_commoncal-backend"))
+        .arg("backup")
+        .arg(&backups)
+        .env("APP_ENV", "development")
+        .env("DATABASE_PATH", &database_path)
+        .env(
+            "BACKUP_ENCRYPTION_KEY_HEX",
+            "0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "backup command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&database_path)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let migration_was_applied: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 16")
+            .fetch_one(&source)
+            .await
+            .unwrap();
+    assert_eq!(
+        migration_was_applied, 0,
+        "backup CLI must not migrate or otherwise mutate its source database"
+    );
+}
+
+#[tokio::test]
 async fn upload_failure_retains_encrypted_local_recovery_artifact_without_logging_secret() {
     let (directory, database) = database().await;
     let encryptor = Aes256GcmEncryptor::new([9; 32]);

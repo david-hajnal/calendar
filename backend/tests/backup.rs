@@ -107,6 +107,40 @@ async fn creates_verified_compressed_snapshot_during_controlled_writes() {
 }
 
 #[tokio::test]
+async fn creates_an_encrypted_backup_when_the_source_database_is_read_only() {
+    let (directory, database) = database().await;
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('readonly-backup@example.test', 'active', 1)")
+        .execute(&database)
+        .await
+        .unwrap();
+    database.close().await;
+
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(directory.path().join("live.sqlite"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+
+    let result = BackupService::new(source)
+        .create_encrypted_and_upload(
+            directory.path().join("backups"),
+            123,
+            &Aes256GcmEncryptor::new([7; 32]),
+            None,
+        )
+        .await
+        .expect("a backup must not require write access to its source database");
+
+    assert!(result.artifact_path.exists());
+    assert_eq!(result.artifact_path.extension().unwrap(), "enc");
+    assert!(result.compressed_bytes > 0);
+}
+
+#[tokio::test]
 async fn rejects_corrupt_snapshot() {
     let directory = tempdir().unwrap();
     let snapshot = directory.path().join("corrupt.sqlite");

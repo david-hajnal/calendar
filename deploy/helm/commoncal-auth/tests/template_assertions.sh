@@ -28,6 +28,8 @@ if ! command -v helm >/dev/null 2>&1; then
   # Migration job.
   require_source "$chart_dir/templates/migration-job.yaml" 'kind: Job'
   require_source "$chart_dir/templates/migration-job.yaml" 'src/migrate.mjs'
+  require_source "$chart_dir/templates/migration-job.yaml" '"helm.sh/hook": pre-install,pre-upgrade'
+  require_source "$chart_dir/templates/migration-job.yaml" '"helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded'
   # PDB.
   require_source "$chart_dir/templates/pdb.yaml" 'kind: PodDisruptionBudget'
   # Secrets by reference only.
@@ -59,6 +61,46 @@ grep -q 'runAsNonRoot: true' "$rendered"
 grep -q 'runAsUser: 65534' "$rendered"
 grep -q 'type: RuntimeDefault' "$rendered"
 grep -q 'automountServiceAccountToken: false' "$rendered"
+
+# fsGroup is a PodSecurityContext field, not a container SecurityContext field.
+# Kubernetes server-side apply rejects a workload when it is rendered beneath
+# an individual container, even though `helm template` accepts the manifest.
+python3 - "$rendered" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    documents = [document for document in yaml.safe_load_all(stream) if document]
+
+workloads = [document for document in documents if document.get("kind") in {"Deployment", "Job"}]
+assert workloads, "expected rendered Deployment and Job workloads"
+
+migration_jobs = [
+    workload for workload in workloads
+    if workload.get("kind") == "Job"
+    and workload.get("metadata", {}).get("name") == "commoncal-auth-migrate"
+]
+assert len(migration_jobs) == 1, "expected exactly one commoncal-auth migration Job"
+migration_annotations = migration_jobs[0].get("metadata", {}).get("annotations", {})
+assert migration_annotations.get("helm.sh/hook") == "pre-install,pre-upgrade", (
+    "migration Job must run before each install/upgrade instead of patching an immutable Job"
+)
+assert migration_annotations.get("helm.sh/hook-delete-policy") == (
+    "before-hook-creation,hook-succeeded"
+), "migration Job must be recreated for each Helm revision and cleaned up after success"
+
+for workload in workloads:
+    pod_spec = workload["spec"]["template"]["spec"]
+    name = workload["metadata"]["name"]
+    assert pod_spec.get("securityContext", {}).get("fsGroup") == 65534, (
+        f"{name}: pod securityContext must retain fsGroup"
+    )
+    for container in pod_spec.get("containers", []) + pod_spec.get("initContainers", []):
+        assert "fsGroup" not in container.get("securityContext", {}), (
+            f"{name}/{container['name']}: fsGroup is invalid in container securityContext"
+        )
+PY
 
 # --- Two services ----------------------------------------------------------
 grep -q 'name: commoncal-auth-public' "$rendered"

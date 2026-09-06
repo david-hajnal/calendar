@@ -19,6 +19,17 @@ use tempfile::tempdir;
 
 struct FailingUploader;
 
+struct FailingEncryptor;
+
+impl BackupEncryptor for FailingEncryptor {
+    fn encrypt(
+        &self,
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>, commoncal_backend::backup::BackupError> {
+        Err(commoncal_backend::backup::BackupError::Encryption)
+    }
+}
+
 impl BackupUploader for FailingUploader {
     fn upload(&self, _artifact_path: &Path, _backup_id: &str) -> Result<(), UploadError> {
         Err(UploadError::new(
@@ -138,6 +149,47 @@ async fn creates_an_encrypted_backup_when_the_source_database_is_read_only() {
     assert!(result.artifact_path.exists());
     assert_eq!(result.artifact_path.extension().unwrap(), "enc");
     assert!(result.compressed_bytes > 0);
+    let artifacts = fs::read_dir(directory.path().join("backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(artifacts, vec![result.artifact_path]);
+}
+
+#[tokio::test]
+async fn encryption_failure_removes_plaintext_backup_artifacts() {
+    let (directory, database) = database().await;
+    let backup_directory = directory.path().join("backups");
+
+    BackupService::new(database)
+        .create_encrypted_and_upload(&backup_directory, 123, &FailingEncryptor, None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(fs::read_dir(backup_directory).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn metadata_failure_removes_plaintext_backup_artifacts() {
+    let (directory, database) = database().await;
+    database.close().await;
+    let source = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(directory.path().join("live.sqlite"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+    let backup_directory = directory.path().join("backups");
+
+    BackupService::new(source)
+        .create(&backup_directory, 123)
+        .await
+        .unwrap_err();
+
+    assert_eq!(fs::read_dir(backup_directory).unwrap().count(), 0);
 }
 
 #[tokio::test]
@@ -471,18 +523,14 @@ async fn upload_failure_retains_encrypted_local_recovery_artifact_without_loggin
     assert!(!error.to_string().contains("access-token"));
     assert!(!error.to_string().contains("secret"));
 
-    let metadata = sqlx::query(
-        "SELECT artifact_path, encryption_algorithm, upload_status FROM backup_metadata",
-    )
-    .fetch_one(&database)
-    .await
-    .unwrap();
+    let metadata_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backup_metadata")
+        .fetch_one(&database)
+        .await
+        .unwrap();
     assert_eq!(
-        metadata.get::<String, _>(0),
-        local_artifacts[0].display().to_string()
+        metadata_count, 0,
+        "encrypted backups must not modify the source database"
     );
-    assert_eq!(metadata.get::<String, _>(1), "AES-256-GCM");
-    assert_eq!(metadata.get::<String, _>(2), "failed");
 }
 
 #[tokio::test]

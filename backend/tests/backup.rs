@@ -511,12 +511,10 @@ async fn backup_cli_does_not_apply_pending_migrations_to_the_source_database() {
         "encrypted_sha256",
         "encryption_algorithm",
     ] {
-        sqlx::query(&format!(
-            "ALTER TABLE backup_metadata DROP COLUMN {column}"
-        ))
-        .execute(&database)
-        .await
-        .unwrap();
+        sqlx::query(&format!("ALTER TABLE backup_metadata DROP COLUMN {column}"))
+            .execute(&database)
+            .await
+            .unwrap();
     }
     sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 16")
         .execute(&database)

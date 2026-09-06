@@ -8,14 +8,16 @@ metadata:
     {{- include "commoncal-auth.baseLabels" . | nindent 4 }}
     app.kubernetes.io/component: migration
   annotations:
-    # Re-run the migration on chart change by bumping this checksum. The Job
-    # is idempotent (migrations are tracked in the schema_migrations table).
+    # Gate every install and upgrade on the idempotent database migration.
+    # Recreate the fixed-name Job before each run to avoid immutable pod
+    # template conflicts, and retain failed Jobs for diagnosis.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "-5"
     checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
 spec:
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
-  # Migrations are idempotent; a previously completed Job is not re-run unless
-  # the manifest changes (checksum annotation). Use `helm upgrade` to re-trigger.
   ttlSecondsAfterFinished: 86400
   template:
     metadata:

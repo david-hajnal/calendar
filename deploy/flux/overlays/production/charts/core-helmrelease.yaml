@@ -15,10 +15,6 @@ spec:
         name: flux-system
       interval: 10m
   interval: 10m
-  dependsOn:
-    # The authorization bridge must be reachable before CommonCal is wired to
-    # call it. This enforces the rollout order: auth -> commoncal -> mcp.
-    - name: commoncal-auth
   install:
     remediation:
       retries: 3
@@ -65,16 +61,6 @@ spec:
     mcpInternalApiSecret:
       name: commoncal-mcp-secrets
       key: mcp-internal-api-key
-    # Authorization bridge: CommonCal calls the private CommonCal authorization
-    # bridge for consent/interaction handoffs. The bridge key (LAB_BRIDGE_KEY)
-    # is injected from the commoncal-auth-secrets Secret — never rendered here.
-    # The existing issuer remains primary; this is not an issuer cutover.
-    authBridge:
-      enabled: true
-      url: http://commoncal-auth-internal.commoncal.svc:80
-      timeoutMs: 5000
-      secretName: commoncal-auth-secrets
-      secretKey: LAB_BRIDGE_KEY
     backup:
       enabled: true
       schedule: "0 2 * * *"

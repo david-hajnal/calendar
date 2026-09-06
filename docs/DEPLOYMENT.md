@@ -6,9 +6,10 @@ Auth, Core, and MCP are deployed to Kubernetes via Flux GitOps. Images are
 published to GHCR and promoted by an immutable Git commit referencing the
 exact `sha-<40 hex commit>` that CI built and scanned.
 
-The auth server is a Node.js OIDC provider that fronts the core and MCP
-applications. It uses a managed PostgreSQL database for user/session state and
-exposes a private bridge endpoint that core uses for authenticated API calls.
+The auth server is a Node.js OIDC provider retained for a future authentication
+cutover. Its production release is currently suspended because its PostgreSQL
+dependency is unavailable. Core therefore deploys without an auth dependency
+or private bridge configuration, and MCP continues to use its existing issuer.
 
 ## Promotion model
 
@@ -36,28 +37,26 @@ push to main
   → CI verifies all registry manifests
   → CI commits all three immutable tags to main (bot guard active)
   → Flux Kustomization reconciles the commit
-  → HelmReleases upgrade (auth → core → mcp)
+  → active HelmReleases upgrade (core → mcp; auth remains suspended)
   → Kubernetes rolls out new pods
 ```
 
 ## Architecture
 
 ```
-Browser ──(Cloudflare)──► Ingress ──► auth (public)
-                                  │
-                                  ├──► auth (private bridge) ◄── core (egress)
-                                  │
-                                  └──► core (StatefulSet)
+Browser ──(Cloudflare)──► Ingress ──► core (StatefulSet)
                                            │
                                            └──► mcp (Deployment)
+
+auth (HelmRelease suspended; no core dependency or bridge wiring)
 ```
 
-- **auth** — Node.js OIDC provider. Public service for browser-facing OIDC
-  endpoints; private bridge service for core's authenticated API calls.
-  Backed by managed PostgreSQL.
-- **core** — Rust StatefulSet. The application backend. Talks to the auth
-  bridge for session validation.
-- **mcp** — Rust Deployment. The MCP server. Uses the auth issuer for OAuth.
+- **auth** — Node.js OIDC provider retained in Git, but currently suspended in
+  production while managed PostgreSQL is unavailable.
+- **core** — Rust StatefulSet. The application backend; currently has no auth
+  HelmRelease dependency or auth bridge configuration.
+- **mcp** — Rust Deployment. The MCP server. Depends on core and continues to
+  use the existing OAuth issuer (the auth issuer has not been cut over).
 
 ## Namespace
 
@@ -493,7 +492,8 @@ This checks:
 - YAML syntax
 - Chart template assertions (auth, core, mcp)
 - Bridge isolation (no private ingress, no secret values)
-- Flux dependency order (auth → core → mcp)
+- Flux dependency topology (core → mcp, with auth suspended and no core
+  auth dependency or bridge configuration)
 - Issuer consistency (no cutover)
 
 ## Ad-hoc SQLite Console

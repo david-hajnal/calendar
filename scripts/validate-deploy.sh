@@ -5,7 +5,7 @@ set -euo pipefail
 # Checks: Helm lint, Helm template rendering, Kustomize build,
 # immutable SHA tags in production, no retired version-release references,
 # Flux CRD conformance, YAML syntax, chart template assertions,
-# bridge isolation, dependency order, issuer consistency,
+# bridge isolation, dependency topology, issuer consistency,
 # no cert-manager annotations, deploy script tests.
 # Usage: scripts/validate-deploy.sh
 # Exits 0 on success, 1 on failure.
@@ -204,16 +204,22 @@ else
   echo "SKIP: no bundle to check bridge isolation"
 fi
 
-# 11. Dependency order: auth -> core -> mcp. The core HelmRelease must depend
-#     on the auth HelmRelease; the mcp HelmRelease must depend on core.
+# 11. Dependency topology: auth is suspended, so core must not depend on auth or
+#     configure the auth bridge. The mcp HelmRelease must still depend on core.
 echo ""
-echo "--- Checking Flux dependency order (auth -> core -> mcp) ---"
+echo "--- Checking Flux dependency topology (core -> mcp, auth suspended) ---"
 CORE_HR="deploy/flux/overlays/production/charts/core-helmrelease.yaml"
 MCP_HR="deploy/flux/overlays/production/charts/mcp-helmrelease.yaml"
-if [ -f "$CORE_HR" ] && grep -q 'name: commoncal-auth' "$CORE_HR"; then
-  echo "OK: core depends on commoncal-auth"
+if [ -f "$CORE_HR" ] && ! grep -q 'name: commoncal-auth' "$CORE_HR"; then
+  echo "OK: core does not depend on commoncal-auth"
 else
-  echo "FAIL: core HelmRelease must depend on commoncal-auth"
+  echo "FAIL: core HelmRelease must not depend on suspended commoncal-auth"
+  ERRORS=$((ERRORS+1))
+fi
+if [ -f "$CORE_HR" ] && ! grep -q 'authBridge:' "$CORE_HR"; then
+  echo "OK: core does not configure authBridge"
+else
+  echo "FAIL: core HelmRelease must not configure authBridge while auth is suspended"
   ERRORS=$((ERRORS+1))
 fi
 if [ -f "$MCP_HR" ] && grep -q 'name: commoncal' "$MCP_HR"; then

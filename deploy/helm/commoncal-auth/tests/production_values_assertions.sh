@@ -20,6 +20,20 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     helmrelease = yaml.safe_load(stream)
 values = helmrelease["spec"]["values"]
 assert "issuer" not in values, "obsolete top-level issuer key bypasses chart config"
+expected_secret_keys = {
+    "name",
+    "databaseUrlKey",
+    "bridgeKeyKey",
+    "cookieKeysKey",
+    "jwksKey",
+    "signingKidKey",
+}
+actual_secret_keys = set(values.get("secrets", {}))
+unknown_secret_keys = actual_secret_keys - expected_secret_keys
+assert not unknown_secret_keys, (
+    "production secrets contain values ignored by the chart: "
+    f"{sorted(unknown_secret_keys)!r}"
+)
 with open(sys.argv[2], "w", encoding="utf-8") as stream:
     yaml.safe_dump(values, stream)
 PY

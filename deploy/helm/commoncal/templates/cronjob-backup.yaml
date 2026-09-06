@@ -41,6 +41,7 @@ spec:
               volumeMounts:
                 - name: data
                   mountPath: /app/data
+                  readOnly: true
                 - name: backup
                   mountPath: /backup
               resources:

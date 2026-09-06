@@ -5,7 +5,7 @@ use commoncal_backend::{
     bootstrap::{BootstrapCommand, InitialSuperadminBootstrap},
     calendar::CalendarService,
     config::{AppConfig, Environment},
-    database::connect_and_migrate,
+    database::{connect_and_migrate, connect_read_only},
     email::DevelopmentEmailSender,
     event::EventService,
     external_feed::ExternalFeedService,
@@ -45,6 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if arguments.first().is_some_and(|value| value == "restore") {
         return run_restore(&config, &arguments[1..]).await;
     }
+    if arguments.first().is_some_and(|value| value == "backup") {
+        let database = connect_read_only(&config).await?;
+        return run_backup(database, &arguments[1..]).await;
+    }
 
     let readiness = Readiness::new();
     let database = connect_and_migrate(&config, readiness.clone()).await?;
@@ -54,9 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .is_some_and(|value| value == "bootstrap-superadmin")
     {
         return run_bootstrap(&config, database, &arguments[1..]).await;
-    }
-    if arguments.first().is_some_and(|value| value == "backup") {
-        return run_backup(database, &arguments[1..]).await;
     }
     if arguments.first().is_some_and(|value| value == "seed") {
         return run_seed(&config, database).await;

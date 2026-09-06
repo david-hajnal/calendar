@@ -254,7 +254,18 @@ case "$active_flux_releases" in
     ;;
   0)
     deploy_mode=helm
-    : "${IMAGE_TAG:-main}"
+    # Direct Helm mode requires an explicit sha-<40 hex commit> tag.
+    # Flux-managed deployment ignores IMAGE_TAG entirely.
+    if [[ -z "${IMAGE_TAG:-}" ]]; then
+      echo "ERROR: IMAGE_TAG is required for direct Helm deployment" >&2
+      echo "Provide an immutable sha-<40 hex commit> tag, e.g. sha-abc123def456..." >&2
+      exit 1
+    fi
+    if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]]; then
+      echo "ERROR: IMAGE_TAG must be an immutable sha-<40 hex commit> tag" >&2
+      echo "Got: $IMAGE_TAG" >&2
+      exit 1
+    fi
     for command_name in helm openssl; do
       if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "ERROR: required command not found: $command_name" >&2

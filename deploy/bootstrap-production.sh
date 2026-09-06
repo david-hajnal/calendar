@@ -131,8 +131,7 @@ flux bootstrap github \
   --namespace=flux-system \
   --token-auth \
   --path=deploy/flux/overlays/production \
-  --version="$FLUX_VERSION" \
-  --components-extra=image-reflector-controller,image-automation-controller
+  --version="$FLUX_VERSION"
 
 echo "==> Waiting for Flux reconciliation..."
 sleep 5

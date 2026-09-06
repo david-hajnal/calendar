@@ -25,7 +25,17 @@ fi
 # Fail fast if required env vars are missing
 : "${MCP_INTERNAL_API_BASE:?ERROR: MCP_INTERNAL_API_BASE is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_DOMAIN:?ERROR: MCP_DOMAIN is required. Set it in $DEPLOY_DIR/.env or export it}"
-: "${IMAGE_TAG:-main}"
+# IMAGE_TAG must be an explicit sha-<40 hex commit> tag for direct deployment.
+if [[ -z "${IMAGE_TAG:-}" ]]; then
+  echo "ERROR: IMAGE_TAG is required for direct deployment" >&2
+  echo "Provide an immutable sha-<40 hex commit> tag, e.g. sha-abc123def456..." >&2
+  exit 1
+fi
+if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]]; then
+  echo "ERROR: IMAGE_TAG must be an immutable sha-<40 hex commit> tag" >&2
+  echo "Got: $IMAGE_TAG" >&2
+  exit 1
+fi
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 RELEASE="${HELM_RELEASE_NAME:-commoncal-mcp}"

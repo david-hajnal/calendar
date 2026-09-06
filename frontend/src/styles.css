@@ -358,7 +358,6 @@ textarea {
   align-items: center;
   gap: 0.5rem;
   min-inline-size: 0;
-  overflow-wrap: anywhere;
 }
 
 .app-header__identity h1 {
@@ -451,8 +450,7 @@ textarea {
   }
 
   .app-nav {
-    justify-content: center;
-    gap: 0.125rem;
+    display: none;
   }
 
   .app-nav__button {
@@ -462,23 +460,6 @@ textarea {
 
   .app-shell__content {
     padding: 1rem;
-  }
-}
-
-@media (max-width: 768px) {
-  .app-header {
-    padding: 0 1rem;
-  }
-
-  .app-header__identity h1 {
-    font-size: 1.25rem;
-  }
-
-  .app-nav {
-    display: none;
-  }
-
-  .app-shell__content {
     padding-top: 4rem;
     padding-bottom: 5rem;
   }
@@ -595,11 +576,20 @@ textarea {
   letter-spacing: -0.008em;
 }
 
-/* Material Symbols */
+/* Material Symbols (self-hosted) */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url('/fonts/material-symbols-outlined.woff2') format('woff2');
+}
+
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';
   font-weight: normal;
   font-style: normal;
+  font-size: 24px;
   display: inline-block;
   line-height: 1;
   text-transform: none;
@@ -607,6 +597,8 @@ textarea {
   word-wrap: normal;
   white-space: nowrap;
   direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }

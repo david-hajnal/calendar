@@ -149,13 +149,13 @@ function SharingDialog({ api, calendar, onClose, onCalendarChanged, onAccessDeni
       <div className="sharing-dialog__body">
         {error && <p className="sharing-dialog__error" role="alert">{error}</p>}
         <div className="sharing-dialog__invite">
-          <label className="sharing-dialog__invite-title">Invite Collaborators</label>
+          <h4 className="sharing-dialog__invite-title">Invite Collaborators</h4>
           <form className="sharing-dialog__invite-row" onSubmit={(event) => { event.preventDefault(); const id = Number(userId); if (!Number.isInteger(id) || id <= 0) { setError("Enter a valid user ID."); return; } void saveRole(id, newRole); }}>
             <div className="sharing-dialog__invite-input-wrapper">
               <span className="material-symbols-outlined">person_add</span>
-              <input className="sharing-dialog__invite-input" type="number" min="1" placeholder="Enter User ID or Email" required value={userId} onChange={(event) => setUserId(event.target.value)} />
+              <input className="sharing-dialog__invite-input" type="number" min="1" placeholder="Enter User ID" aria-label="User ID" required value={userId} onChange={(event) => setUserId(event.target.value)} />
             </div>
-            <select className="sharing-dialog__invite-select" value={newRole} onChange={(event) => setNewRole(event.target.value as ShareableCalendarRole)}>
+            <select className="sharing-dialog__invite-select" aria-label="Role" value={newRole} onChange={(event) => setNewRole(event.target.value as ShareableCalendarRole)}>
               {shareableRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
             </select>
             <button className="sharing-dialog__send-btn" type="submit">Send Invite</button>
@@ -243,8 +243,8 @@ function CalendarFormModal({ editing, settings, setSettings, onSave, onCancel, s
     <div className="calendar-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-heading">
       <div className="calendar-modal__header">
         <h3 id="modal-heading">{title}</h3>
-        <button className="calendar-modal__close" type="button" onClick={onCancel}>
-          <span className="material-symbols-outlined">close</span>
+        <button className="calendar-modal__close" type="button" onClick={onCancel} aria-label="Close">
+          <span className="material-symbols-outlined" aria-hidden="true">close</span>
         </button>
       </div>
       <form className="calendar-form" onSubmit={onSave} aria-label={editing === null ? "Create calendar" : `Edit ${editing.name ?? "calendar"}`}>

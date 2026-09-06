@@ -43,6 +43,20 @@ function useLocation() {
   return location;
 }
 
+const MOBILE_QUERY = "(max-width: 48rem)";
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => (typeof window.matchMedia === "function" ? window.matchMedia(MOBILE_QUERY).matches : window.innerWidth <= 768));
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(MOBILE_QUERY);
+    const update = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return isMobile;
+}
+
 function LoginRequestPage() {
   const { api, completeAuthentication } = useAuth();
   const [email, setEmail] = useState("");
@@ -233,6 +247,7 @@ function ThemeToggle() {
 function AuthenticatedShell() {
   const { state, api, reloadSession, logout } = useAuth();
   const location = useLocation();
+  const isMobile = useIsMobile();
   const lastNotifsRef = useRef<number[]>([]);
 
   useEffect(() => {
@@ -282,7 +297,6 @@ function AuthenticatedShell() {
   const name = state.session.user.display_name ?? state.session.user.email;
   const initials = name.split(/[\s.]+/).slice(0, 2).map((n) => n[0]).join('').toUpperCase().slice(0, 2);
   const activeTab = window.location.pathname === "/calendars" ? "calendars" : window.location.pathname === "/shared" ? "shared" : "calendar";
-  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
 
   return <main className="app-shell">
     {/* Fixed top header */}

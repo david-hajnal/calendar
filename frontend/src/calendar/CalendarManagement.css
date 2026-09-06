@@ -596,6 +596,7 @@
   font-weight: 500;
   color: var(--color-on-surface-variant);
   line-height: 1.33;
+  margin: 0;
 }
 
 .sharing-dialog__invite-row {

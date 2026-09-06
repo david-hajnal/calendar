@@ -395,9 +395,9 @@ auth_helm_args=(
   --set-string "ingress.tls.secretName=$TLS_SECRET_NAME"
   --set-string secrets.name=commoncal-auth-secrets
   --set-string secrets.databaseUrlKey=DATABASE_URL
-  --set-string secrets.bridgeKey=LAB_BRIDGE_KEY
-  --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS
-  --set-string secrets.signingKid=AUTH_SIGNING_KID
+  --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY
+  --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS
+  --set-string secrets.signingKidKey=AUTH_SIGNING_KID
   --timeout=15m
 )
 core_helm_args=(

@@ -27,9 +27,9 @@ if command -v helm &>/dev/null; then
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
     --set-string secrets.databaseUrlKey=DATABASE_URL \
-    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
-    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
-    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKidKey=AUTH_SIGNING_KID \
     >/dev/null 2>&1 || { echo "FAIL: helm template commoncal-auth"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (core) ---"
@@ -190,9 +190,9 @@ if [ -s "$BUNDLE" ]; then
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
     --set-string secrets.databaseUrlKey=DATABASE_URL \
-    --set-string secrets.bridgeKey=LAB_BRIDGE_KEY \
-    --set-string secrets.cookieKeys=AUTH_COOKIE_KEYS \
-    --set-string secrets.signingKid=AUTH_SIGNING_KID \
+    --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY \
+    --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
+    --set-string secrets.signingKidKey=AUTH_SIGNING_KID \
     2>/dev/null > "$INGRESS_TEMPLATE" || true
   if grep -A20 'kind: Ingress' "$INGRESS_TEMPLATE" | grep -q 'commoncal-auth-internal'; then
     echo "FAIL: private bridge service must not be exposed via Ingress"

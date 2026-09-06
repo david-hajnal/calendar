@@ -46,9 +46,9 @@ ingress:
 secrets:
   name: commoncal-auth-secrets
   databaseUrlKey: DATABASE_URL
-  bridgeKey: LAB_BRIDGE_KEY
-  cookieKeys: AUTH_COOKIE_KEYS
-  signingKid: AUTH_SIGNING_KID
+  bridgeKeyKey: LAB_BRIDGE_KEY
+  cookieKeysKey: AUTH_COOKIE_KEYS
+  signingKidKey: AUTH_SIGNING_KID
 
 networkPolicy:
   enabled: true

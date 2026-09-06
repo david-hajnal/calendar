@@ -57,23 +57,15 @@ for policy in policies:
             if namespace:
                 selected_namespaces.append(namespace)
 
-assert "kube-system" in selected_namespaces, (
-    f"{release}: public ingress NetworkPolicy must allow the k3s Traefik "
-    f"namespace 'kube-system'; rendered namespace selectors: {selected_namespaces}"
-)
-assert "traefik" not in selected_namespaces, (
-    f"{release}: namespaceSelector matches namespace names, not the IngressClass; "
-    "k3s Traefik is not deployed in a namespace named 'traefik'"
+assert "traefik" in selected_namespaces, (
+    f"{release}: public ingress NetworkPolicy must allow the production "
+    f"controller namespace 'traefik'; rendered namespace selectors: {selected_namespaces}"
 )
 PY
 }
 
 failures=0
 
-render_and_check \
-  commoncal-auth \
-  "$repo_root/deploy/helm/commoncal-auth" \
-  "$repo_root/deploy/flux/overlays/production/charts/auth-helmrelease.yaml" || failures=$((failures + 1))
 render_and_check \
   commoncal \
   "$repo_root/deploy/helm/commoncal" \

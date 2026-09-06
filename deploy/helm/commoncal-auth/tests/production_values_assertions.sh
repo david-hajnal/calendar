@@ -51,6 +51,15 @@ if helm template commoncal-auth "$chart_dir" \
   exit 1
 fi
 
+# Secret references must use the exact names consumed by the templates. Helm
+# otherwise accepts a typo while retaining the chart defaults unnoticed.
+if helm template commoncal-auth "$chart_dir" \
+  --namespace commoncal \
+  --set-string secrets.bridgeKey=LAB_BRIDGE_KEY >/dev/null 2>&1; then
+  echo 'obsolete secrets.bridgeKey must be rejected by the chart schema' >&2
+  exit 1
+fi
+
 python3 - "$rendered" <<'PY'
 import sys
 

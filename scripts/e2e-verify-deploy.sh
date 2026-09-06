@@ -3,8 +3,8 @@
 set -euo pipefail
 
 echo "=== E2E Verification: main promotion ==="
-echo "1. Confirm the Release images workflow succeeded for the source commit:"
-echo "   gh run list --workflow=release-images.yml --limit 5"
+echo "1. Confirm the promote-main workflow succeeded for the source commit:"
+echo "   gh run list --workflow=promote-main.yml --limit 5"
 echo "2. Confirm the workflow committed all three immutable tags:"
 echo "   git log --grep='chore(deploy): promote' --oneline -5"
 echo "   grep -h 'tag:' deploy/flux/overlays/production/charts/*-helmrelease.yaml"

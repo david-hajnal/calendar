@@ -314,7 +314,7 @@ run_stack() {
     CMD_SEQ_LOG="${CMD_SEQ_LOG_OVERRIDE:-$fixture/cmd-seq.log}" \
     SESSION_SECRET=test-session-secret \
     BACKUP_ENCRYPTION_KEY_HEX=00000000000000000000000000000000 \
-    IMAGE_TAG="${IMAGE_TAG_OVERRIDE-v9.8.7}" \
+    IMAGE_TAG="${IMAGE_TAG_OVERRIDE-sha-abc123def456789012345678901234567890abcd}" \
     DOMAIN=calendar.example.test \
     MCP_DOMAIN=mcp.example.test \
     MCP_OAUTH_ISSUER=https://issuer.example.test \

@@ -2,6 +2,11 @@
 set -euo pipefail
 
 # Validate deployment manifests for correctness and safety.
+# Checks: Helm lint, Helm template rendering, Kustomize build,
+# immutable SHA tags in production, no retired version-release references,
+# Flux CRD conformance, YAML syntax, chart template assertions,
+# bridge isolation, dependency order, issuer consistency,
+# no cert-manager annotations, deploy script tests.
 # Usage: scripts/validate-deploy.sh
 # Exits 0 on success, 1 on failure.
 
@@ -90,6 +95,12 @@ if [ -n "$HELMRELEASE_FILES" ]; then
       echo "FAIL: $name must use tag sha-<40 hex commit>"
       ERRORS=$((ERRORS+1))
     fi
+    if grep -Eq '^[[:space:]]*reconcileStrategy: Revision$' "$f"; then
+      echo "OK: $name rebuilds its chart for each Git revision"
+    else
+      echo "FAIL: $name must use reconcileStrategy: Revision for its GitRepository chart"
+      ERRORS=$((ERRORS+1))
+    fi
   done <<< "$HELMRELEASE_FILES"
 fi
 
@@ -104,27 +115,22 @@ else
   echo "SKIP: python3 not installed"
 fi
 
-# 6. The release script must not modify production image tags.
-#    Promotion is handled atomically by the image publication workflow.
+# 6. Verify no version-release or semver promotion references remain.
 echo ""
-echo "--- Checking release script does not touch production image tags ---"
-if grep -nE 'charts/(core|mcp)-helmrelease\.yaml' scripts/release.sh >/dev/null 2>&1; then
-  echo "FAIL: scripts/release.sh still references production HelmRelease manifests:"
-  grep -nE 'charts/(core|mcp)-helmrelease\.yaml' scripts/release.sh
+echo "--- Checking for retired version-release references ---"
+if grep -rn 'type=semver' .github/workflows/ mcp-server/.github/workflows/ 2>/dev/null; then
+  echo "FAIL: Found semver tag pattern in workflows; only sha-<commit> tags are valid"
   ERRORS=$((ERRORS+1))
 else
-  echo "OK: release script leaves production image tags to the publication workflow"
+  echo "OK: no semver promotion patterns in workflows"
 fi
 
-# The release script regenerates Rust lockfiles after version bumps; both must
-# be staged with their manifests or tagged Docker builds fail under --locked.
-RELEASE_STAGE_BLOCK=$(sed -n '/^# Stage and commit$/,/^git commit /p' scripts/release.sh)
-for lockfile in backend/Cargo.lock mcp-server/Cargo.lock; do
-  if ! printf '%s\n' "$RELEASE_STAGE_BLOCK" | grep -F "$lockfile" >/dev/null 2>&1; then
-    echo "FAIL: scripts/release.sh does not stage $lockfile"
-    ERRORS=$((ERRORS+1))
-  fi
-done
+if [ -f "scripts/release.sh" ]; then
+  echo "FAIL: scripts/release.sh must be retired; promotion is handled by promote-main.yml"
+  ERRORS=$((ERRORS+1))
+else
+  echo "OK: scripts/release.sh has been retired"
+fi
 
 # 7. Check no circular dependsOn in Flux resources
 echo ""

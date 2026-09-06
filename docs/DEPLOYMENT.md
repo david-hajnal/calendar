@@ -3,7 +3,8 @@
 ## Overview
 
 Auth, Core, and MCP are deployed to Kubernetes via Flux GitOps. Images are
-published to GHCR and promoted by an immutable Git commit.
+published to GHCR and promoted by an immutable Git commit referencing the
+exact `sha-<40 hex commit>` that CI built and scanned.
 
 The auth server is a Node.js OIDC provider that fronts the core and MCP
 applications. It uses a managed PostgreSQL database for user/session state and
@@ -11,30 +12,35 @@ exposes a private bridge endpoint that core uses for authenticated API calls.
 
 ## Promotion model
 
-Every push to `main` is a production deployment trigger. CI builds and scans
-all three images before publishing `main` and `sha-<commit>` tags. After all
-registry manifests exist, the workflow atomically commits the immutable SHA
-tag to all three HelmReleases. Flux then reconciles that commit.
+Every push to `main` triggers CI. CI builds and scans all three images
+(auth, core, MCP). On success, the `promote-main.yml` workflow publishes
+`main` and `sha-<commit>` tags for all three images, then atomically commits
+the immutable SHA tag to all three HelmReleases. Flux reconciles that commit.
 
-- Flux never reconciles a revision before all three container images exist.
+- Pull-request runs cannot publish or promote images.
 - Auth, Core, and MCP advance together in one promotion commit.
-- Workloads use immutable `sha-<40 hex commit>` tags; `main` is only a registry
-  convenience tag and is never deployed.
-- Rollback is a Git revert of the promotion commit.
+- Workloads use immutable `sha-<40 hex commit>` tags; `main` is only a
+  registry convenience tag.
+- The bot-commit guard prevents promotion loops when the promotion commit
+  itself triggers a new run.
+- The latest-main race guard ensures only the current HEAD of main is promoted.
 
-## Architecture
+### Event flow
 
 ```
 push to main
+  → CI (checks + deploy-validation) runs
+  → promote-main.yml triggers (only on push to main, not PR)
   → CI builds and scans all three images
   → CI publishes main + sha-<commit> for all three images
-  → CI commits all three immutable tags to main
+  → CI verifies all registry manifests
+  → CI commits all three immutable tags to main (bot guard active)
   → Flux Kustomization reconciles the commit
   → HelmReleases upgrade (auth → core → mcp)
   → Kubernetes rolls out new pods
 ```
 
-### Component topology
+## Architecture
 
 ```
 Browser ──(Cloudflare)──► Ingress ──► auth (public)
@@ -107,22 +113,12 @@ to IPv4 for MCP egress.
 
 For an emergency direct deployment, first suspend all three Flux HelmReleases,
 then run the same script. With all releases suspended (or absent), it deploys
-all three workloads directly with Helm and requires `IMAGE_TAG`. It ensures the
-`commoncal-tls` TLS Secret exists and is valid (generating a self-signed
-certificate on first run if needed), then deploys all Ingresses referencing
-that Secret. Resume Flux only after reconciling the direct deployment back into
-Git. A mixed state with any active HelmRelease is rejected to prevent
-split ownership.
-
-### Legacy duplicate cleanup
-
-Clusters previously reconciled without `spec.releaseName` may still contain the
-legacy Helm release and StatefulSet named `commoncal-commoncal`. Before removing
-it, use `helm list -n commoncal` and inspect both StatefulSets/PVCs to confirm
-that `commoncal` is the live release holding the intended database. Suspend the
-Flux HelmReleases during that inspection. Only then uninstall the verified
-stale release with `helm uninstall commoncal-commoncal -n commoncal`; never
-delete its PVC until the live database location has been confirmed.
+all three workloads directly with Helm and requires `IMAGE_TAG` set to an
+immutable `sha-<40 hex commit>` tag. It ensures the `commoncal-tls` TLS
+Secret exists and is valid (generating a self-signed certificate on first run
+if needed), then deploys all Ingresses referencing that Secret. Resume Flux
+only after reconciling the direct deployment back into Git. A mixed state with
+any active HelmRelease is rejected to prevent split ownership.
 
 ## Images
 
@@ -130,33 +126,37 @@ delete its PVC until the live database location has been confirmed.
 - Core: `ghcr.io/david-hajnal/calendar-core`
 - MCP: `ghcr.io/david-hajnal/calendar-mcp`
 
-Tags follow semver: `v1.0.0`, `v1.0.1`, etc.
+Tags are `main` (convenience) and `sha-<40 hex commit>` (immutable, production).
+Version-based tags (`vX.Y.Z`) are retired; they no longer build images or
+promote production.
 
-## Manual Deployment (Pinned)
+## Pin to a Known-Good SHA
 
-To deploy a specific version:
+To pin to a known-good version:
 
-1. Edit `deploy/flux/overlays/production/charts/auth-helmrelease.yaml`:
-   ```yaml
-   image:
-     tag: "v1.0.0"  # change to desired version
+1. Find the promotion commit for the desired SHA:
+   ```bash
+   git log --grep="chore(deploy): promote" --oneline
    ```
 
-2. Edit `deploy/flux/overlays/production/charts/core-helmrelease.yaml`:
+2. Edit all three HelmRelease tags to the known-good immutable SHA:
    ```yaml
+   # deploy/flux/overlays/production/charts/auth-helmrelease.yaml
    image:
-     tag: "v1.0.0"  # change to desired version
+     tag: "sha-abc123def456..."
+
+   # deploy/flux/overlays/production/charts/core-helmrelease.yaml
+   image:
+     tag: "sha-abc123def456..."
+
+   # deploy/flux/overlays/production/charts/mcp-helmrelease.yaml
+   image:
+     tag: "sha-abc123def456..."
    ```
 
-3. Edit `deploy/flux/overlays/production/charts/mcp-helmrelease.yaml`:
-   ```yaml
-   image:
-     tag: "v1.0.0"  # change to desired version
-   ```
+3. Commit and push to `main`.
 
-4. Commit and push to `main`.
-
-5. Flux will reconcile within 10 minutes.
+4. Flux will reconcile within 10 minutes.
 
 ## Reconcile Resources
 
@@ -168,15 +168,7 @@ flux reconcile kustomization flux-system --namespace=flux-system
 flux reconcile helmrelease commoncal-auth --namespace=flux-system
 flux reconcile helmrelease commoncal --namespace=flux-system
 flux reconcile helmrelease commoncal-mcp --namespace=flux-system
-
 ```
-
-## Pin Known-Good Tag
-
-To pin to a known-good version:
-
-1. Edit all three HelmRelease tags to known-good immutable tags.
-2. Commit and push the changes.
 
 ## Revert Promotion Commit
 
@@ -197,7 +189,9 @@ To revert an image promotion:
 
 ## GHCR Credentials
 
-Images are published to `ghcr.io/david-hajnal/`. `GHCR_TOKEN` in `deploy/.env` only applies to direct Helm deployments; under Flux ownership the script rejects it. If the packages are private, create a Kubernetes pull Secret:
+Images are published to `ghcr.io/david-hajnal/`. `GHCR_TOKEN` in `deploy/.env`
+only applies to direct Helm deployments; under Flux ownership the script rejects
+it. If the packages are private, create a Kubernetes pull Secret:
 
 ```bash
 kubectl create secret docker-registry ghcr-credentials \
@@ -495,7 +489,7 @@ This checks:
 - No mutable tags (`latest`/`main`) in production; every HelmRelease uses an
   immutable `sha-<40 hex commit>` tag
 - Rendered Flux resources conform to the installed CRD schemas
-- `scripts/release.sh` does not modify production image tags
+- No retired version-release or semver promotion references remain
 - YAML syntax
 - Chart template assertions (auth, core, mcp)
 - Bridge isolation (no private ingress, no secret values)
@@ -599,7 +593,7 @@ k -n commoncal rollout restart statefulset commoncal
 
 # Or via ConfigMap:
 kubectl -n commoncal patch configmap commoncal \
-  --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'
+  --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'}
 kubectl -n commoncal rollout restart statefulset commoncal
 ```
 

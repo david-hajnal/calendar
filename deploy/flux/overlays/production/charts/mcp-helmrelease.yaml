@@ -9,6 +9,7 @@ spec:
   chart:
     spec:
       chart: ./deploy/helm/commoncal-mcp
+      reconcileStrategy: Revision
       sourceRef:
         kind: GitRepository
         name: flux-system

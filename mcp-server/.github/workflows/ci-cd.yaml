@@ -69,7 +69,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/mcp-server
           tags: |
             type=sha,prefix=
-            type=semver,pattern={{version}}
 
       - name: Build and push
         uses: docker/build-push-action@v5

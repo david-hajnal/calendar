@@ -12,8 +12,9 @@ production kustomization whose apiVersion belongs to a Flux CRD group:
 - array items validate against the item schema
 - additionalProperties constraints are honored
 
-Also asserts the bundle contains exactly three HelmReleases and no obsolete
-image-policy resources.
+Also asserts the bundle contains exactly two active HelmReleases and no
+obsolete image-policy resources. The retained auth HelmRelease is excluded
+while its external database dependency is unavailable.
 
 Usage: scripts/validate-flux-crds.py <gotk-components.yaml> <rendered-bundle.yaml>
 Exits 0 on success, 1 on any failure.
@@ -131,7 +132,7 @@ def main():
         return sum(1 for d in bundle if d.get("kind") == kind)
 
     expected = {
-        "HelmRelease": 3,
+        "HelmRelease": 2,
         "ImageRepository": 0,
         "ImagePolicy": 0,
         "ImageUpdateAutomation": 0,
@@ -163,8 +164,8 @@ def main():
                 f"{kind}/{d['metadata']['name']}: " + "; ".join(res_errors)
             )
 
-    if validated < 3:
-        errors.append(f"expected >=3 Flux CRD resources validated, got {validated}")
+    if validated < 2:
+        errors.append(f"expected >=2 Flux CRD resources validated, got {validated}")
 
     if errors:
         fail(errors)

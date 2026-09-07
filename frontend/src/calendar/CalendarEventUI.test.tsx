@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiClient } from "../auth/api";
@@ -41,6 +41,85 @@ function monthCell(day: string) {
 afterEach(cleanup);
 
 describe("CalendarEventUI", () => {
+  it("renders a backend-shaped timed event in its month cell", async () => {
+    const timedEvent = {
+      id: 10,
+      calendar_id: 1,
+      access: "details" as const,
+      status: "confirmed" as const,
+      event_kind: "timed" as const,
+      title: "Planning",
+      start_utc: 1_750_032_800,
+      end_utc: 1_750_036_400,
+      timezone: "UTC",
+      version: 1,
+    };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => Promise.resolve(
+      new Response(JSON.stringify(String(path).includes("/events?") ? [timedEvent] : []), { status: 200 }),
+    ));
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+  });
+
+  it.each(["Day", "Week"])("renders a backend-shaped all-day event in %s view", async (view) => {
+    const allDayEvent = {
+      id: 12,
+      calendar_id: 1,
+      access: "details" as const,
+      status: "confirmed" as const,
+      event_kind: "all_day" as const,
+      title: "Conference",
+      start_date: "2025-06-16",
+      end_date: "2025-06-17",
+      version: 1,
+    };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => Promise.resolve(
+      new Response(JSON.stringify(String(path).includes("/events?") ? [allDayEvent] : []), { status: 200 }),
+    ));
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+    fireEvent.click(await screen.findByRole("tab", { name: view }));
+
+    expect(await screen.findByText("Conference")).toBeInTheDocument();
+  });
+
+  it("does not let a stale month response overwrite newer day events", async () => {
+    let resolveMonth!: (response: Response) => void;
+    let resolveDay!: (response: Response) => void;
+    const monthResponse = new Promise<Response>((resolve) => { resolveMonth = resolve; });
+    const dayResponse = new Promise<Response>((resolve) => { resolveDay = resolve; });
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      const query = new URL(String(path), "http://localhost").searchParams;
+      const span = Number(query.get("to")) - Number(query.get("from"));
+      return span === 86_400 ? dayResponse : monthResponse;
+    });
+    const dayEvent = {
+      id: 10,
+      calendar_id: 1,
+      access: "details" as const,
+      status: "confirmed" as const,
+      event_kind: "timed" as const,
+      title: "Planning",
+      start_utc: 1_750_032_800,
+      end_utc: 1_750_036_400,
+      timezone: "UTC",
+      version: 1,
+    };
+
+    render(<CalendarEventUI api={api} calendars={[calendars[0]]} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Day" }));
+    await act(async () => { resolveDay(new Response(JSON.stringify([dayEvent]), { status: 200 })); });
+    expect(await screen.findByText("Planning")).toBeInTheDocument();
+
+    await act(async () => { resolveMonth(new Response(JSON.stringify([]), { status: 200 })); });
+    expect(screen.getByText("Planning")).toBeInTheDocument();
+  });
+
   it("switches views and creates a timed event in a writable calendar", async () => {
     const api = apiWithEvents();
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
@@ -68,6 +147,102 @@ describe("CalendarEventUI", () => {
     await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events", expect.objectContaining({
       body: expect.stringContaining("FREQ=WEEKLY;COUNT=3"),
     })));
+  });
+
+  it("creates an all-day event from the editor", async () => {
+    const api = apiWithEvents();
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New event" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Conference" } });
+    fireEvent.click(screen.getByLabelText("All day"));
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2025-06-20" } });
+    fireEvent.change(screen.getByLabelText("End date (exclusive)"), { target: { value: "2025-06-22" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save event" }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events", expect.objectContaining({ method: "POST" })));
+    const postCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(String(postCall?.[1]?.body));
+    expect(body.start_date).toBe("2025-06-20");
+    expect(body.end_date).toBe("2025-06-22");
+    expect(body.start_utc).toBeUndefined();
+    expect(body.end_utc).toBeUndefined();
+    expect(body.timezone).toBeUndefined();
+  });
+
+  it("defaults the all-day end date to the day after start when toggled on", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New event" }));
+    fireEvent.click(screen.getByLabelText("All day"));
+
+    const start = (screen.getByLabelText("Start date") as HTMLInputElement).value;
+    const end = (screen.getByLabelText("End date (exclusive)") as HTMLInputElement).value;
+    const expected = new Date(`${start}T00:00:00`);
+    expected.setDate(expected.getDate() + 1);
+    expect(end).toBe(`${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-${String(expected.getDate()).padStart(2, "0")}`);
+  });
+
+  it("edits an all-day event with prefilled dates", async () => {
+    const allDay = { id: 12, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "all_day" as const, title: "Conference", start_date: "2025-06-16", end_date: "2025-06-18", version: 1 };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify([allDay]), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...allDay, ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Conference" }));
+    expect(screen.getByRole("form", { name: "Edit event" })).toBeInTheDocument();
+    expect(screen.getByLabelText("All day")).toBeChecked();
+    expect(screen.getByLabelText("Start date")).toHaveValue("2025-06-16");
+    expect(screen.getByLabelText("End date (exclusive)")).toHaveValue("2025-06-18");
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2025-06-20" } });
+    fireEvent.change(screen.getByLabelText("End date (exclusive)"), { target: { value: "2025-06-23" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save event" }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/12", expect.objectContaining({ method: "PATCH" })));
+    const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.start_date).toBe("2025-06-20");
+    expect(body.end_date).toBe("2025-06-23");
+    expect(body.start_utc).toBeUndefined();
+  });
+
+  it("shows the all-day date range in the detail panel", async () => {
+    const allDay = { id: 12, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "all_day" as const, title: "Conference", start_date: "2025-06-16", end_date: "2025-06-18", version: 1 };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      if (String(path).includes("/events?")) return Promise.resolve(new Response(JSON.stringify([allDay]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Conference" }));
+    const detail = screen.getByRole("complementary", { name: "Event details" });
+    expect(detail).toHaveTextContent(/Jun 16/);
+    expect(detail).toHaveTextContent(/Jun 17/);
+  });
+
+  it("moves an all-day event later by one day preserving span", async () => {
+    const allDay = { id: 12, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "all_day" as const, title: "Conference", start_date: "2025-06-16", end_date: "2025-06-18", version: 1 };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify([allDay]), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...allDay, ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Move Conference later" }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/12", expect.objectContaining({ method: "PATCH" })));
+    const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    expect(body.start_date).toBe("2025-06-17");
+    expect(body.end_date).toBe("2025-06-19");
+    expect(body.start_utc).toBeUndefined();
   });
 
   it("does not offer editing or dragging for viewer and external events", async () => {

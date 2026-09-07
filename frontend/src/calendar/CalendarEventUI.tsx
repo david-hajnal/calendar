@@ -7,7 +7,7 @@ import type { Calendar } from "./CalendarManagement";
 import "./CalendarEventUI.css";
 
 type CalendarView = "month" | "week" | "day" | "agenda";
-type Draft = { title: string; start: string; end: string; calendarId: number; recurrenceRule: string };
+type Draft = { title: string; allDay: boolean; start: string; end: string; startDate: string; endDate: string; calendarId: number; recurrenceRule: string };
 type CalendarAnchor = { date: Date; minuteOfDay: number };
 type DragState = {
   event: EventProjection;
@@ -35,6 +35,14 @@ function external(event: EventProjection) { return event.is_external === true ||
 function editable(event: EventProjection, calendar: Calendar | undefined) { return writable(calendar) && event.access === "details" && !external(event) && event.version !== undefined; }
 function title(event: EventProjection) { return event.title ?? "Busy"; }
 function eventTime(event: EventProjection) { return event.start_utc ?? Date.parse(`${event.start_date}T00:00:00Z`) / 1000; }
+function eventDateKey(event: EventProjection): string | null {
+  if (event.start_date) return event.start_date;
+  if (event.start_utc != null) return dateKey(new Date(event.start_utc * 1000));
+  return null;
+}
+function allDayCovers(event: EventProjection, dayKey: string): boolean {
+  return event.event_kind === "all_day" && event.start_date != null && event.end_date != null && event.start_date <= dayKey && dayKey < event.end_date;
+}
 function inputTime(seconds: number) { const date = new Date(seconds * 1000); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 function localToUtcMs(local: Date): number { return local.getTime(); }
 function utcToLocalMs(utc: number): number { return utc; }
@@ -73,6 +81,11 @@ function rangeFor(view: CalendarView, date: Date) {
   return { from: start, to: addDays(start, 31) };
 }
 function formatRange(view: CalendarView, date: Date) { return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", ...(view === "day" ? { day: "numeric" } : {}) }).format(date); }
+function formatAllDayRange(start: string, end: string): string {
+  const formatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (end === moveDateKey(start, 1)) return formatter.format(dateFromKey(start));
+  return `${formatter.format(dateFromKey(start))} – ${formatter.format(addDays(dateFromKey(end), -1))}`;
+}
 
 function eventTop(event: EventProjection): number | null {
   if (event.event_kind === "all_day" || event.start_utc == null) return null;
@@ -91,14 +104,26 @@ function currentTimeTop(): number {
 }
 
 function payload(draft: Draft): EventPayload {
+  if (draft.allDay) {
+    return { title: draft.title, description: null, location: null, status: "confirmed", start_date: draft.startDate, end_date: draft.endDate, ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
+  }
   return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(localToUtcMs(new Date(draft.start)) / 1000), end_utc: Math.floor(localToUtcMs(new Date(draft.end)) / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
+}
+
+function toggleAllDay(draft: Draft, allDay: boolean): Draft {
+  if (allDay) {
+    const startDate = draft.start ? draft.start.slice(0, 10) : dateKey(new Date());
+    return { ...draft, allDay: true, startDate, endDate: moveDateKey(startDate, 1) };
+  }
+  return { ...draft, allDay: false, start: `${draft.startDate}T09:00`, end: `${draft.startDate}T10:00` };
 }
 
 function draftAt(anchor: CalendarAnchor, calendarId: number): Draft {
   const start = startOfDay(anchor.date);
   start.setMinutes(anchor.minuteOfDay);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
-  return { title: "", start: inputTime(Math.floor(start.getTime() / 1000)), end: inputTime(Math.floor(end.getTime() / 1000)), calendarId, recurrenceRule: "" };
+  const startDate = dateKey(start);
+  return { title: "", allDay: false, start: inputTime(Math.floor(start.getTime() / 1000)), end: inputTime(Math.floor(end.getTime() / 1000)), startDate, endDate: moveDateKey(startDate, 1), calendarId, recurrenceRule: "" };
 }
 
 export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { api: ApiClient; calendars: Calendar[]; initialDate?: Date }) {
@@ -116,19 +141,25 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [savingIdentity, setSavingIdentity] = useState<EventIdentity | null>(null);
   const firstWritable = calendars.find(writable)?.id ?? 0;
-  const [draft, setDraft] = useState<Draft>(() => ({ title: "", start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), calendarId: firstWritable, recurrenceRule: "" }));
+  const [draft, setDraft] = useState<Draft>(() => {
+    const startDate = dateKey(initialDate);
+    return { title: "", allDay: false, start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), startDate, endDate: moveDateKey(startDate, 1), calendarId: firstWritable, recurrenceRule: "" };
+  });
   const range = useMemo(() => rangeFor(view, date), [view, date]);
   const visibleCalendarIds = useMemo(() => calendars.filter((calendar) => visible.has(calendar.id)).map((calendar) => calendar.id), [calendars, visible]);
   const visibleCalendarKey = visibleCalendarIds.join(",");
 
+  const reloadGeneration = useRef(0);
   const reload = useCallback(async () => {
+    const generation = ++reloadGeneration.current;
     setLoading(true); setError(null);
     try {
       const result = await listExpandedEvents(api, visibleCalendarIds, { from: Math.floor(range.from.getTime() / 1000), to: Math.floor(range.to.getTime() / 1000) });
+      if (generation !== reloadGeneration.current) return;
       setEvents([...new Map(result.map((item) => [`${item.calendar_id}:${item.id}:${item.recurrence_id ?? item.recurrence_date ?? "base"}`, item])).values()]);
     }
-    catch { setError("We could not load events. Please try again."); }
-    finally { setLoading(false); }
+    catch { if (generation === reloadGeneration.current) setError("We could not load events. Please try again."); }
+    finally { if (generation === reloadGeneration.current) setLoading(false); }
   }, [api, range.from, range.to, visibleCalendarIds, visibleCalendarKey]);
 
   useEffect(() => { void reload(); }, [reload]);
@@ -349,8 +380,15 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     openNewAt({ date: start, minuteOfDay: hour * 60 });
   }
   function openEdit(event: EventProjection) {
-    if (!editable(event, calendarFor(event)) || event.start_utc === undefined || event.end_utc === undefined) return;
-    setDraft({ title: title(event), start: inputTime(event.start_utc), end: inputTime(event.end_utc), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" });
+    if (!editable(event, calendarFor(event))) return;
+    if (event.event_kind === "all_day" && event.start_date && event.end_date) {
+      setDraft({ title: title(event), allDay: true, start: "", end: "", startDate: event.start_date, endDate: event.end_date, calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" });
+      setEditing(event); setError(null);
+      return;
+    }
+    if (event.start_utc === undefined || event.end_utc === undefined) return;
+    const startDate = dateKey(new Date(event.start_utc * 1000));
+    setDraft({ title: title(event), allDay: false, start: inputTime(event.start_utc), end: inputTime(event.end_utc), startDate, endDate: moveDateKey(startDate, 1), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" });
     setEditing(event); setError(null);
   }
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -366,9 +404,16 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     }
   }
   async function move(event: EventProjection, direction: number) {
-    if (!editable(event, calendarFor(event)) || event.start_utc === undefined || event.end_utc === undefined) return;
+    if (!editable(event, calendarFor(event))) return;
+    if (event.event_kind === "all_day" && event.start_date && event.end_date) {
+      const moved = { title: title(event), description: event.description ?? null, location: event.location ?? null, status: event.status, start_date: moveDateKey(event.start_date, direction), end_date: moveDateKey(event.end_date, direction), ...(event.recurrence_rule ? { recurrence_rule: event.recurrence_rule } : {}) };
+      try { const saved = await updateEvent(api, event.calendar_id, event.id, { ...moved, calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
+      catch (reason) { setError(reason instanceof CalendarApiError && reason.status === 409 ? "This event changed elsewhere. Reload it before saving again." : "We could not move this event."); }
+      return;
+    }
+    if (event.start_utc === undefined || event.end_utc === undefined) return;
     const changed = { ...event, start_utc: event.start_utc + direction * 3600, end_utc: event.end_utc + direction * 3600 };
-    try { const saved = await updateEvent(api, event.calendar_id, event.id, { ...payload({ title: title(changed), start: inputTime(changed.start_utc), end: inputTime(changed.end_utc), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" }), calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
+    try { const changedStart = dateKey(new Date(changed.start_utc * 1000)); const saved = await updateEvent(api, event.calendar_id, event.id, { ...payload({ title: title(changed), allDay: false, start: inputTime(changed.start_utc), end: inputTime(changed.end_utc), startDate: changedStart, endDate: moveDateKey(changedStart, 1), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" }), calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
     catch (reason) { setError(reason instanceof CalendarApiError && reason.status === 409 ? "This event changed elsewhere. Reload it before saving again." : "We could not move this event."); }
   }
   function renderEvent(event: EventProjection, monthDate?: string) {
@@ -462,8 +507,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {miniCalDays.map((day, idx) => {
           const isCurrentMonth = day.getMonth() === date.getMonth();
           const isTodayDate = isToday(day);
-          const hasEvents = displayed.some(e => e.start_date === dateKey(day));
-          const cal = hasEvents ? calendarFor(displayed.find(e => e.start_date === dateKey(day))!) : null;
+          const hasEvents = displayed.some(e => eventDateKey(e) === dateKey(day));
+          const cal = hasEvents ? calendarFor(displayed.find(e => eventDateKey(e) === dateKey(day))!) : null;
           const accentColor = cal?.color || 'var(--color-primary)';
           return <button key={idx} type="button" className={`event-ui__mini-cal-day ${!isCurrentMonth ? 'event-ui__mini-cal-day--other' : ''} ${isTodayDate ? 'event-ui__mini-cal-day--today' : ''}`} onClick={() => setDate(startOfDay(day))} style={{ background: isTodayDate ? accentColor : undefined, color: isTodayDate ? '#fff' : undefined }}>
             {day.getDate()}
@@ -487,7 +532,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                 for (let i = 0; i < totalCells; i++) {
                   const d = addDays(from, i - startOffset);
                   const dateStr = dateKey(d);
-                  const dayEvents = displayed.filter(e => e.start_date === dateStr);
+                  const dayEvents = displayed.filter(e => eventDateKey(e) === dateStr);
                   cells.push({ date: d, events: dayEvents, isCurrentMonth: d.getMonth() === date.getMonth(), isToday: isToday(d) });
                 }
                 return cells.map((cell, idx) => {
@@ -504,6 +549,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         )}
         {view === "day" && (
           <div ref={gridRef} className="event-ui__day" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
+            <div className="event-ui__allday-label"><span className="typography-label-md">All day</span></div>
+            <div className="event-ui__allday-events">{displayed.filter((e) => allDayCovers(e, dateKey(date))).map((event) => renderEvent(event))}</div>
             <div className="event-ui__time-column">
               {Array.from({ length: 24 }, (_, h) => (
                 <div key={h} className="event-ui__time-label">
@@ -549,8 +596,15 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
             </div>
           </div>
         )}
-        {view === "week" && (
+        {view === "week" && (() => {
+          const weekMonday = addDays(startOfDay(date), -startOfDay(date).getDay());
+          return (
           <div ref={gridRef} className="event-ui__week" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
+            <div className="event-ui__allday-label"><span className="typography-label-md">All day</span></div>
+            {Array.from({ length: 7 }, (_, dayIndex) => {
+              const dayKey = dateKey(new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate() + dayIndex));
+              return <div key={`allday-${dayIndex}`} className={`event-ui__allday-events event-ui__allday-events--week${dayIndex === 6 ? " event-ui__allday-events--last" : ""}`}>{displayed.filter((e) => allDayCovers(e, dayKey)).map((event) => renderEvent(event))}</div>;
+            })}
             <div className="event-ui__time-column">
               {Array.from({ length: 24 }, (_, h) => (
                 <div key={h} className="event-ui__time-label">
@@ -609,7 +663,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
               );
             })}
           </div>
-        )}
+          );
+        })()}
         {view === "agenda" && <ul role="list" aria-label="Agenda" className="event-ui__agenda">{displayed.map((event) => renderEvent(event))}</ul>}
         {displayed.length === 0 && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '2rem 0' }}>No events in this range.</p>}
       </section>
@@ -626,6 +681,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       {!external(selected) && !editable(selected, calendarFor(selected)) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This event is read-only.</p>}
       {editable(selected, calendarFor(selected)) && <button type="button" className="app-button app-button--primary" style={{ fontSize: '0.8125rem', marginTop: '0.75rem' }} onClick={() => openEdit(selected)}>Edit event</button>}
       <div className="event-ui__detail-meta">
+        {selected.event_kind === "all_day" && selected.start_date && selected.end_date && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{formatAllDayRange(selected.start_date, selected.end_date)}</p>}
         {selected.start_utc && selected.end_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>schedule</span>{new Date(selected.start_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(selected.end_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}
         {selected.start_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{new Date(selected.start_utc * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
       </div>
@@ -651,14 +707,33 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
           <span className="typography-label-md">Title</span>
           <input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Event title" />
         </label>
-        <label className="event-ui__editor-field">
-          <span className="typography-label-md">Start</span>
-          <input type="datetime-local" required value={draft.start} onChange={(event) => setDraft({ ...draft, start: event.target.value })} />
+        <label className="event-ui__editor-field event-ui__editor-field--toggle">
+          <input type="checkbox" checked={draft.allDay} onChange={(event) => setDraft(toggleAllDay(draft, event.target.checked))} />
+          <span className="typography-label-md">All day</span>
         </label>
-        <label className="event-ui__editor-field">
-          <span className="typography-label-md">End</span>
-          <input type="datetime-local" required value={draft.end} onChange={(event) => setDraft({ ...draft, end: event.target.value })} />
-        </label>
+        {draft.allDay ? (
+          <>
+            <label className="event-ui__editor-field">
+              <span className="typography-label-md">Start date</span>
+              <input type="date" required value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} />
+            </label>
+            <label className="event-ui__editor-field">
+              <span className="typography-label-md">End date (exclusive)</span>
+              <input type="date" required value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} />
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="event-ui__editor-field">
+              <span className="typography-label-md">Start</span>
+              <input type="datetime-local" required value={draft.start} onChange={(event) => setDraft({ ...draft, start: event.target.value })} />
+            </label>
+            <label className="event-ui__editor-field">
+              <span className="typography-label-md">End</span>
+              <input type="datetime-local" required value={draft.end} onChange={(event) => setDraft({ ...draft, end: event.target.value })} />
+            </label>
+          </>
+        )}
         <label className="event-ui__editor-field">
           <span className="typography-label-md">Recurrence</span>
           <input aria-label="Recurrence rule" placeholder="FREQ=WEEKLY" value={draft.recurrenceRule} onChange={(event) => setDraft({ ...draft, recurrenceRule: event.target.value })} />

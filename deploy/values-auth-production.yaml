@@ -16,8 +16,8 @@ image:
   # tag is supplied from deploy/.env by deploy-prod.sh
 
 # Issuer / resource identifiers (non-secret).
-issuer:
-  url: https://cal.hajnal.space
+config:
+  issuer: https://cal.hajnal.space
   resourceUrl: https://cal.hajnal.space
   commoncalUrl: https://cal.hajnal.space
 

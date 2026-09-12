@@ -8,13 +8,10 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::InternalClient;
-use crate::mcp_grant::get_grant;
-use crate::oauth::TokenValidationResult;
 use crate::output_schema::{ContentBlock, DeleteCommitOutput, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 #[derive(Debug, Deserialize)]
 pub struct EventDeleteCommitParams {
@@ -23,35 +20,29 @@ pub struct EventDeleteCommitParams {
 
 /// Handle the event_delete_commit tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_delete
-/// 3. Get delete intent from internal API
-/// 4. Verify intent is not expired and not already committed
-/// 5. Commit deletion via internal API
-/// 6. Return result
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check the grant's delete permission.
+/// 3. Get the delete intent from CommonCal core.
+/// 4. Verify the intent is not expired and not already committed.
+/// 5. Commit the deletion via CommonCal core.
+/// 6. Return the result.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: EventDeleteCommitParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "event_delete_commit") {
+    // Check the grant's delete permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "event_delete_commit") {
         return Err(ToolError::Forbidden(
             "event_delete_commit requires delete permission".to_string(),
         ));
     }
 
-    // Step 3: Get delete intent from internal API.
-    let delete_intent = internal_client
+    // Get the delete intent from CommonCal core.
+    let delete_intent = context
+        .internal_client
         .get_delete_intent(&params.intent_id)
         .await
         .map_err(|e| match e {
@@ -75,8 +66,9 @@ pub async fn handle(
         ));
     }
 
-    // Step 6: Commit deletion via internal API.
-    internal_client
+    // Commit the deletion via CommonCal core.
+    context
+        .internal_client
         .commit_delete_intent(&params.intent_id)
         .await
         .map_err(|e| ToolError::Internal(format!("delete commit failed: {}", e)))?;

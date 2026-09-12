@@ -9,13 +9,11 @@
 use axum::http::{Response, StatusCode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{CalendarInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{AvailabilityOutput, AvailabilitySlot, ContentBlock, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 /// Maximum allowed time range in days.
 const MAX_RANGE_DAYS: i64 = 31;
@@ -74,41 +72,33 @@ pub fn parse_utc_timestamp(s: &str) -> Result<i64, String> {
 
 /// Handle the availability_find tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_availability
-/// 3. Validate time range (max 31 days)
-/// 4. Filter calendar_ids by grant's allowed_calendar_ids
-/// 5. Call internal API for each calendar
-/// 6. Return structured availability output
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check the grant's tool permission.
+/// 3. Validate time range (max 31 days).
+/// 4. Filter calendar_ids by the grant's allowed_calendar_ids.
+/// 5. Return structured availability output.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: AvailabilityFindParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "availability_find") {
+    // Check tool permission against the authoritative grant.
+    if !crate::mcp_grant::check_tool_permission(grant, "availability_find") {
         return Err(ToolError::Forbidden(
             "availability_find requires availability permission".to_string(),
         ));
     }
 
-    // Step 3: Validate time range.
+    // Validate time range.
     validate_time_range(&params.from, &params.to)?;
 
-    // Step 4: Filter calendar_ids by grant.
+    // Filter calendar_ids by the grant.
     let allowed_ids: Vec<i64> = params
         .calendar_ids
         .into_iter()
-        .filter(|id| check_calendar_access(&grant, *id))
+        .filter(|id| check_calendar_access(grant, *id))
         .collect();
 
     if allowed_ids.is_empty() {

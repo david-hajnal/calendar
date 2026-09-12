@@ -8,13 +8,11 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::InternalClient;
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, ReminderOutput, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 #[derive(Debug, Deserialize)]
 pub struct ReminderSetParams {
@@ -25,38 +23,31 @@ pub struct ReminderSetParams {
 
 /// Handle the reminder_set tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_delete
-/// 3. Check calendar access
-/// 4. Create reminder via internal API
-/// 5. Return reminder details
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check the grant's reminder permission.
+/// 3. Check calendar access against the grant.
+/// 4. Create the reminder via CommonCal core.
+/// 5. Return the reminder details.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: ReminderSetParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check tool permission (reminders require delete permission).
-    if !crate::mcp_grant::check_tool_permission(&grant, "reminder_set") {
+    // Check the grant's reminder permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "reminder_set") {
         return Err(ToolError::Forbidden(
             "reminder_set requires delete permission".to_string(),
         ));
     }
 
-    // Step 3: Check calendar access.
-    if !check_calendar_access(&grant, params.calendar_id) {
+    // Check calendar access against the authoritative grant.
+    if !check_calendar_access(grant, params.calendar_id) {
         return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
-    // Step 4: Validate reminder_minutes.
+    // Validate reminder_minutes.
     if params.reminder_minutes <= 0 {
         return Err(ToolError::BadRequest(
             "reminder_minutes must be positive".to_string(),
@@ -68,16 +59,17 @@ pub async fn handle(
         ));
     }
 
-    // Step 5: Create reminder via internal API.
+    // Create the reminder via CommonCal core.
     let reminder_payload = serde_json::json!({
-        "user_id": token.user_id,
-        "oauth_client_id": token.oauth_client_id,
+        "user_id": context.token.user_id,
+        "oauth_client_id": context.token.oauth_client_id,
         "event_id": params.event_id,
         "calendar_id": params.calendar_id,
         "reminder_minutes": params.reminder_minutes,
     });
 
-    let reminder = internal_client
+    let reminder = context
+        .internal_client
         .create_reminder(&reminder_payload)
         .await
         .map_err(|e| ToolError::Internal(format!("reminder creation failed: {}", e)))?;

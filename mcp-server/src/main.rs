@@ -13,7 +13,7 @@ mod tools;
 
 use axum::{
     Router,
-    extract::Request,
+    extract::{Request, State},
     http::{StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -21,7 +21,7 @@ use axum::{
 use tower_http::trace::TraceLayer;
 
 use config::Config;
-use db::connect_and_migrate;
+use db::{connect_and_migrate, is_ready};
 use gateway::Gateway;
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
-    let db_pool = connect_and_migrate(&config.database_path.to_string_lossy()).await?;
+    let db_pool = connect_and_migrate(&config.database_path).await?;
 
     let gateway = Gateway::new(config.clone(), db_pool)
         .map_err(|e| format!("Gateway initialization failed: {:?}", e))?;
@@ -133,8 +133,12 @@ async fn health_live() -> impl IntoResponse {
     (StatusCode::OK, "live")
 }
 
-async fn health_ready() -> impl IntoResponse {
-    (StatusCode::OK, "ready")
+async fn health_ready(State(gateway): State<Gateway>) -> impl IntoResponse {
+    if is_ready(&gateway.db_pool).await {
+        (StatusCode::OK, "ready")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "not ready")
+    }
 }
 
 async fn mcp_handler(
@@ -169,4 +173,70 @@ async fn mcp_handler(
         .insert("x-request-id", request_id.parse().unwrap());
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use config::AppEnv;
+
+    fn test_config(database_path: std::path::PathBuf) -> Config {
+        Config {
+            app_env: AppEnv::Development,
+            oauth_issuer: "https://auth.example.com".to_string(),
+            internal_api_base: "https://api.example.com".to_string(),
+            internal_api_key: "test-key".to_string(),
+            session_secret: "test-secret".to_string(),
+            database_path,
+            mcp_domain: "mcp.example.com".to_string(),
+            public_resource_url: "https://mcp.example.com/mcp".to_string(),
+            bind_address: "127.0.0.1:3001".parse().unwrap(),
+            dpop_key_path: None,
+            rate_limit_enabled: false,
+            tracing_level: "info".to_string(),
+        }
+    }
+
+    fn unique_database_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("commoncal-mcp-{}.sqlite", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn health_ready_returns_503_when_database_is_unavailable() {
+        let database_path = unique_database_path();
+        let pool = connect_and_migrate(&database_path)
+            .await
+            .expect("a fresh database should be created and migrated");
+        pool.close().await;
+        let _ = std::fs::remove_file(&database_path);
+
+        let gateway = Gateway::new(test_config(database_path), pool).expect("gateway should build");
+        let response = health_ready(State(gateway)).await.into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn health_ready_returns_200_when_database_is_queryable() {
+        let database_path = unique_database_path();
+        let pool = connect_and_migrate(&database_path)
+            .await
+            .expect("a fresh database should be created and migrated");
+
+        let gateway = Gateway::new(test_config(database_path.clone()), pool.clone())
+            .expect("gateway should build");
+        let response = health_ready(State(gateway)).await.into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(&database_path);
+    }
+
+    #[tokio::test]
+    async fn health_live_does_not_depend_on_storage() {
+        let response = health_live().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

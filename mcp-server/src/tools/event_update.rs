@@ -9,13 +9,11 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{EventInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSummary, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 #[derive(Debug, Deserialize)]
 pub struct EventUpdateParams {
@@ -76,39 +74,32 @@ pub fn validate_update_input(params: &EventUpdateParams) -> Result<(), ToolError
 
 /// Handle the event_update tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_update
-/// 3. Check calendar access
-/// 4. Validate input
-/// 5. Call internal API to update event (with version check)
-/// 6. Return structured response
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check calendar access against the grant.
+/// 3. Check the grant's update permission.
+/// 4. Validate input.
+/// 5. Call CommonCal core to update the event (with version check).
+/// 6. Return the structured response.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: EventUpdateParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check calendar access.
-    if !check_calendar_access(&grant, params.calendar_id) {
+    // Check calendar access against the authoritative grant.
+    if !check_calendar_access(grant, params.calendar_id) {
         return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
-    // Step 3: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "event_update") {
+    // Check the grant's update permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "event_update") {
         return Err(ToolError::Forbidden(
             "event_update requires update permission".to_string(),
         ));
     }
 
-    // Step 4: Validate input.
+    // Validate input.
     validate_update_input(&params)?;
 
     // Step 5: Build the update payload.
@@ -132,8 +123,9 @@ pub async fn handle(
 
     let payload = serde_json::Value::Object(payload);
 
-    // Step 6: Update event via internal API.
-    let event_info = internal_client
+    // Update the event via CommonCal core.
+    let event_info = context
+        .internal_client
         .update_event(params.calendar_id, params.event_id, &payload)
         .await
         .map_err(|e| match e {

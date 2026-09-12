@@ -9,15 +9,14 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{EventInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::internal_client::EventInfo;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{
-    ContentBlock, EventDescription, EventOutput, EventSearchOutput, EventSummary, ToolOutput,
+    ContentBlock, EventDescription, EventSearchOutput, EventSummary, ToolOutput,
 };
+use crate::tools::AuthorizedToolContext;
 
 /// Maximum number of events to return.
 const MAX_EVENTS: usize = 100;
@@ -32,34 +31,27 @@ pub struct EventSearchParams {
 
 /// Handle the event_search tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_event_titles
-/// 3. Check calendar access
-/// 4. Validate time range (max 31 days)
-/// 5. Call internal API to search events
-/// 6. Limit to MAX_EVENTS
-/// 7. Return structured response with access level control
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check calendar access against the grant.
+/// 3. Check the grant's tool permission.
+/// 4. Validate time range (max 31 days).
+/// 5. Call CommonCal core to search events.
+/// 6. Limit to MAX_EVENTS.
+/// 7. Return a structured response with access-level control.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: EventSearchParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check calendar access.
-    if !check_calendar_access(&grant, params.calendar_id) {
+    // Check calendar access against the authoritative grant.
+    if !check_calendar_access(grant, params.calendar_id) {
         return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
-    // Step 3: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "event_search") {
+    // Check tool permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "event_search") {
         return Err(ToolError::Forbidden(
             "event_search requires event titles permission".to_string(),
         ));
@@ -87,8 +79,9 @@ pub async fn handle(
         )));
     }
 
-    // Step 5: Search events via internal API.
-    let events = internal_client
+    // Search events via CommonCal core.
+    let events = context
+        .internal_client
         .search_events(params.calendar_id, &params.from, &params.to)
         .await
         .map_err(|e| ToolError::Internal(format!("event search failed: {}", e)))?;

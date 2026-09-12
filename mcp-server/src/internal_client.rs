@@ -545,11 +545,17 @@ impl InternalClient {
             .map_err(|e| InternalError::Deserialize(format!("reminder response: {}", e)))
     }
 
-    pub async fn get_mcp_grants(
+    /// Resolve the single authoritative MCP grant for a user + OAuth client.
+    ///
+    /// CommonCal core is the source of truth for grants. The internal endpoint
+    /// returns a vector; a well-formed response contains exactly one grant.
+    /// Zero grants is a normal authorization outcome (`Ok(None)`); more than one
+    /// is ambiguous core data and fails closed rather than selecting arbitrarily.
+    pub async fn get_mcp_grant(
         &self,
         user_id: i64,
         client_id: &str,
-    ) -> Result<Vec<McpGrantResponse>, InternalError> {
+    ) -> Result<Option<McpGrantResponse>, InternalError> {
         let mut url = self
             .api_base
             .join("internal/mcp/mcp-grants")
@@ -568,16 +574,23 @@ impl InternalClient {
         if !resp.status().is_success() {
             return Err(InternalError::Http(
                 resp.status().as_u16(),
-                "get_mcp_grants failed".to_string(),
+                "get_mcp_grant failed".to_string(),
             ));
         }
 
-        let body = resp
+        let grants = resp
             .json::<Vec<McpGrantResponse>>()
             .await
             .map_err(|e| InternalError::Deserialize(e.to_string()))?;
 
-        Ok(body)
+        match grants.len() {
+            0 => Ok(None),
+            1 => Ok(Some(grants.into_iter().next().unwrap())),
+            _ => Err(InternalError::Http(
+                500,
+                "ambiguous grant response: expected at most one grant".to_string(),
+            )),
+        }
     }
 
     pub async fn check_idempotency(

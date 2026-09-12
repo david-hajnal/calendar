@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use axum::http::{header, Response, StatusCode};
+use axum::http::{StatusCode, header};
 use sqlx::SqlitePool;
 
 use crate::config::Config;
-use crate::error::ToolError;
 use crate::internal_client::InternalClient;
-use crate::mcp_grant::get_grant;
+use crate::mcp_grant::McpGrant;
 use crate::oauth::{self, TokenValidationResult};
 use crate::rate_limiter::RateLimiter;
-use crate::tools;
+use crate::tools::{self, AuthorizedToolContext};
 
 #[derive(Clone)]
 pub struct Gateway {
@@ -46,11 +45,9 @@ impl Gateway {
 
     /// Extract the OAuth bearer token from the request Authorization header.
     fn extract_bearer_token(
-        &self,
-        request: &axum::http::Request<axum::body::Body>,
+        headers: &axum::http::HeaderMap,
     ) -> Result<String, axum::http::Response<axum::body::Body>> {
-        let auth_header = request
-            .headers()
+        let auth_header = headers
             .get(axum::http::header::AUTHORIZATION)
             .ok_or_else(|| unauthorized_response(None, "missing authorization header"))?;
 
@@ -67,10 +64,7 @@ impl Gateway {
 
         let token = &auth_str[7..];
         if token.is_empty() {
-            return Err(unauthorized_response(
-                None,
-                "empty bearer token",
-            ));
+            return Err(unauthorized_response(None, "empty bearer token"));
         }
 
         Ok(token.to_string())
@@ -129,9 +123,11 @@ impl Gateway {
                 .unwrap();
         }
 
+        let (request_parts, request_body) = request.into_parts();
+
         // Parse the MCP protocol message from the request body.
         // Limit body size to 1MB to prevent memory exhaustion DoS.
-        let body_bytes = match axum::body::to_bytes(request.into_body(), 1024 * 1024).await {
+        let body_bytes = match axum::body::to_bytes(request_body, 1024 * 1024).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::error!(error = %e, "failed to read request body");
@@ -157,7 +153,10 @@ impl Gateway {
 
         match method {
             "tools/list" => self.handle_tools_list(&message).await,
-            "tools/call" => self.handle_tools_call(&message).await,
+            "tools/call" => {
+                self.handle_tools_call(&request_parts.headers, &message)
+                    .await
+            }
             _ => {
                 tracing::warn!(method = %method, "unknown MCP method");
                 axum::http::Response::builder()
@@ -211,6 +210,7 @@ impl Gateway {
     /// Handle tools/call — validate token, dispatch to tool, return result.
     async fn handle_tools_call(
         &self,
+        headers: &axum::http::HeaderMap,
         message: &serde_json::Value,
     ) -> axum::http::Response<axum::body::Body> {
         // Extract tool name and params
@@ -246,7 +246,7 @@ impl Gateway {
         }
 
         // Extract and validate bearer token
-        let token = match self.extract_bearer_token(&axum::http::Request::new(axum::body::Body::empty())) {
+        let token = match Self::extract_bearer_token(headers) {
             Ok(t) => t,
             Err(resp) => return resp,
         };
@@ -257,16 +257,57 @@ impl Gateway {
             Err(resp) => return resp,
         };
 
-        // Dispatch to tool
-        match tools::dispatch(
-            &token_result,
-            &self.db_pool,
-            &self.internal_client,
-            tool_name,
-            params,
-        )
-        .await
+        // Resolve the authoritative grant from CommonCal core (source of truth).
+        let grant = match self
+            .internal_client
+            .get_mcp_grant(token_result.user_id, &token_result.oauth_client_id)
+            .await
         {
+            Ok(Some(resp)) => McpGrant::from(resp),
+            Ok(None) => {
+                return axum::http::Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "error": {
+                                "code": -2003,
+                                "message": "no MCP grant found",
+                            },
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap();
+            }
+            Err(e) => {
+                return axum::http::Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "error": {
+                                "code": -2005,
+                                "message": format!("grant resolution failed: {}", e),
+                            },
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap();
+            }
+        };
+
+        // Build the authorized context and dispatch to the tool.
+        let context = AuthorizedToolContext {
+            token: &token_result,
+            grant: &grant,
+            internal_client: &self.internal_client,
+        };
+
+        match tools::dispatch(&context, tool_name, params).await {
             Ok(response) => response,
             Err(e) => {
                 let mcp_error = e.to_mcp_error(message.get("id"));
@@ -393,4 +434,32 @@ fn sanitize_error(s: &str) -> String {
         .filter(|c| !(*c as u32) < 0x20)
         .map(|c| if c == '"' { '\\' } else { c })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Gateway;
+    use axum::http::{HeaderMap, HeaderValue, StatusCode, header::AUTHORIZATION};
+
+    #[test]
+    fn extracts_bearer_token_from_original_request_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer access-token"),
+        );
+
+        assert_eq!(
+            Gateway::extract_bearer_token(&headers).expect("Bearer token should be accepted"),
+            "access-token"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_bearer_token() {
+        let response = Gateway::extract_bearer_token(&HeaderMap::new())
+            .expect_err("missing Authorization header should be rejected");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
 }

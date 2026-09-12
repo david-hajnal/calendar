@@ -8,13 +8,11 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{EventInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, DeletePrepareOutput, EventSummary, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 /// Deletion intent expiry in seconds (24 hours).
 const DELETE_INTENT_EXPIRY: i64 = 86400;
@@ -27,40 +25,34 @@ pub struct EventDeletePrepareParams {
 
 /// Handle the event_delete_prepare tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_delete
-/// 3. Check calendar access
-/// 4. Fetch event to build event_summary
-/// 5. Create delete intent via internal API
-/// 6. Return intent_id + confirmation URL
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check calendar access against the grant.
+/// 3. Check the grant's delete permission.
+/// 4. Fetch the event to build the event_summary.
+/// 5. Create the delete intent via CommonCal core.
+/// 6. Return the intent_id and confirmation URL.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: EventDeletePrepareParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check calendar access.
-    if !check_calendar_access(&grant, params.calendar_id) {
+    // Check calendar access against the authoritative grant.
+    if !check_calendar_access(grant, params.calendar_id) {
         return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
-    // Step 3: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "event_delete_prepare") {
+    // Check the grant's delete permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "event_delete_prepare") {
         return Err(ToolError::Forbidden(
             "event_delete_prepare requires delete permission".to_string(),
         ));
     }
 
-    // Step 4: Fetch event for event_summary.
-    let event_info = internal_client
+    // Fetch the event for the event_summary.
+    let event_info = context
+        .internal_client
         .get_event(params.calendar_id, params.event_id)
         .await
         .map_err(|e| match e {
@@ -81,25 +73,26 @@ pub async fn handle(
         version: event_info.version.unwrap_or(0),
     };
 
-    // Step 5: Create delete intent via internal API.
+    // Create the delete intent via CommonCal core.
     let intent_payload = serde_json::json!({
-        "user_id": token.user_id,
-        "oauth_client_id": token.oauth_client_id,
+        "user_id": context.token.user_id,
+        "oauth_client_id": context.token.oauth_client_id,
         "event_id": params.event_id,
         "calendar_id": params.calendar_id,
         "event_version": event_info.version.unwrap_or(0),
-        "expires_at": token.auth_time + DELETE_INTENT_EXPIRY,
+        "expires_at": context.token.auth_time + DELETE_INTENT_EXPIRY,
     });
 
-    let delete_intent = internal_client
+    let delete_intent = context
+        .internal_client
         .create_delete_intent(&intent_payload)
         .await
         .map_err(|e| ToolError::Internal(format!("delete intent creation failed: {}", e)))?;
 
-    // Step 6: Generate confirmation URL.
+    // Generate the confirmation URL.
     let confirmation_url = format!(
         "{}/confirm-delete/{}",
-        internal_client.api_base(),
+        context.internal_client.api_base(),
         delete_intent.intent_id
     );
 

@@ -8,13 +8,11 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{CalendarInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{CalendarListOutput, CalendarSummary, ContentBlock, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 #[derive(Debug, Deserialize)]
 pub struct CalendarListParams {
@@ -24,42 +22,36 @@ pub struct CalendarListParams {
 
 /// Handle the calendar_list tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant from DB → check allow_availability
-/// 3. Call internal API to get calendars
-/// 4. Filter by grant's allowed_calendar_ids
-/// 5. Return structured response
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check the grant's tool permission.
+/// 3. Call CommonCal core to list calendars.
+/// 4. Filter by the grant's allowed_calendar_ids.
+/// 5. Return the structured response.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
-    params: CalendarListParams,
+    context: &AuthorizedToolContext<'_>,
+    _params: CalendarListParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant for this user + client.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "availability_find") {
+    // Check tool permission against the authoritative grant.
+    if !crate::mcp_grant::check_tool_permission(grant, "availability_find") {
         return Err(ToolError::Forbidden(
             "calendar_list requires availability permission".to_string(),
         ));
     }
 
-    // Step 3: Fetch calendars from internal API.
-    let calendars = internal_client
-        .list_calendars(token.user_id)
+    // Fetch calendars from CommonCal core.
+    let calendars = context
+        .internal_client
+        .list_calendars(context.token.user_id)
         .await
         .map_err(|e| ToolError::Internal(format!("calendar fetch failed: {}", e)))?;
 
-    // Step 4: Filter by grant's allowed calendars.
+    // Filter by the grant's allowed calendars.
     let filtered: Vec<CalendarSummary> = calendars
         .into_iter()
-        .filter(|c| check_calendar_access(&grant, c.id))
+        .filter(|c| check_calendar_access(grant, c.id))
         .map(|c| CalendarSummary {
             id: c.id,
             name: c.name,

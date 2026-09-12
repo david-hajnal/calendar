@@ -1,55 +1,13 @@
-// McpGrant persistence and enforcement module.
+// McpGrant domain model and enforcement.
 //
-// Handles loading and validating MCP grants from the MCP service's local SQLite.
-// In production, McpGrant is also stored in CommonCal DB as source of truth.
+// The grant is the authoritative permission record for an MCP user + OAuth
+// client. It is resolved from CommonCal core (the source of truth) through the
+// internal API and converted into this domain type. Permission checks operate
+// on the in-memory grant; there is no MCP-local grant table.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
-use crate::error::GrantError;
-
-/// Raw database row for mcp_grant.
-#[derive(Debug, Deserialize, sqlx::FromRow)]
-struct McpGrantRow {
-    grant_id: String,
-    user_id: i64,
-    oauth_client_id: String,
-    allowed_calendar_ids: String,
-    allow_availability: i64,
-    allow_event_titles: i64,
-    allow_event_details: i64,
-    allow_create: i64,
-    allow_update: i64,
-    allow_delete: i64,
-    created_at: i64,
-    last_used_at: Option<i64>,
-    expires_at: Option<i64>,
-    revoked_at: Option<i64>,
-}
-
-impl McpGrantRow {
-    fn to_grant(self) -> McpGrant {
-        let allowed_calendar_ids: Vec<i64> =
-            serde_json::from_str(&self.allowed_calendar_ids).unwrap_or_default();
-
-        McpGrant {
-            grant_id: self.grant_id,
-            user_id: self.user_id,
-            oauth_client_id: self.oauth_client_id,
-            allowed_calendar_ids,
-            allow_availability: self.allow_availability != 0,
-            allow_event_titles: self.allow_event_titles != 0,
-            allow_event_details: self.allow_event_details != 0,
-            allow_create: self.allow_create != 0,
-            allow_update: self.allow_update != 0,
-            allow_delete: self.allow_delete != 0,
-            created_at: self.created_at,
-            last_used_at: self.last_used_at,
-            expires_at: self.expires_at,
-            revoked_at: self.revoked_at,
-        }
-    }
-}
+use crate::internal_client::McpGrantResponse;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpGrant {
@@ -69,43 +27,26 @@ pub struct McpGrant {
     pub revoked_at: Option<i64>,
 }
 
-/// Load McpGrant for a user + OAuth client pair from the DB.
-///
-/// Returns None if no grant exists (not an error — the client may have no grants).
-pub async fn get_grant(
-    pool: &SqlitePool,
-    user_id: i64,
-    client_id: &str,
-) -> Result<Option<McpGrant>, GrantError> {
-    let row = sqlx::query_as::<_, McpGrantRow>(
-        r#"
-        SELECT
-            grant_id,
-            user_id,
-            oauth_client_id,
-            allowed_calendar_ids,
-            allow_availability,
-            allow_event_titles,
-            allow_event_details,
-            allow_create,
-            allow_update,
-            allow_delete,
-            created_at,
-            last_used_at,
-            expires_at,
-            revoked_at
-        FROM mcp_grant
-        WHERE user_id = ? AND oauth_client_id = ?
-        LIMIT 1
-        "#,
-    )
-    .bind(user_id)
-    .bind(client_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| GrantError::Db(format!("failed to load mcp_grant: {}", e)))?;
-
-    Ok(row.map(|r| r.to_grant()))
+/// Convert an authoritative core grant response into the domain type.
+impl From<McpGrantResponse> for McpGrant {
+    fn from(response: McpGrantResponse) -> Self {
+        Self {
+            grant_id: response.grant_id,
+            user_id: response.user_id,
+            oauth_client_id: response.oauth_client_id,
+            allowed_calendar_ids: response.allowed_calendar_ids,
+            allow_availability: response.allow_availability,
+            allow_event_titles: response.allow_event_titles,
+            allow_event_details: response.allow_event_details,
+            allow_create: response.allow_create,
+            allow_update: response.allow_update,
+            allow_delete: response.allow_delete,
+            created_at: response.created_at,
+            last_used_at: response.last_used_at,
+            expires_at: response.expires_at,
+            revoked_at: response.revoked_at,
+        }
+    }
 }
 
 /// Check if a calendar is accessible under the grant.
@@ -152,18 +93,6 @@ pub fn check_tool_permission(grant: &McpGrant, tool_name: &str) -> bool {
     }
 }
 
-/// Revoke an McpGrant by setting revoked_at.
-pub async fn revoke_grant(pool: &SqlitePool, grant_id: &str) -> Result<(), GrantError> {
-    sqlx::query("UPDATE mcp_grant SET revoked_at = ? WHERE grant_id = ?")
-        .bind(current_time_secs())
-        .bind(grant_id)
-        .execute(pool)
-        .await
-        .map_err(|e| GrantError::Db(format!("failed to revoke grant: {}", e)))?;
-
-    Ok(())
-}
-
 /// Get current time as Unix seconds.
 ///
 /// In production this uses system time. For testing, set MCP_TEST_TIME
@@ -187,6 +116,7 @@ fn current_time_secs_real() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::GrantError;
 
     fn mock_grant() -> McpGrant {
         let test_time = current_time_secs();
@@ -399,6 +329,42 @@ mod tests {
         assert_eq!(cloned.grant_id, grant.grant_id);
         assert_eq!(cloned.user_id, grant.user_id);
         assert_eq!(cloned.allowed_calendar_ids, grant.allowed_calendar_ids);
+    }
+
+    #[test]
+    fn converts_authoritative_core_response_into_domain_grant() {
+        let response = crate::internal_client::McpGrantResponse {
+            grant_id: "core-grant".to_string(),
+            user_id: 7,
+            oauth_client_id: "client-7".to_string(),
+            allowed_calendar_ids: vec![10, 20],
+            allow_availability: true,
+            allow_event_titles: false,
+            allow_event_details: true,
+            allow_create: true,
+            allow_update: false,
+            allow_delete: false,
+            created_at: 1_700_000_000,
+            last_used_at: Some(1_700_003_600),
+            expires_at: Some(1_800_000_000),
+            revoked_at: None,
+        };
+
+        let grant = McpGrant::from(response);
+
+        assert_eq!(grant.grant_id, "core-grant");
+        assert_eq!(grant.user_id, 7);
+        assert_eq!(grant.oauth_client_id, "client-7");
+        assert_eq!(grant.allowed_calendar_ids, vec![10, 20]);
+        assert!(grant.allow_availability);
+        assert!(!grant.allow_event_titles);
+        assert!(grant.allow_event_details);
+        assert!(grant.allow_create);
+        assert!(!grant.allow_update);
+        assert!(!grant.allow_delete);
+        assert_eq!(grant.last_used_at, Some(1_700_003_600));
+        assert_eq!(grant.expires_at, Some(1_800_000_000));
+        assert_eq!(grant.revoked_at, None);
     }
 
     #[test]

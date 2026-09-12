@@ -9,13 +9,11 @@
 
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::error::ToolError;
-use crate::internal_client::{EventInfo, InternalClient};
-use crate::mcp_grant::{check_calendar_access, get_grant};
-use crate::oauth::TokenValidationResult;
+use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSummary, ToolOutput};
+use crate::tools::AuthorizedToolContext;
 
 #[derive(Debug, Deserialize)]
 pub struct EventCreateParams {
@@ -60,42 +58,35 @@ pub fn validate_create_input(params: &EventCreateParams) -> Result<(), ToolError
 
 /// Handle the event_create tool call.
 ///
-/// Full authorization pipeline:
-/// 1. Validate OAuth token → TokenValidationResult
-/// 2. Load McpGrant → check allow_create
-/// 3. Check calendar access
-/// 4. Validate input (non-empty title, length limits)
-/// 5. Call internal API to create event
-/// 6. Return structured response
+/// Authorization pipeline:
+/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
+/// 2. Check calendar access against the grant.
+/// 3. Check the grant's create permission.
+/// 4. Validate input (non-empty title, length limits).
+/// 5. Call CommonCal core to create the event.
+/// 6. Return the structured response.
 pub async fn handle(
-    token: &TokenValidationResult,
-    db_pool: &SqlitePool,
-    internal_client: &InternalClient,
+    context: &AuthorizedToolContext<'_>,
     params: EventCreateParams,
 ) -> Result<Response<axum::body::Body>, ToolError> {
-    // Step 1: Load the McpGrant.
-    let grant = get_grant(db_pool, token.user_id, &token.oauth_client_id)
-        .await
-        .map_err(|e| ToolError::Internal(format!("grant lookup failed: {}", e)))?;
+    let grant = context.grant;
 
-    let grant = grant.ok_or(ToolError::Forbidden("no MCP grant found".to_string()))?;
-
-    // Step 2: Check calendar access.
-    if !check_calendar_access(&grant, params.calendar_id) {
+    // Check calendar access against the authoritative grant.
+    if !check_calendar_access(grant, params.calendar_id) {
         return Err(ToolError::Forbidden("calendar not in grant".to_string()));
     }
 
-    // Step 3: Check tool permission.
-    if !crate::mcp_grant::check_tool_permission(&grant, "event_create") {
+    // Check the grant's create permission.
+    if !crate::mcp_grant::check_tool_permission(grant, "event_create") {
         return Err(ToolError::Forbidden(
             "event_create requires create permission".to_string(),
         ));
     }
 
-    // Step 4: Validate input.
+    // Validate input.
     validate_create_input(&params)?;
 
-    // Step 5: Build the event payload for the internal API.
+    // Build the event payload for CommonCal core.
     let payload = serde_json::json!({
         "title": params.title,
         "description": params.description,
@@ -104,8 +95,9 @@ pub async fn handle(
         "end_utc": params.end_utc,
     });
 
-    // Step 6: Create event via internal API.
-    let event_info = internal_client
+    // Create the event via CommonCal core.
+    let event_info = context
+        .internal_client
         .create_event(params.calendar_id, &payload)
         .await
         .map_err(|e| ToolError::Internal(format!("event create failed: {}", e)))?;

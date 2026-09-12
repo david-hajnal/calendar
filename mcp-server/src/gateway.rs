@@ -3,7 +3,9 @@ use std::sync::Arc;
 use axum::http::{StatusCode, header};
 use sqlx::SqlitePool;
 
+use crate::audit::{self, AuditRecord};
 use crate::config::Config;
+use crate::error::ToolError;
 use crate::internal_client::InternalClient;
 use crate::mcp_grant::McpGrant;
 use crate::oauth::{self, TokenValidationResult};
@@ -102,9 +104,11 @@ impl Gateway {
     ///
     /// This is the entry point for all MCP protocol communication.
     /// It validates the OAuth token, dispatches to the appropriate tool,
-    /// and returns a structured MCP response.
+    /// records the invocation in the local audit log, and returns a
+    /// structured MCP response.
     pub async fn handle_mcp_request(
         &self,
+        request_id: String,
         request: axum::http::Request<axum::body::Body>,
     ) -> axum::http::Response<axum::body::Body> {
         // Check Origin/CORS
@@ -154,7 +158,7 @@ impl Gateway {
         match method {
             "tools/list" => self.handle_tools_list(&message).await,
             "tools/call" => {
-                self.handle_tools_call(&request_parts.headers, &message)
+                self.handle_tools_call(&request_id, &request_parts.headers, &message)
                     .await
             }
             _ => {
@@ -207,25 +211,13 @@ impl Gateway {
             .unwrap()
     }
 
-    /// Handle tools/call — validate token, dispatch to tool, return result.
+    /// Handle tools/call — validate token, then run the authorized call path.
     async fn handle_tools_call(
         &self,
+        request_id: &str,
         headers: &axum::http::HeaderMap,
         message: &serde_json::Value,
     ) -> axum::http::Response<axum::body::Body> {
-        // Extract tool name and params
-        let tool_name = message
-            .get("params")
-            .and_then(|p| p.get("name"))
-            .and_then(|n| n.as_str())
-            .unwrap_or("");
-
-        let params = message
-            .get("params")
-            .and_then(|p| p.get("arguments"))
-            .cloned()
-            .unwrap_or(serde_json::json!({}));
-
         // Rate limiting check
         if !self.rate_limiter.check("mcp_tool", 100, 60) {
             return axum::http::Response::builder()
@@ -257,6 +249,39 @@ impl Gateway {
             Err(resp) => return resp,
         };
 
+        self.handle_authorized_tool_call(request_id, &token_result, message)
+            .await
+    }
+
+    /// Run an already-authenticated tools/call: resolve the authoritative
+    /// grant, dispatch to the tool, and record the invocation in the local
+    /// audit log.
+    ///
+    /// Audit recording is best-effort: a failed audit insert is logged as an
+    /// operational error and never replaces an already-completed tool response.
+    /// Returning failure would encourage a client to repeat a mutation that
+    /// already succeeded.
+    pub async fn handle_authorized_tool_call(
+        &self,
+        request_id: &str,
+        token_result: &TokenValidationResult,
+        message: &serde_json::Value,
+    ) -> axum::http::Response<axum::body::Body> {
+        // Extract tool name and params
+        let tool_name = message
+            .get("params")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("");
+
+        let params = message
+            .get("params")
+            .and_then(|p| p.get("arguments"))
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let auth_strength = token_result.auth_strength.to_string();
+
         // Resolve the authoritative grant from CommonCal core (source of truth).
         let grant = match self
             .internal_client
@@ -265,6 +290,23 @@ impl Gateway {
         {
             Ok(Some(resp)) => McpGrant::from(resp),
             Ok(None) => {
+                self.record_audit(
+                    &AuditRecord {
+                        request_id,
+                        user_id: token_result.user_id,
+                        client_id: &token_result.oauth_client_id,
+                        grant_id: None,
+                        tool: tool_name,
+                        resource_ids: None,
+                        auth_result: "denied",
+                        scope: None,
+                        auth_strength: &auth_strength,
+                        latency_ms: 0,
+                        result_type: "denied",
+                        operation_id: None,
+                    },
+                )
+                .await;
                 return axum::http::Response::builder()
                     .status(StatusCode::FORBIDDEN)
                     .header("content-type", "application/json")
@@ -282,6 +324,23 @@ impl Gateway {
                     .unwrap();
             }
             Err(e) => {
+                self.record_audit(
+                    &AuditRecord {
+                        request_id,
+                        user_id: token_result.user_id,
+                        client_id: &token_result.oauth_client_id,
+                        grant_id: None,
+                        tool: tool_name,
+                        resource_ids: None,
+                        auth_result: "denied",
+                        scope: None,
+                        auth_strength: &auth_strength,
+                        latency_ms: 0,
+                        result_type: "error",
+                        operation_id: None,
+                    },
+                )
+                .await;
                 return axum::http::Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("content-type", "application/json")
@@ -302,14 +361,57 @@ impl Gateway {
 
         // Build the authorized context and dispatch to the tool.
         let context = AuthorizedToolContext {
-            token: &token_result,
+            token: token_result,
             grant: &grant,
             internal_client: &self.internal_client,
         };
 
+        let started = std::time::Instant::now();
         match tools::dispatch(&context, tool_name, params).await {
-            Ok(response) => response,
+            Ok(response) => {
+                self.record_audit(
+                    &AuditRecord {
+                        request_id,
+                        user_id: token_result.user_id,
+                        client_id: &token_result.oauth_client_id,
+                        grant_id: Some(&grant.grant_id),
+                        tool: tool_name,
+                        resource_ids: None,
+                        auth_result: "allowed",
+                        scope: None,
+                        auth_strength: &auth_strength,
+                        latency_ms: started.elapsed().as_millis() as i64,
+                        result_type: "success",
+                        operation_id: None,
+                    },
+                )
+                .await;
+                response
+            }
             Err(e) => {
+                let (auth_result, result_type) = match e {
+                    ToolError::Unauthorized(_) | ToolError::Forbidden(_) => {
+                        ("denied", "denied")
+                    }
+                    _ => ("allowed", "error"),
+                };
+                self.record_audit(
+                    &AuditRecord {
+                        request_id,
+                        user_id: token_result.user_id,
+                        client_id: &token_result.oauth_client_id,
+                        grant_id: Some(&grant.grant_id),
+                        tool: tool_name,
+                        resource_ids: None,
+                        auth_result,
+                        scope: None,
+                        auth_strength: &auth_strength,
+                        latency_ms: started.elapsed().as_millis() as i64,
+                        result_type,
+                        operation_id: None,
+                    },
+                )
+                .await;
                 let mcp_error = e.to_mcp_error(message.get("id"));
                 axum::http::Response::builder()
                     .status(StatusCode::OK)
@@ -327,6 +429,18 @@ impl Gateway {
                     ))
                     .unwrap()
             }
+        }
+    }
+
+    /// Best-effort audit insert. Failures are logged, never propagated.
+    async fn record_audit(&self, record: &AuditRecord<'_>) {
+        if let Err(e) = audit::log_invocation(&self.db_pool, record).await {
+            tracing::error!(
+                error = %e,
+                tool = record.tool,
+                request_id = record.request_id,
+                "failed to record MCP audit"
+            );
         }
     }
 

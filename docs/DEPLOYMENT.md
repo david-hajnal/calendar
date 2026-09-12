@@ -106,6 +106,42 @@ The MCP NetworkPolicy allows egress HTTPS to non-private IPv4 addresses only.
 On a dual-stack cluster, make sure the OAuth issuer and the core domain resolve
 to IPv4 for MCP egress.
 
+## Connect an MCP client
+
+After the MCP HelmRelease has reconciled and `/health/ready` succeeds, connect
+clients to the public streamable-HTTP endpoint:
+
+```
+https://mcal.hajnal.space/mcp
+```
+
+Use a client that supports OAuth-protected MCP servers and streamable HTTP.
+Give it the endpoint above; it must discover resource metadata at:
+
+```
+https://mcal.hajnal.space/.well-known/oauth-protected-resource
+```
+
+The client should then start its OAuth authorization flow with the issuer
+advertised by that metadata. Do not copy an access token into a configuration
+file or share it between users. The client sends its user-specific bearer token
+with each `POST /mcp` request; the server resolves that user's grant from
+CommonCal core and only exposes permitted calendars and tools.
+
+For a manual smoke test, use an MCP Inspector or another OAuth-capable MCP
+client, complete sign-in in its browser window, and run `tools/list`. Then use
+`calendar_list` to confirm the client sees only calendars covered by its MCP
+grant. If discovery or login fails, first verify:
+
+```bash
+curl -fsS https://mcal.hajnal.space/.well-known/oauth-protected-resource
+curl -fsSI https://mcal.hajnal.space/health/ready
+```
+
+`/health/ready` returning `200` confirms MCP SQLite storage is usable; it does
+not validate a specific user's OAuth grant. Grant failures must be diagnosed in
+the MCP client or CommonCal core, without logging or pasting bearer tokens.
+
 For an emergency direct deployment, first suspend all three Flux HelmReleases,
 then run the same script. With all releases suspended (or absent), it deploys
 all three workloads directly with Helm and requires `IMAGE_TAG` set to an
@@ -532,6 +568,78 @@ sudo ./deploy/sqlite-prod.sh --write
   files, whose ownership (UID 1000, held by the live core pod) the console pod
   cannot match — so writes fail even in `--write` mode. For one-off writes,
   exec directly into the core pod instead (see below).
+
+## MCP Database Backup and Restore
+
+The MCP server keeps its local state in one SQLite file:
+
+- **Path in the pod**: `/app/data/mcp-server.db` (WAL mode, so `-wal`/`-shm`
+  sidecar files may exist alongside it)
+- **PVC**: `commoncal-mcp-data` in the `commoncal` namespace
+  (`ReadWriteOnce`, retained on Helm uninstall)
+- **Deployment**: `commoncal-mcp`, **exactly one replica** — SQLite allows a
+  single writer, and the Helm chart schema rejects any other replica count.
+  Never run two MCP pods against the same PVC.
+
+The production image ships the `sqlite3` CLI for the procedures below.
+
+### Backup (online, service stays up)
+
+`VACUUM INTO` produces a consistent snapshot of a live WAL database:
+
+```bash
+POD=$(kubectl get pods -n commoncal -l app.kubernetes.io/name=commoncal-mcp \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# Consistent snapshot while the service keeps serving
+kubectl exec -n commoncal "$POD" -- \
+  sqlite3 /app/data/mcp-server.db "VACUUM INTO '/app/tmp/mcp-server-backup.db';"
+
+# Pull the snapshot out of the pod
+kubectl cp "commoncal/$POD:/app/tmp/mcp-server-backup.db" ./mcp-server-backup.db
+
+# Verify the snapshot before trusting it
+sqlite3 ./mcp-server-backup.db "PRAGMA integrity_check;"   # must print ok
+```
+
+### Restore (service must be stopped)
+
+The single writer must be down while the database file is replaced:
+
+```bash
+# 1. Stop the single writer (the PVC is retained)
+kubectl scale deployment commoncal-mcp -n commoncal --replicas=0
+
+# 2. Start a temporary pod on the retained PVC
+kubectl run mcp-restore -n commoncal --rm -it --restart=Never \
+  --image=busybox:1.36 -- sleep infinity \
+  --overrides='{"spec":{"containers":[{"name":"mcp-restore","volumeMounts":[{"name":"data","mountPath":"/app/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"commoncal-mcp-data"}}]}}'
+
+# 3. Replace the database file, clear WAL sidecars, and fix ownership
+#    (the MCP pod runs as UID 1000)
+kubectl cp ./mcp-server-backup.db commoncal/mcp-restore:/app/data/mcp-server.db
+kubectl exec -n commoncal mcp-restore -- sh -c \
+  'chown 1000:1000 /app/data/mcp-server.db && rm -f /app/data/mcp-server.db-wal /app/data/mcp-server.db-shm'
+
+# 4. Remove the temporary pod and start the service
+kubectl delete pod mcp-restore -n commoncal
+kubectl scale deployment commoncal-mcp -n commoncal --replicas=1
+```
+
+### Verify after restore
+
+```bash
+POD=$(kubectl get pods -n commoncal -l app.kubernetes.io/name=commoncal-mcp \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# Database integrity — must print ok
+kubectl exec -n commoncal "$POD" -- \
+  sqlite3 /app/data/mcp-server.db "PRAGMA integrity_check;"
+
+# Service readiness — /health/ready confirms MCP SQLite storage is usable
+kubectl get pods -n commoncal -l app.kubernetes.io/name=commoncal-mcp
+curl -sI https://mcal.hajnal.space/mcp | head -5
+```
 
 ## Change the admin password
 

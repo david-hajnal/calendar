@@ -3,9 +3,355 @@
 #![allow(dead_code)]
 
 use base64::Engine;
+use http_body_util::BodyExt;
+use mcp_server::config::{AppEnv, Config};
+use mcp_server::db::connect_and_migrate;
+use mcp_server::gateway::Gateway;
 use mcp_server::internal_client::InternalClient;
+use mcp_server::mcp_grant::McpGrant;
+use mcp_server::oauth::{AuthStrength, TokenValidationResult};
+use mcp_server::tools::AuthorizedToolContext;
+use mcp_server::tools::calendar_list::{CalendarListParams, handle as calendar_list};
 use wiremock::MockServer;
 use wiremock::matchers::{method, path};
+
+const CORE_GRANT: &str = r#"[{"grant_id":"grant-1","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":false,"allow_update":false,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
+
+fn internal_client(mock_server: &MockServer) -> InternalClient {
+    InternalClient::new(mock_server.uri(), "test-key".to_string()).expect("client should build")
+}
+
+#[tokio::test]
+async fn authoritative_grant_lookup_returns_one_matching_grant() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(CORE_GRANT))
+        .mount(&mock_server)
+        .await;
+
+    let grant = internal_client(&mock_server)
+        .get_mcp_grant(42, "client-1")
+        .await
+        .expect("one core grant should resolve")
+        .expect("one core grant should be present");
+
+    assert_eq!(grant.grant_id, "grant-1");
+    assert_eq!(grant.allowed_calendar_ids, vec![1]);
+}
+
+#[tokio::test]
+async fn authoritative_grant_lookup_returns_none_for_empty_response() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&mock_server)
+        .await;
+
+    let grant = internal_client(&mock_server)
+        .get_mcp_grant(42, "client-1")
+        .await
+        .expect("an empty core response is a valid no-grant outcome");
+
+    assert!(grant.is_none());
+}
+
+#[tokio::test]
+async fn authoritative_grant_lookup_rejects_multiple_responses() {
+    let mock_server = MockServer::start().await;
+    let grants = format!(
+        "[{},{}]",
+        &CORE_GRANT[1..CORE_GRANT.len() - 1],
+        &CORE_GRANT[1..CORE_GRANT.len() - 1]
+    );
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(grants))
+        .mount(&mock_server)
+        .await;
+
+    let error = internal_client(&mock_server)
+        .get_mcp_grant(42, "client-1")
+        .await
+        .expect_err("ambiguous core grants must fail closed");
+
+    assert!(error.to_string().contains("ambiguous grant response"));
+}
+
+#[tokio::test]
+async fn calendar_list_uses_authorized_core_grant_to_filter_calendars() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/users/42/calendars"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+            r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"},{"id":2,"name":"Denied","role":"owner","access":"owner"}]"#,
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let client = internal_client(&mock_server);
+    let token = TokenValidationResult {
+        user_id: 42,
+        oauth_client_id: "client-1".to_string(),
+        scopes: vec![],
+        auth_strength: AuthStrength::Passwordless,
+        auth_time: 0,
+        token_id: "token-1".to_string(),
+        expires_at: i64::MAX,
+    };
+    let grant = McpGrant {
+        grant_id: "grant-1".to_string(),
+        user_id: 42,
+        oauth_client_id: "client-1".to_string(),
+        allowed_calendar_ids: vec![1],
+        allow_availability: true,
+        allow_event_titles: false,
+        allow_event_details: false,
+        allow_create: false,
+        allow_update: false,
+        allow_delete: false,
+        created_at: 0,
+        last_used_at: None,
+        expires_at: None,
+        revoked_at: None,
+    };
+    let context = AuthorizedToolContext {
+        token: &token,
+        grant: &grant,
+        internal_client: &client,
+    };
+
+    let response = calendar_list(
+        &context,
+        CalendarListParams {
+            include_access: false,
+        },
+    )
+    .await
+    .expect("authorized calendar list should succeed");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("response body should be readable")
+        .to_bytes();
+    let output: serde_json::Value = serde_json::from_slice(&body).expect("response should be JSON");
+
+    assert!(output.to_string().contains("Allowed"));
+    assert!(!output.to_string().contains("Denied"));
+}
+
+const CREATE_GRANT: &str = r#"[{"grant_id":"grant-2","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":true,"allow_update":false,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
+
+fn gateway_config(mock_server: &MockServer, database_path: std::path::PathBuf) -> Config {
+    Config {
+        app_env: AppEnv::Development,
+        oauth_issuer: "https://auth.example.com".to_string(),
+        internal_api_base: mock_server.uri(),
+        internal_api_key: "test-key".to_string(),
+        session_secret: "test-secret".to_string(),
+        database_path,
+        mcp_domain: "mcp.example.com".to_string(),
+        public_resource_url: "https://mcp.example.com/mcp".to_string(),
+        bind_address: "127.0.0.1:3001".parse().unwrap(),
+        dpop_key_path: None,
+        rate_limit_enabled: false,
+        tracing_level: "info".to_string(),
+    }
+}
+
+fn audit_token() -> TokenValidationResult {
+    TokenValidationResult {
+        user_id: 42,
+        oauth_client_id: "client-1".to_string(),
+        scopes: vec![],
+        auth_strength: AuthStrength::Passwordless,
+        auth_time: 0,
+        token_id: "token-1".to_string(),
+        expires_at: i64::MAX,
+    }
+}
+
+fn unique_database_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("commoncal-mcp-{}.sqlite", uuid::Uuid::new_v4()))
+}
+
+/// Slice 6: a successful tool call appends an audit row with request, actor,
+/// tool, outcome, and latency metadata.
+#[tokio::test]
+async fn successful_tool_call_appends_audit_row() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(CORE_GRANT))
+        .mount(&mock_server)
+        .await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/users/42/calendars"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string(
+                r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"}]"#,
+            ),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let database_path = unique_database_path();
+    let pool = connect_and_migrate(&database_path)
+        .await
+        .expect("a fresh database should be created and migrated");
+    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
+        .expect("gateway should build");
+
+    let message = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": "calendar_list", "arguments": { "include_access": false } },
+    });
+
+    let response = gateway
+        .handle_authorized_tool_call("req-audit-1", &audit_token(), &message)
+        .await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let row: (String, i64, String, String, String, String, i64, String) = sqlx::query_as(
+        "SELECT request_id, user_id, oauth_client_id, mcp_grant_id, tool,
+         auth_result, latency_ms, result_type
+         FROM mcp_audit",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the successful invocation should be audited");
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&database_path);
+
+    assert_eq!(row.0, "req-audit-1");
+    assert_eq!(row.1, 42);
+    assert_eq!(row.2, "client-1");
+    assert_eq!(row.3, "grant-1");
+    assert_eq!(row.4, "calendar_list");
+    assert_eq!(row.5, "allowed");
+    assert!(row.6 >= 0, "latency metadata should be recorded");
+    assert_eq!(row.7, "success");
+}
+
+/// Slice 6: a denied tool call appends an audit row without storing credentials.
+#[tokio::test]
+async fn failed_authorization_appends_audit_row() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(&mock_server)
+        .await;
+
+    let database_path = unique_database_path();
+    let pool = connect_and_migrate(&database_path)
+        .await
+        .expect("a fresh database should be created and migrated");
+    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
+        .expect("gateway should build");
+
+    let message = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "calendar_list", "arguments": {} },
+    });
+
+    let response = gateway
+        .handle_authorized_tool_call("req-denied-1", &audit_token(), &message)
+        .await;
+
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+
+    let row: (String, String, String, String, Option<String>) = sqlx::query_as(
+        "SELECT request_id, tool, auth_result, result_type, mcp_grant_id
+         FROM mcp_audit",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the denied invocation should be audited");
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&database_path);
+
+    assert_eq!(row.0, "req-denied-1");
+    assert_eq!(row.1, "calendar_list");
+    assert_eq!(row.2, "denied");
+    assert_eq!(row.3, "denied");
+    assert_eq!(row.4, None, "no grant exists to record");
+}
+
+/// Slice 6: a successful core mutation keeps its response when the local
+/// audit insert fails, so the client is not pushed into an unsafe retry.
+#[tokio::test]
+async fn audit_failure_does_not_turn_completed_mutation_into_retryable_failure() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(CREATE_GRANT))
+        .mount(&mock_server)
+        .await;
+    wiremock::Mock::given(method("POST"))
+        .and(path("/internal/mcp/events/1"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(201).set_body_string(
+                r#"{"id":7,"calendar_id":1,"title":"Standup","status":"confirmed","event_kind":"timed"}"#,
+            ),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let database_path = unique_database_path();
+    let pool = connect_and_migrate(&database_path)
+        .await
+        .expect("a fresh database should be created and migrated");
+    // Simulate audit storage failure: the audit table is unavailable.
+    sqlx::query("DROP TABLE mcp_audit")
+        .execute(&pool)
+        .await
+        .expect("audit table should be removable in the test");
+
+    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
+        .expect("gateway should build");
+
+    let message = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "event_create",
+            "arguments": { "calendar_id": 1, "title": "Standup" },
+        },
+    });
+
+    let response = gateway
+        .handle_authorized_tool_call("req-audit-fail", &audit_token(), &message)
+        .await;
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::CREATED,
+        "the completed mutation must keep its success response"
+    );
+
+    let audit_table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mcp_audit'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("schema query should succeed");
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&database_path);
+
+    assert_eq!(audit_table, 0, "the failed audit insert must not recreate the table");
+}
 
 /// Integration test: DPoP proof validation with mock JWKS.
 #[tokio::test]

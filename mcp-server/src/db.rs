@@ -33,8 +33,48 @@ pub async fn connect_and_migrate(database_path: &Path) -> Result<SqlitePool, sql
         .connect_with(options)
         .await?;
 
+    guard_duplicate_tables(&pool).await?;
+
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
+}
+
+/// Abort startup if the duplicate local state tables still hold rows.
+///
+/// The `0002_local_audit_only` migration drops `mcp_grant`, `delete_intent`,
+/// and `idempotency_key`. Those records have authoritative equivalents in
+/// CommonCal core, but discarding data is an operator decision, not a
+/// migration side effect: any row forces a human to reconcile first.
+async fn guard_duplicate_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    for table in ["mcp_grant", "delete_intent", "idempotency_key"] {
+        let exists = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .bind(table)
+        .fetch_optional(pool)
+        .await?
+        .is_some();
+
+        if !exists {
+            continue;
+        }
+
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(pool)
+            .await?;
+
+        if rows > 0 {
+            return Err(sqlx::Error::Configuration(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "refusing to migrate: table {table} holds {rows} row(s); \
+                     reconcile with CommonCal core and remove the data before upgrading"
+                ),
+            ))));
+        }
+    }
+
+    Ok(())
 }
 
 /// Report whether the pool can serve a trivial query.
@@ -53,6 +93,9 @@ mod tests {
     use super::{connect_and_migrate, is_ready};
     use std::path::PathBuf;
 
+    use sqlx::SqlitePool;
+    use sqlx::sqlite::SqliteConnectOptions;
+
     #[tokio::test]
     async fn creates_and_migrates_a_new_database_file() {
         let database_path = unique_database_path();
@@ -68,7 +111,112 @@ mod tests {
         pool.close().await;
         let _ = std::fs::remove_file(&database_path);
 
-        assert_eq!(migration_count, 1);
+        assert_eq!(migration_count, 2);
+    }
+
+    #[tokio::test]
+    async fn migration_keeps_audit_and_drops_duplicate_tables() {
+        let database_path = unique_database_path();
+
+        // Build a pre-upgrade database: initial schema only, with an audit row.
+        {
+            let options = SqliteConnectOptions::new()
+                .filename(&database_path)
+                .create_if_missing(true);
+            let pool = SqlitePool::connect_with(options)
+                .await
+                .expect("pool should open");
+            let migrator = sqlx::migrate!("./migrations");
+            let initial = migrator
+                .iter()
+                .next()
+                .expect("the initial migration should exist");
+            sqlx::raw_sql(initial.sql.as_ref())
+                .execute(&pool)
+                .await
+                .expect("initial schema should apply");
+            sqlx::query(
+                "INSERT INTO mcp_audit (timestamp, request_id, user_id, oauth_client_id,
+                 tool, auth_result, result_type)
+                 VALUES (1700000000, 'req-1', 42, 'client-1', 'calendar_list', 'allowed', 'success')",
+            )
+            .execute(&pool)
+            .await
+            .expect("audit row should insert");
+            pool.close().await;
+        }
+
+        let pool = connect_and_migrate(&database_path)
+            .await
+            .expect("the upgrade should complete");
+
+        let audit_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_audit")
+            .fetch_one(&pool)
+            .await
+            .expect("mcp_audit should survive the upgrade");
+        let audit_request: String = sqlx::query_scalar("SELECT request_id FROM mcp_audit")
+            .fetch_one(&pool)
+            .await
+            .expect("the audit row should be readable");
+        let duplicates: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('mcp_grant', 'delete_intent', 'idempotency_key')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("schema query should succeed");
+
+        pool.close().await;
+        let _ = std::fs::remove_file(&database_path);
+
+        assert_eq!(audit_rows, 1, "audit rows must survive the upgrade");
+        assert_eq!(audit_request, "req-1");
+        assert_eq!(duplicates, 0, "duplicate local state tables must be dropped");
+    }
+
+    #[tokio::test]
+    async fn migration_aborts_when_duplicate_tables_hold_rows() {
+        let database_path = unique_database_path();
+
+        // Build a pre-upgrade database with a row in a duplicate table.
+        {
+            let options = SqliteConnectOptions::new()
+                .filename(&database_path)
+                .create_if_missing(true);
+            let pool = SqlitePool::connect_with(options)
+                .await
+                .expect("pool should open");
+            let migrator = sqlx::migrate!("./migrations");
+            let initial = migrator
+                .iter()
+                .next()
+                .expect("the initial migration should exist");
+            sqlx::raw_sql(initial.sql.as_ref())
+                .execute(&pool)
+                .await
+                .expect("initial schema should apply");
+            sqlx::query(
+                "INSERT INTO mcp_grant (grant_id, user_id, oauth_client_id,
+                 allowed_calendar_ids, allow_availability, allow_event_titles,
+                 allow_event_details, allow_create, allow_update, allow_delete, created_at)
+                 VALUES ('g1', 42, 'client-1', '[]', 0, 0, 0, 0, 0, 0, 1700000000)",
+            )
+            .execute(&pool)
+            .await
+            .expect("duplicate row should insert");
+            pool.close().await;
+        }
+
+        let error = connect_and_migrate(&database_path)
+            .await
+            .expect_err("rows in duplicate tables must block the upgrade");
+
+        let _ = std::fs::remove_file(&database_path);
+
+        assert!(
+            error.to_string().contains("mcp_grant"),
+            "the error should name the blocking table"
+        );
     }
 
     #[tokio::test]

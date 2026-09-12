@@ -87,6 +87,9 @@ jobs:
       - name: Test deployment script contract
         run: sh scripts/test-deploy-prod.sh
 
+      - name: Test MCP backup and restore contract
+        run: sh scripts/test-mcp-backup-restore.sh
+
       - name: Test Helm chart templates
         run: |
           sh deploy/helm/commoncal-auth/tests/template_assertions.sh

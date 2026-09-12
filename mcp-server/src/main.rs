@@ -155,7 +155,7 @@ async fn mcp_handler(
 
     let start = std::time::Instant::now();
 
-    let response = gateway.handle_mcp_request(request).await;
+    let response = gateway.handle_mcp_request(request_id.clone(), request).await;
 
     let latency = start.elapsed().as_millis() as i64;
 
@@ -180,6 +180,7 @@ mod tests {
     use super::*;
     use axum::response::IntoResponse;
     use config::AppEnv;
+    use tower::ServiceExt;
 
     fn test_config(database_path: std::path::PathBuf) -> Config {
         Config {
@@ -227,6 +228,34 @@ mod tests {
         let gateway = Gateway::new(test_config(database_path.clone()), pool.clone())
             .expect("gateway should build");
         let response = health_ready(State(gateway)).await.into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        pool.close().await;
+        let _ = std::fs::remove_file(&database_path);
+    }
+
+    #[tokio::test]
+    async fn readiness_route_reports_ready_for_temporary_sqlite_database() {
+        let database_path = unique_database_path();
+        let pool = connect_and_migrate(&database_path)
+            .await
+            .expect("a fresh database should be created and migrated");
+        let gateway = Gateway::new(test_config(database_path.clone()), pool.clone())
+            .expect("gateway should build");
+        let router = Router::new()
+            .route("/health/ready", get(health_ready))
+            .with_state(gateway);
+
+        let response = router
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health/ready")
+                    .body(axum::body::Body::empty())
+                    .expect("test request should build"),
+            )
+            .await
+            .expect("router should serve readiness request");
 
         assert_eq!(response.status(), StatusCode::OK);
 

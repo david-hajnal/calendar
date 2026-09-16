@@ -69,15 +69,49 @@ test.describe("caldav account tracer", () => {
     //   </D:multistatus>
 
     const basic = Buffer.from(`${issued.username}:${issued.clear_password}`).toString("base64");
+    const davHeaders = { authorization: `Basic ${basic}` };
+
+    // Discovery step 0: well-known redirect to the DAV root.
+    const wellKnown = await request.fetch(`${baseURL}/.well-known/caldav`, {
+      maxRedirects: 0,
+    });
+    expect(wellKnown.status()).toBe(301);
+    expect(wellKnown.headers()["location"]).toBe(`${baseURL}/dav/`);
+
+    // Discovery step 1: OPTIONS advertises the implemented DAV capabilities.
+    const options = await request.fetch(`${baseURL}/dav/`, { method: "OPTIONS" });
+    expect(options.status()).toBe(200);
+    expect(options.headers()["dav"]).toContain("calendar-access");
+    expect(options.headers()["allow"]).toContain("PROPFIND");
+    expect(options.headers()["allow"]).toContain("OPTIONS");
+
+    // Discovery step 2: PROPFIND /dav/ returns the current principal.
     const response = await request.fetch(`${baseURL}/dav/`, {
       method: "PROPFIND",
-      headers: { authorization: `Basic ${basic}` },
+      headers: davHeaders,
     });
     expect(response.status()).toBe(207);
     const body = await response.text();
     expect(body).toContain("<D:current-principal>");
     expect(body).toContain(`/dav/principals/`);
     expect(body).toContain("HTTP/1.1 200 OK");
+
+    const principalHref = /<D:current-principal>\s*<D:href>([^<]+)<\/D:href>/.exec(body)?.[1];
+    expect(principalHref, "current-principal href should be present").toBeTruthy();
+
+    // Discovery step 3: PROPFIND the principal to find the calendar home.
+    const principal = await request.fetch(principalHref as string, {
+      method: "PROPFIND",
+      headers: davHeaders,
+    });
+    expect(principal.status()).toBe(207);
+    const principalBody = await principal.text();
+    expect(principalBody).toContain("<D:principal-URL>");
+    expect(principalBody).toContain("<D:calendar-home-set>");
+    expect(principalBody).toContain("/dav/calendars/");
+    expect(principalBody).toContain("calendar-query");
+    expect(principalBody).toContain("calendar-multiget");
+    expect(principalBody).toContain("sync-collection");
 
     const unauthenticated = await request.fetch(`${baseURL}/dav/`, { method: "PROPFIND" });
     expect(unauthenticated.status()).toBe(401);

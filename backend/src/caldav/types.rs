@@ -44,12 +44,6 @@ pub struct DavSession {
     pub principal_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PrincipalInfo {
-    pub user_id: i64,
-    pub display_name: String,
-}
-
 #[derive(Debug)]
 pub enum CaldavAuthError {
     InvalidCredentials,

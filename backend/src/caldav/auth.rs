@@ -13,7 +13,7 @@ use crate::{
         MAX_LABEL_LENGTH, TOKEN_PREFIX_LENGTH,
         types::{
             CaldavAccount, CaldavAuthError, ConnectionStatus, CredentialMetadata, DavSession,
-            IssuedCredential, PrincipalInfo,
+            IssuedCredential,
         },
     },
     security::{SecretKey, SecretToken, TokenDomain},
@@ -361,44 +361,11 @@ impl CaldavAccountService {
             .unwrap_or_else(|_| format!("{}/dav/", self.public_origin))
     }
 
-    pub fn dav_root_url(&self) -> String {
-        self.server_url()
-    }
-
     pub fn principal_url(&self, principal_id: &str) -> String {
         self.public_origin
             .join(&format!("/dav/principals/{}/", principal_id))
             .map(|url| url.to_string())
             .unwrap_or_else(|_| format!("{}/dav/principals/{}/", self.public_origin, principal_id))
-    }
-
-    pub fn calendar_home_url(&self, principal_id: &str) -> String {
-        self.public_origin
-            .join(&format!("/dav/calendars/{}/", principal_id))
-            .map(|url| url.to_string())
-            .unwrap_or_else(|_| format!("{}/dav/calendars/{}/", self.public_origin, principal_id))
-    }
-
-    pub async fn resolve_principal(
-        &self,
-        principal_id: &str,
-    ) -> Result<Option<PrincipalInfo>, CaldavAuthError> {
-        let row: Option<(i64, Option<String>, String)> = sqlx::query_as(
-            "SELECT a.user_id, u.display_name, u.normalized_email
-             FROM caldav_accounts a
-             JOIN users u ON u.id = a.user_id
-             WHERE a.principal_id = ?",
-        )
-        .bind(principal_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|_| CaldavAuthError::Persistence)?;
-        Ok(row.map(|(user_id, display_name, email)| PrincipalInfo {
-            user_id,
-            display_name: display_name
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or(email),
-        }))
     }
 }
 

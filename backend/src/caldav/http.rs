@@ -11,7 +11,7 @@ use crate::{
     caldav::{
         MAX_LABEL_LENGTH,
         auth::CaldavAccountService,
-        types::{CaldavAuthError, CredentialMetadata, DavSession, PrincipalInfo},
+        types::{CaldavAuthError, CredentialMetadata, DavSession},
     },
     http::{ApiError, authenticated_session},
     sessions::{AuthenticatedSession, SessionManager},
@@ -19,17 +19,10 @@ use crate::{
 
 const DAV_REALM: &str = "commoncal-dav";
 const PROPFIND: &str = "PROPFIND";
-const OPTIONS: &str = "OPTIONS";
-const DAV: header::HeaderName = header::HeaderName::from_static("dav");
-const DAV_CAPABILITIES: &str = "1, 2, access-control, calendar-access";
-const DAV_ALLOW: &str = "PROPFIND, OPTIONS";
 
 pub fn build_caldav_router(accounts: CaldavAccountService) -> Router {
     Router::new()
-        .route("/.well-known/caldav", get(well_known_caldav))
         .route("/dav/", any(dav_root))
-        .route("/dav/principals/:principal_id/", any(dav_principal))
-        .route("/dav/calendars/:principal_id/", any(dav_calendar_home))
         .with_state(accounts)
 }
 
@@ -57,94 +50,17 @@ pub fn build_connection_management_router(
         .with_state(accounts)
 }
 
-async fn well_known_caldav(State(accounts): State<CaldavAccountService>) -> Response {
-    (
-        StatusCode::MOVED_PERMANENTLY,
-        [(header::LOCATION, accounts.dav_root_url())],
-    )
-        .into_response()
-}
-
 async fn dav_root(State(accounts): State<CaldavAccountService>, request: Request) -> Response {
-    match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
-        PROPFIND => {
-            let Some(authorization) = request.headers().get(header::AUTHORIZATION) else {
-                return dav_unauthorized();
-            };
-            match accounts.authenticate(authorization).await {
-                Ok(session) => render_propfind(&accounts, &session),
-                Err(_) => dav_unauthorized(),
-            }
-        }
-        _ => method_not_allowed(),
+    if request.method().as_str() != PROPFIND {
+        return (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, PROPFIND)]).into_response();
     }
-}
-
-async fn dav_principal(
-    State(accounts): State<CaldavAccountService>,
-    Path(principal_id): Path<String>,
-    request: Request,
-) -> Response {
-    match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
-        PROPFIND => {
-            let Some(authorization) = request.headers().get(header::AUTHORIZATION) else {
-                return dav_unauthorized();
-            };
-            let Ok(session) = accounts.authenticate(authorization).await else {
-                return dav_unauthorized();
-            };
-            if depth_is_infinite(request.headers()) {
-                return (StatusCode::BAD_REQUEST, "Depth: infinity is not supported")
-                    .into_response();
-            }
-            let principal = match accounts.resolve_principal(&principal_id).await {
-                Ok(Some(principal)) => principal,
-                Ok(None) => return dav_not_found(),
-                Err(_) => return dav_server_error(),
-            };
-            if principal.user_id != session.user_id {
-                return dav_not_found();
-            }
-            render_principal(&accounts, &principal_id, &principal)
-        }
-        _ => method_not_allowed(),
+    let Some(authorization) = request.headers().get(header::AUTHORIZATION) else {
+        return dav_unauthorized();
+    };
+    match accounts.authenticate(authorization).await {
+        Ok(session) => render_propfind(&accounts, &session),
+        Err(_) => dav_unauthorized(),
     }
-}
-
-async fn dav_calendar_home(request: Request) -> Response {
-    match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
-        _ => method_not_allowed(),
-    }
-}
-
-fn dav_capabilities() -> Response {
-    (
-        StatusCode::OK,
-        [(DAV, DAV_CAPABILITIES), (header::ALLOW, DAV_ALLOW)],
-    )
-        .into_response()
-}
-
-fn method_not_allowed() -> Response {
-    (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, DAV_ALLOW)]).into_response()
-}
-
-fn dav_not_found() -> Response {
-    (StatusCode::NOT_FOUND, "principal not found").into_response()
-}
-
-fn dav_server_error() -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
-}
-
-fn depth_is_infinite(headers: &axum::http::HeaderMap) -> bool {
-    headers
-        .get("depth")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("infinity"))
 }
 
 fn dav_unauthorized() -> Response {
@@ -182,62 +98,6 @@ fn render_propfind(accounts: &CaldavAccountService, session: &DavSession) -> Res
         body,
     )
         .into_response()
-}
-
-fn render_principal(
-    accounts: &CaldavAccountService,
-    principal_id: &str,
-    principal: &PrincipalInfo,
-) -> Response {
-    let principal_url = accounts.principal_url(principal_id);
-    let calendar_home = accounts.calendar_home_url(principal_id);
-    let display_name = xml_escape(&principal.display_name);
-    let body = format!(
-        r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/dav/principals/{principal_id}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:principal-URL>
-          <D:href>{principal_url}</D:href>
-        </D:principal-URL>
-        <D:calendar-home-set>
-          <D:href>{calendar_home}</D:href>
-        </D:calendar-home-set>
-        <D:displayname>{display_name}</D:displayname>
-        <D:supported-report-set>
-          <D:report>
-            <D:name>calendar-query</D:name>
-          </D:report>
-          <D:report>
-            <D:name>calendar-multiget</D:name>
-          </D:report>
-          <D:report>
-            <D:name>sync-collection</D:name>
-          </D:report>
-        </D:supported-report-set>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#
-    );
-    (
-        StatusCode::MULTI_STATUS,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[derive(Deserialize)]
@@ -496,210 +356,5 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-    }
-
-    #[tokio::test]
-    async fn well_known_caldav_redirects_to_dav_root() {
-        let db = TestDb::new().await;
-        let key = SecretKey::generate();
-        let accounts = CaldavAccountService::new_at(
-            db.pool.clone(),
-            key,
-            url::Url::parse("http://127.0.0.1:3000").unwrap(),
-            1000,
-        );
-
-        let app = build_caldav_router(accounts);
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/.well-known/caldav")
-            .body(Body::empty())
-            .unwrap();
-        let response = app.oneshot(request).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
-        assert_eq!(
-            response.headers().get(header::LOCATION).unwrap(),
-            "http://127.0.0.1:3000/dav/"
-        );
-    }
-
-    async fn assert_options_capabilities(app: Router, uri: &str) {
-        let request = Request::builder()
-            .method(Method::OPTIONS)
-            .uri(uri)
-            .body(Body::empty())
-            .unwrap();
-        let response = app.oneshot(request).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK, "OPTIONS {uri}");
-        let dav = response.headers().get("dav").unwrap();
-        assert!(
-            dav.to_str().unwrap().contains("calendar-access"),
-            "OPTIONS {uri} should advertise calendar-access"
-        );
-        assert_eq!(
-            response.headers().get(header::ALLOW).unwrap(),
-            "PROPFIND, OPTIONS",
-            "OPTIONS {uri} should list only implemented methods"
-        );
-    }
-
-    #[tokio::test]
-    async fn options_advertises_only_implemented_dav_capabilities() {
-        let db = TestDb::new().await;
-        let key = SecretKey::generate();
-        let accounts = CaldavAccountService::new_at(
-            db.pool.clone(),
-            key,
-            url::Url::parse("http://127.0.0.1:3000").unwrap(),
-            1000,
-        );
-
-        let app = build_caldav_router(accounts);
-        assert_options_capabilities(app.clone(), "/dav/").await;
-        assert_options_capabilities(app.clone(), "/dav/principals/some-principal/").await;
-        assert_options_capabilities(app, "/dav/calendars/some-principal/").await;
-    }
-
-    #[tokio::test]
-    async fn principal_discovery_returns_calendar_home_for_authenticated_user() {
-        let db = TestDb::new().await;
-        let key = SecretKey::generate();
-        let accounts = CaldavAccountService::new_at(
-            db.pool.clone(),
-            key,
-            url::Url::parse("http://127.0.0.1:3000").unwrap(),
-            1000,
-        );
-        let user_id = db.insert_user("hank@example.test").await;
-        let issued = accounts
-            .issue_credential(user_id, "Phone".into())
-            .await
-            .unwrap();
-        let principal_id = accounts
-            .status(user_id)
-            .await
-            .unwrap()
-            .principal_id
-            .unwrap();
-
-        let app = build_caldav_router(accounts);
-        let request = Request::builder()
-            .method(Method::from_bytes(b"PROPFIND").unwrap())
-            .uri(format!("/dav/principals/{principal_id}/"))
-            .header(
-                header::AUTHORIZATION,
-                basic_header("hank@example.test", issued.password.expose()),
-            )
-            .body(Body::empty())
-            .unwrap();
-        let response = app.oneshot(request).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::MULTI_STATUS);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("<D:principal-URL>"));
-        assert!(text.contains("<D:calendar-home-set>"));
-        assert!(text.contains("/dav/calendars/"));
-        assert!(text.contains("<D:displayname>"));
-        assert!(text.contains("calendar-query"));
-        assert!(text.contains("calendar-multiget"));
-        assert!(text.contains("sync-collection"));
-    }
-
-    #[tokio::test]
-    async fn unknown_principal_and_calendar_do_not_leak_cross_user_existence() {
-        let db = TestDb::new().await;
-        let key = SecretKey::generate();
-        let accounts = CaldavAccountService::new_at(
-            db.pool.clone(),
-            key,
-            url::Url::parse("http://127.0.0.1:3000").unwrap(),
-            1000,
-        );
-        let owner_id = db.insert_user("owner@example.test").await;
-        let intruder_id = db.insert_user("intruder@example.test").await;
-        let owner_issued = accounts
-            .issue_credential(owner_id, "Phone".into())
-            .await
-            .unwrap();
-        let intruder_issued = accounts
-            .issue_credential(intruder_id, "Phone".into())
-            .await
-            .unwrap();
-        let owner_principal = accounts
-            .status(owner_id)
-            .await
-            .unwrap()
-            .principal_id
-            .unwrap();
-
-        let app = build_caldav_router(accounts);
-        let cross_user = Request::builder()
-            .method(Method::from_bytes(b"PROPFIND").unwrap())
-            .uri(format!("/dav/principals/{owner_principal}/"))
-            .header(
-                header::AUTHORIZATION,
-                basic_header("intruder@example.test", intruder_issued.password.expose()),
-            )
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(
-            app.clone().oneshot(cross_user).await.unwrap().status(),
-            StatusCode::NOT_FOUND
-        );
-
-        let unknown = Request::builder()
-            .method(Method::from_bytes(b"PROPFIND").unwrap())
-            .uri("/dav/principals/00000000-0000-0000-0000-000000000000/")
-            .header(
-                header::AUTHORIZATION,
-                basic_header("owner@example.test", owner_issued.password.expose()),
-            )
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(
-            app.oneshot(unknown).await.unwrap().status(),
-            StatusCode::NOT_FOUND
-        );
-    }
-
-    #[tokio::test]
-    async fn propfind_rejects_infinite_depth() {
-        let db = TestDb::new().await;
-        let key = SecretKey::generate();
-        let accounts = CaldavAccountService::new_at(
-            db.pool.clone(),
-            key,
-            url::Url::parse("http://127.0.0.1:3000").unwrap(),
-            1000,
-        );
-        let user_id = db.insert_user("ivy@example.test").await;
-        let issued = accounts
-            .issue_credential(user_id, "Phone".into())
-            .await
-            .unwrap();
-        let principal_id = accounts
-            .status(user_id)
-            .await
-            .unwrap()
-            .principal_id
-            .unwrap();
-
-        let app = build_caldav_router(accounts);
-        let request = Request::builder()
-            .method(Method::from_bytes(b"PROPFIND").unwrap())
-            .uri(format!("/dav/principals/{principal_id}/"))
-            .header(
-                header::AUTHORIZATION,
-                basic_header("ivy@example.test", issued.password.expose()),
-            )
-            .header("depth", "infinity")
-            .body(Body::empty())
-            .unwrap();
-        let response = app.oneshot(request).await.unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

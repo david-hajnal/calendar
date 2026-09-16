@@ -279,17 +279,11 @@ pub async fn list_calendars_for_mcp(
     Path(user_id): Path<i64>,
 ) -> Result<Json<Vec<CalendarInfoResponse>>, (StatusCode, String)> {
     let calendars = sqlx::query_as::<_, (i64, String, Option<String>, String)>(
-        "SELECT c.id, c.name, c.description, ca.role 
-         FROM calendars c 
-         JOIN calendar_owners co ON c.id = co.calendar_id 
-         WHERE co.user_id = ? 
-         UNION 
-         SELECT c.id, c.name, c.description, ca.role 
-         FROM calendars c 
-         JOIN calendar_acl ca ON c.id = ca.calendar_id 
+        "SELECT c.id, c.name, c.description, ca.role
+         FROM calendars c
+         JOIN calendar_acl ca ON c.id = ca.calendar_id
          WHERE ca.user_id = ?",
     )
-    .bind(user_id)
     .bind(user_id)
     .fetch_all(&pool)
     .await

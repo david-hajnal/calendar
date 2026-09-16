@@ -2494,7 +2494,7 @@ async fn access_log_middleware(
     response
 }
 
-async fn authenticated_session(
+pub(crate) async fn authenticated_session(
     State(manager): State<SessionManager>,
     mut request: Request<axum::body::Body>,
     next: Next,
@@ -3138,7 +3138,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn unauthorized() -> Self {
+    pub(crate) fn unauthorized() -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
@@ -3165,7 +3165,7 @@ impl ApiError {
         }
     }
 
-    fn not_found() -> Self {
+    pub(crate) fn not_found() -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             code: "not_found",
@@ -3174,7 +3174,7 @@ impl ApiError {
         }
     }
 
-    fn bad_request() -> Self {
+    pub(crate) fn bad_request() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             code: "invalid_request",
@@ -3219,7 +3219,7 @@ impl ApiError {
         }
     }
 
-    fn rate_limited() -> Self {
+    pub(crate) fn rate_limited() -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             code: "rate_limited",
@@ -3238,7 +3238,7 @@ impl ApiError {
         }
     }
 
-    fn internal() -> Self {
+    pub(crate) fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error",
@@ -3247,7 +3247,7 @@ impl ApiError {
         }
     }
 
-    fn service_unavailable() -> Self {
+    pub(crate) fn service_unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "service_unavailable",

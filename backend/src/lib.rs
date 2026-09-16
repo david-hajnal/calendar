@@ -3,6 +3,7 @@ pub mod admin_invitation_rate_limit;
 pub mod authorization;
 pub mod backup;
 pub mod bootstrap;
+pub mod caldav;
 pub mod calendar;
 pub mod config;
 pub mod database;

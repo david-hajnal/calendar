@@ -9,6 +9,7 @@ import { CompositeViewManagement } from "./calendar/CompositeViewManagement";
 import { listCalendars } from "./calendar/api";
 import type { Calendar } from "./calendar/CalendarManagement";
 import { PublicViewPage } from "./public/PublicView";
+import { CalendarConnections } from "./settings/CalendarConnections";
 import { NotificationDropdown } from "./notification/NotificationDropdown";
 import { listNotifications } from "./notification/api";
 import { DevLoginPage } from "./dev-login";
@@ -296,7 +297,7 @@ function AuthenticatedShell() {
 
   const name = state.session.user.display_name ?? state.session.user.email;
   const initials = name.split(/[\s.]+/).slice(0, 2).map((n) => n[0]).join('').toUpperCase().slice(0, 2);
-  const activeTab = window.location.pathname === "/calendars" ? "calendars" : window.location.pathname === "/shared" ? "shared" : "calendar";
+  const activeTab = window.location.pathname === "/calendars" ? "calendars" : window.location.pathname === "/shared" ? "shared" : window.location.pathname === "/settings/calendar-connections" ? "settings" : "calendar";
 
   return <main className="app-shell">
     {/* Fixed top header */}
@@ -313,7 +314,7 @@ function AuthenticatedShell() {
       </nav>}
       <div className="app-header__actions">
         <NotificationDropdown api={api} />
-        <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Settings"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
+        <button className={`app-nav__button app-nav__button--quiet ${activeTab === "settings" ? "app-nav__button--active" : ""}`} type="button" aria-label="Settings" onClick={() => navigate("/settings/calendar-connections")}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
         <ThemeToggle />
         <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}<span className="avatar__name">{name}</span><span className="avatar__email">{state.session.user.email}</span></div>
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Sign out" onClick={() => void logout()}>
@@ -339,7 +340,8 @@ function AuthenticatedShell() {
     <div className="app-shell__content">
       {window.location.pathname === "/calendars" && <CalendarManagement api={api} />}
       {window.location.pathname === "/shared" && <CompositeViewManagement api={api} />}
-      {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && <CalendarPage api={api} />}
+      {window.location.pathname === "/settings/calendar-connections" && <CalendarConnections api={api} />}
+      {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && window.location.pathname !== "/settings/calendar-connections" && <CalendarPage api={api} />}
     </div>
   </main>;
 }

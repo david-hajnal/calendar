@@ -435,6 +435,139 @@ impl EventService {
         Ok(projection)
     }
 
+    pub async fn create_batch(
+        &self,
+        actor_user_id: i64,
+        is_superadmin: bool,
+        calendar_id: i64,
+        batch: EventCreateBatch,
+    ) -> Result<EventCreateBatchResult, EventServiceError> {
+        validate_create_batch(&batch)?;
+        let now = (self.clock)();
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        authorize_in_transaction(
+            &mut transaction,
+            actor_user_id,
+            is_superadmin,
+            calendar_id,
+            CalendarAction::CreateEvent,
+        )
+        .await?;
+
+        let mut event_ids = Vec::with_capacity(batch.events.len());
+        let mut exception_count = 0;
+        for item in batch.events {
+            let timing = StoredTiming::from(&item.event.timing);
+            let result = sqlx::query(
+                "INSERT INTO events (
+                    calendar_id, title, description, location, status, event_kind,
+                    timed_start_utc, timed_end_utc, event_timezone,
+                    all_day_start_date, all_day_end_date, created_by_user_id,
+                    last_edited_by_user_id, version, created_at, updated_at, recurrence_rule
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            )
+            .bind(calendar_id)
+            .bind(&item.event.title)
+            .bind(&item.event.description)
+            .bind(&item.event.location)
+            .bind(item.event.status.as_str())
+            .bind(timing.kind)
+            .bind(timing.timed_start_utc)
+            .bind(timing.timed_end_utc)
+            .bind(timing.timezone)
+            .bind(timing.all_day_start_date)
+            .bind(timing.all_day_end_date)
+            .bind(actor_user_id)
+            .bind(actor_user_id)
+            .bind(now)
+            .bind(now)
+            .bind(&item.recurrence_rule)
+            .execute(&mut *transaction)
+            .await?;
+            let event_id = result.last_insert_rowid();
+
+            for exception in item.exceptions {
+                let (recurrence_id, recurrence_date) = match exception.recurrence {
+                    EventRecurrenceKey::Timed(value) => (Some(value), None),
+                    EventRecurrenceKey::AllDay(value) => (None, Some(value)),
+                };
+                let replacement = exception.replacement.as_ref();
+                let replacement_timing = replacement.map(|event| StoredTiming::from(&event.timing));
+                sqlx::query(
+                    "INSERT INTO event_recurrence_exceptions (
+                        series_id, recurrence_id, recurrence_date, is_deleted,
+                        title, description, location, status,
+                        timed_start_utc, timed_end_utc, event_timezone,
+                        all_day_start_date, all_day_end_date,
+                        last_edited_by_user_id, created_at, updated_at
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(event_id)
+                .bind(recurrence_id)
+                .bind(recurrence_date)
+                .bind(i64::from(replacement.is_none()))
+                .bind(replacement.map(|event| event.title.as_str()))
+                .bind(replacement.and_then(|event| event.description.as_deref()))
+                .bind(replacement.and_then(|event| event.location.as_deref()))
+                .bind(replacement.map(|event| event.status.as_str()))
+                .bind(
+                    replacement_timing
+                        .as_ref()
+                        .and_then(|timing| timing.timed_start_utc),
+                )
+                .bind(
+                    replacement_timing
+                        .as_ref()
+                        .and_then(|timing| timing.timed_end_utc),
+                )
+                .bind(
+                    replacement_timing
+                        .as_ref()
+                        .and_then(|timing| timing.timezone.as_deref()),
+                )
+                .bind(
+                    replacement_timing
+                        .as_ref()
+                        .and_then(|timing| timing.all_day_start_date.as_deref()),
+                )
+                .bind(
+                    replacement_timing
+                        .as_ref()
+                        .and_then(|timing| timing.all_day_end_date.as_deref()),
+                )
+                .bind(actor_user_id)
+                .bind(now)
+                .bind(now)
+                .execute(&mut *transaction)
+                .await?;
+                exception_count += 1;
+            }
+
+            insert_event_audit(
+                &mut transaction,
+                actor_user_id,
+                if item.recurrence_rule.is_some() {
+                    "event.series.create"
+                } else {
+                    "event.create"
+                },
+                event_id,
+                now,
+            )
+            .await?;
+            event_ids.push(event_id);
+        }
+
+        transaction.commit().await?;
+        for event_id in &event_ids {
+            self.notification_replanner.send(*event_id).await;
+        }
+        Ok(EventCreateBatchResult {
+            event_ids,
+            exception_count,
+        })
+    }
+
     pub async fn get(
         &self,
         actor_user_id: i64,
@@ -1447,13 +1580,84 @@ fn validate_mutation(event: &EventMutation) -> Result<(), EventServiceError> {
     validate_timing(&event.timing).map_err(|_| EventServiceError::InvalidInput)
 }
 
-#[derive(Clone, Debug)]
+fn validate_create_batch(batch: &EventCreateBatch) -> Result<(), EventServiceError> {
+    if batch.events.is_empty() {
+        return Err(EventServiceError::InvalidInput);
+    }
+    for item in &batch.events {
+        validate_mutation(&item.event)?;
+        if let Some(rule) = &item.recurrence_rule {
+            validate_recurrence(&item.event, rule)?;
+        } else if !item.exceptions.is_empty() {
+            return Err(EventServiceError::InvalidInput);
+        }
+        let mut keys = HashSet::with_capacity(item.exceptions.len());
+        for exception in &item.exceptions {
+            if !keys.insert(&exception.recurrence) {
+                return Err(EventServiceError::InvalidInput);
+            }
+            let key_matches = matches!(
+                (&item.event.timing, &exception.recurrence),
+                (EventTiming::Timed { .. }, EventRecurrenceKey::Timed(_))
+                    | (EventTiming::AllDay { .. }, EventRecurrenceKey::AllDay(_))
+            );
+            if !key_matches {
+                return Err(EventServiceError::InvalidInput);
+            }
+            if let EventRecurrenceKey::AllDay(date) = &exception.recurrence {
+                NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .map_err(|_| EventServiceError::InvalidInput)?;
+            }
+            if let Some(replacement) = &exception.replacement {
+                validate_mutation(replacement)?;
+                if std::mem::discriminant(&item.event.timing)
+                    != std::mem::discriminant(&replacement.timing)
+                {
+                    return Err(EventServiceError::InvalidInput);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventMutation {
     pub title: String,
     pub description: Option<String>,
     pub location: Option<String>,
     pub status: EventStatus,
     pub timing: EventTiming,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventCreateBatch {
+    pub events: Vec<EventCreateItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventCreateItem {
+    pub event: EventMutation,
+    pub recurrence_rule: Option<String>,
+    pub exceptions: Vec<EventCreateException>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventCreateException {
+    pub recurrence: EventRecurrenceKey,
+    pub replacement: Option<EventMutation>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum EventRecurrenceKey {
+    Timed(i64),
+    AllDay(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EventCreateBatchResult {
+    pub event_ids: Vec<i64>,
+    pub exception_count: usize,
 }
 
 #[derive(Clone, Debug)]

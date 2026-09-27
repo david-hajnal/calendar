@@ -14,6 +14,7 @@ pub mod http;
 pub mod ics;
 pub mod ics_generator;
 pub mod ics_http;
+pub mod ics_import;
 pub mod identity;
 pub mod invitations;
 pub mod login;

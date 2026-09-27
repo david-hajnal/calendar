@@ -1,37 +1,48 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 
 import { messages } from "../support/mailbox";
 
-const exec = promisify(execFile);
-const outbox = process.env.E2E_EMAIL_OUTBOX ?? ".e2e/outbox.ndjson";
-const database = process.env.DATABASE_PATH ?? ".e2e/commoncal.sqlite";
-const sessionSecret = process.env.E2E_SESSION_SECRET ?? "commoncal-e2e-session-secret";
+const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100";
+const outbox = process.env.E2E_EMAIL_OUTBOX
+  ?? new URL("../../.e2e/outbox.ndjson", import.meta.url).pathname;
 
 type Auth = { csrf: string; request: APIRequestContext };
 type User = { id: number; email: string };
-
-async function bootstrap(email: string) {
-  const { stdout } = await exec("cargo", ["run", "--quiet", "--manifest-path", "backend/Cargo.toml", "--", "bootstrap-superadmin", email, "E2E Admin"], {
-    env: { ...process.env, APP_ENV: "development", DATABASE_PATH: database, SESSION_SECRET: sessionSecret },
-  });
-  const token = /^token=(.+)$/m.exec(stdout)?.[1];
-  if (!token) throw new Error("Bootstrap did not return an invitation token");
-  return token;
-}
 
 async function activate(page: Page, path: string): Promise<Auth> {
   const completed = page.waitForResponse((response) => response.url().includes("/consume") && response.request().method() === "POST");
   await page.goto(path);
   const response = await completed;
-  await expect(page.getByRole("heading", { name: "CommonCal" })).toBeVisible();
-  return { csrf: (await response.json() as { csrf_token: string }).csrf_token, request: page.context().request };
+  const csrf = (await response.json() as { csrf_token: string }).csrf_token;
+  await expect(page.getByText("Invitation accepted. You are signed in.")).toBeVisible();
+  return { csrf, request: page.context().request };
+}
+
+async function loginDefaultAdmin(page: Page): Promise<Auth> {
+  const response = await page.context().request.post("/api/v1/auth/password-login", {
+    data: { email: "admin@localhost", password: "admin-default-password-2026" },
+  });
+  await expect(response).toBeOK();
+  const { csrf_token } = await response.json() as { csrf_token: string };
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Calendars" })).toBeVisible();
+  return { csrf: csrf_token, request: page.context().request };
+}
+
+async function loginDevelopmentUser(page: Page, email: string) {
+  await page.goto(`/dev/login?email=${encodeURIComponent(email)}&display_name=E2E%20Member`);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("button", { name: "Calendars" })).toBeVisible();
 }
 
 async function post<T>(auth: Auth, path: string, data?: unknown): Promise<T> {
-  const response = await auth.request.post(path, { headers: { "x-csrf-token": auth.csrf }, data });
+  const response = await auth.request.post(path, { headers: { "x-csrf-token": auth.csrf, origin: baseURL, "sec-fetch-site": "same-origin" }, data });
+  await expect(response).toBeOK();
+  return response.json() as Promise<T>;
+}
+
+async function patch<T>(auth: Auth, path: string, data: unknown): Promise<T> {
+  const response = await auth.request.patch(path, { headers: { "x-csrf-token": auth.csrf, origin: baseURL, "sec-fetch-site": "same-origin" }, data });
   await expect(response).toBeOK();
   return response.json() as Promise<T>;
 }
@@ -49,21 +60,21 @@ async function invitationToken(email: string) {
 }
 
 test.describe("desktop MVP journey", () => {
-  test.skip(({ browserName }) => browserName !== "chromium", "Chromium journey");
+  test.skip(({ browserName }) => browserName !== "firefox", "Firefox desktop journey");
 
-  test("bootstrap, collaboration, publication, controlled ICS, notification delivery, and mobile primary views", async ({ browser, page }, testInfo) => {
+  test("authentication, collaboration, publication, ICS import and feed handling, notification delivery, and mobile primary views", async ({ browser, page }, testInfo) => {
+    test.setTimeout(60_000);
     test.skip(testInfo.project.name !== "desktop", "mobile coverage runs from the isolated desktop fixture");
     const suffix = testInfo.project.name;
-    const superadmin = `admin.${suffix}@e2e.example.test`;
     const member = `member.${suffix}@e2e.example.test`;
-    const adminToken = await bootstrap(superadmin);
-    const admin = await activate(page, `/invitations/consume?token=${encodeURIComponent(adminToken)}`);
+    const admin = await loginDefaultAdmin(page);
 
     await post<{ id: number }>(admin, "/api/v1/admin/invitations", { email: member, display_name: "E2E Member" });
     const memberToken = await invitationToken(member);
     const memberContext: BrowserContext = await browser.newContext();
     const memberPage = await memberContext.newPage();
     const memberAuth = await activate(memberPage, `/invitations/consume?token=${encodeURIComponent(memberToken)}`);
+    await loginDevelopmentUser(memberPage, member);
     const users = await get<User[]>(admin, "/api/v1/admin/users");
     const memberUser = users.find((user) => user.email === member);
     expect(memberUser).toBeDefined();
@@ -87,6 +98,33 @@ test.describe("desktop MVP journey", () => {
     await post(admin, `/api/v1/external-feeds/${feed.id}/refresh`);
     const imported = await get<Array<{ title: string; read_only?: boolean; is_external?: boolean }>>(admin, `/api/v1/calendars/${calendar.id}/events?from=${Date.UTC(2026, 0, 1) / 1000}&to=${Date.UTC(2026, 1, 1) / 1000}`);
     expect(imported).toContainEqual(expect.objectContaining({ title: "Imported E2E event", read_only: true, is_external: true }));
+
+    await memberPage.goto("/calendars");
+    await memberPage.getByRole("button", { name: "Import ICS to E2E Team" }).click();
+    await memberPage.getByLabel("ICS file").setInputFiles(new URL("../support/import.ics", import.meta.url).pathname);
+    await memberPage.getByRole("button", { name: "Import", exact: true }).click();
+    await expect(memberPage.getByRole("status")).toHaveText("2 events imported");
+    await memberPage.getByRole("button", { name: "Done" }).click();
+
+    const nativeImported = await get<Array<{
+      id: number; title?: string; version?: number; event_kind?: string; start_utc?: number; end_utc?: number;
+      timezone?: string; start_date?: string; end_date?: string; read_only?: boolean; is_external?: boolean;
+    }>>(memberAuth, `/api/v1/calendars/${calendar.id}/events?from=${Date.UTC(2026, 7, 1) / 1000}&to=${Date.UTC(2026, 8, 1) / 1000}`);
+    const timedImported = nativeImported.find((item) => item.title === "ICS import timed event");
+    const allDayImported = nativeImported.find((item) => item.title === "ICS import all-day event");
+    expect(timedImported).toEqual(expect.objectContaining({ event_kind: "timed", is_external: undefined, read_only: undefined }));
+    expect(allDayImported).toEqual(expect.objectContaining({ event_kind: "all_day", is_external: undefined, read_only: undefined }));
+
+    await patch(memberAuth, `/api/v1/calendars/${calendar.id}/events/${timedImported!.id}`, {
+      calendar_id: calendar.id, version: timedImported!.version, title: "ICS import timed event (edited)",
+      description: "Native timed event fixture", location: "E2E room", status: "confirmed",
+      start_utc: timedImported!.start_utc, end_utc: timedImported!.end_utc, timezone: timedImported!.timezone,
+    });
+    await patch(memberAuth, `/api/v1/calendars/${calendar.id}/events/${allDayImported!.id}`, {
+      calendar_id: calendar.id, version: allDayImported!.version, title: "ICS import all-day event (edited)",
+      description: "Native all-day event fixture", location: null, status: "confirmed",
+      start_date: allDayImported!.start_date, end_date: allDayImported!.end_date,
+    });
 
     // The notification support endpoint is development-only. It makes notification display
     // observable without waiting for the production worker's periodic schedule.

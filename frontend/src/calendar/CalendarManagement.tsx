@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 import type { ApiClient } from "../auth/api";
-import { archiveCalendar, createCalendar, deleteCalendar as deleteCalendarRequest, isCalendarAccessChange, listCalendarAcl, listCalendars, restoreCalendar, revokeCalendarAcl, setCalendarAcl, transferCalendarOwnership, updateCalendar, type CalendarAclEntry, type ShareableCalendarRole } from "./api";
+import { archiveCalendar, createCalendar, deleteCalendar as deleteCalendarRequest, IcsImportApiError, importIcs, isCalendarAccessChange, listCalendarAcl, listCalendars, restoreCalendar, revokeCalendarAcl, setCalendarAcl, transferCalendarOwnership, updateCalendar, type CalendarAclEntry, type IcsImportSummary, type ShareableCalendarRole } from "./api";
 import "./CalendarManagement.css";
 
 export type CalendarRole = "owner" | "manager" | "editor" | "viewer" | "free_busy_viewer";
@@ -46,6 +46,10 @@ function payload(settings: CalendarSettings) {
 
 function canManage(calendar: Calendar) {
   return calendar.access === "details" && (calendar.role === "owner" || calendar.role === "manager");
+}
+
+function canCreateEvents(calendar: Calendar) {
+  return calendar.access === "details" && (calendar.role === "owner" || calendar.role === "manager" || calendar.role === "editor");
 }
 
 function canDelete(calendar: Calendar) {
@@ -284,13 +288,115 @@ function CalendarFormModal({ editing, settings, setSettings, onSave, onCancel, s
   </div>;
 }
 
-function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete, triggerRef }: {
+const MAX_ICS_FILE_BYTES = 1_048_576;
+
+function IcsImportDialog({ api, calendar, onClose, onAccessDenied, triggerEl }: {
+  api: ApiClient;
+  calendar: Calendar;
+  onClose: () => void;
+  onAccessDenied: () => void;
+  triggerEl: HTMLButtonElement | null;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [summary, setSummary] = useState<IcsImportSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeButton.current?.focus();
+    return () => { triggerEl?.focus(); };
+  }, [triggerEl]);
+
+  function close() {
+    if (!submitting) onClose();
+  }
+
+  function selectFile(selected: File | undefined) {
+    setSummary(null);
+    if (!selected) {
+      setFile(null);
+      setError("Choose an ICS file to import.");
+    } else if (!selected.name.toLowerCase().endsWith(".ics")) {
+      setFile(null);
+      setError("Choose a file whose name ends in .ics.");
+    } else if (selected.size > MAX_ICS_FILE_BYTES) {
+      setFile(null);
+      setError("Choose an ICS file that is 1 MiB or smaller.");
+    } else {
+      setFile(selected);
+      setError(null);
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (file === null || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      setSummary(await importIcs(api, calendar.id, file));
+    } catch (reason) {
+      if (isCalendarAccessChange(reason)) {
+        onAccessDenied();
+        return;
+      }
+      if (reason instanceof IcsImportApiError && reason.code === "invalid_calendar_file") {
+        setError("This file is not a valid supported ICS calendar. Choose a different calendar export.");
+      } else if (reason instanceof IcsImportApiError && reason.code === "calendar_import_limit_exceeded") {
+        setError("This calendar exceeds the import limits of 1 MiB or 1,000 events.");
+      } else {
+        setError("We could not import this calendar. Please try again.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return <div className="ics-import-dialog" role="dialog" aria-modal="true" aria-labelledby="ics-import-heading"
+    onKeyDown={(event) => { if (event.key === "Escape" && !submitting) { event.preventDefault(); onClose(); } }}>
+    <div className="ics-import-dialog__card">
+      <div className="ics-import-dialog__header">
+        <h3 id="ics-import-heading">Import ICS to {calendar.name ?? "calendar"}</h3>
+        <button ref={closeButton} className="ics-import-dialog__close" type="button" onClick={close} disabled={submitting} aria-label="Close import">
+          <span className="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+      </div>
+      {summary === null ? <form onSubmit={(event) => void submit(event)}>
+        <div className="ics-import-dialog__body">
+          <label className="ics-import-dialog__file-field">ICS file
+            <input type="file" accept=".ics,text/calendar" disabled={submitting}
+              onChange={(event) => selectFile(event.currentTarget.files?.[0])} />
+          </label>
+          <p className="ics-import-dialog__help">Import one .ics file up to 1 MiB and 1,000 events. Imported events will be editable.</p>
+          {submitting && <p className="ics-import-dialog__progress" role="status">Importing calendar…</p>}
+          {error && <p className="ics-import-dialog__error" role="alert">{error}</p>}
+        </div>
+        <div className="ics-import-dialog__footer">
+          <button className="btn-cancel" type="button" onClick={close} disabled={submitting}>Cancel</button>
+          <button className="btn-primary" type="submit" disabled={file === null || submitting}>{submitting ? "Importing…" : "Import"}</button>
+        </div>
+      </form> : <>
+        <div className="ics-import-dialog__body">
+          <p className="ics-import-dialog__success" role="status">{summary.imported_events} {summary.imported_events === 1 ? "event" : "events"} imported</p>
+        </div>
+        <div className="ics-import-dialog__footer">
+          <button className="btn-primary" type="button" onClick={onClose}>Done</button>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
+function CalendarCard({ calendar, onEdit, onShare, onImport, onArchive, onDelete, shareTriggerRef, importTriggerRef }: {
   calendar: Calendar;
   onEdit: () => void;
   onShare: () => void;
+  onImport: () => void;
   onArchive: () => void;
   onDelete?: () => void;
-  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  shareTriggerRef: React.RefObject<HTMLButtonElement | null>;
+  importTriggerRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const archived = !!calendar.archived;
   const color = calendar.color || "#3b82f6";
@@ -312,8 +418,11 @@ function CalendarCard({ calendar, onEdit, onShare, onArchive, onDelete, triggerR
           {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={onEdit} aria-label={`Edit ${calendar.name ?? "calendar"}`} title="Edit">
             <span className="material-symbols-outlined">edit</span>
           </button>}
-          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={(e) => { triggerRef.current = e.currentTarget; onShare(); }} aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} title="Sharing">
+          {canManage(calendar) && <button className="calendar-card__action-btn" type="button" onClick={(e) => { shareTriggerRef.current = e.currentTarget; onShare(); }} aria-label={`Manage sharing for ${calendar.name ?? "calendar"}`} title="Sharing">
             <span className="material-symbols-outlined">group</span>
+          </button>}
+          {!archived && canCreateEvents(calendar) && <button className="calendar-card__action-btn calendar-card__import-btn" type="button" onClick={(event) => { importTriggerRef.current = event.currentTarget; onImport(); }} aria-label={`Import ICS to ${calendar.name ?? "calendar"}`} title="Import ICS">
+            <span className="material-symbols-outlined" aria-hidden="true">upload_file</span>
           </button>}
         </div>
         {archived ? <>
@@ -341,7 +450,9 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
   const [settings, setSettings] = useState<CalendarSettings>(blankSettings);
   const [submitting, setSubmitting] = useState(false);
   const [sharing, setSharing] = useState<Calendar | null>(null);
+  const [importing, setImporting] = useState<Calendar | null>(null);
   const shareTrigger = useRef<HTMLButtonElement>(null);
+  const importTrigger = useRef<HTMLButtonElement>(null);
   const prevSharingRef = useRef<Calendar | null>(null);
 
   useEffect(() => {
@@ -371,7 +482,7 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
   function openEdit(calendar: Calendar) { setError(null); setSettings(settingsFor(calendar)); setEditing(calendar); }
   function replace(calendar: Calendar) { setCalendars((current) => current.map((item) => item.id === calendar.id ? calendar : item)); }
   const refreshAfterAccessChange = useCallback(async () => {
-    setEditing(undefined); setSharing(null);
+    setEditing(undefined); setSharing(null); setImporting(null);
     try { setCalendars(await listCalendars(api)); }
     catch { setCalendars([]); }
     setError("Your calendar access changed. The list was refreshed.");
@@ -435,8 +546,10 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
       {activeCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
         onEdit={() => openEdit(calendar)}
         onShare={() => { setSharing(calendar); }}
+        onImport={() => { setImporting(calendar); }}
         onArchive={() => void setArchived(calendar, true)}
-        triggerRef={shareTrigger}
+        shareTriggerRef={shareTrigger}
+        importTriggerRef={importTrigger}
       />)}
     </div>
 
@@ -445,8 +558,10 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
       {archivedCalendars.map((calendar) => <CalendarCard key={calendar.id} calendar={calendar}
         onEdit={() => openEdit(calendar)}
         onShare={() => { setSharing(calendar); }}
+        onImport={() => { setImporting(calendar); }}
         onArchive={() => void setArchived(calendar, false)}
-        triggerRef={shareTrigger}
+        shareTriggerRef={shareTrigger}
+        importTriggerRef={importTrigger}
         onDelete={() => void deleteCalendar(calendar)}
       />)}
     </div>
@@ -462,5 +577,6 @@ export function CalendarManagement({ api }: { api: ApiClient }) {
     </div>}
 
     {sharing && <SharingDialog api={api} calendar={sharing} onClose={() => setSharing(null)} onCalendarChanged={(calendar) => { replace(calendar); setSharing(calendar); }} onAccessDenied={() => { void refreshAfterAccessChange(); }} triggerEl={shareTrigger.current} />}
+    {importing && <IcsImportDialog api={api} calendar={importing} onClose={() => setImporting(null)} onAccessDenied={() => { void refreshAfterAccessChange(); }} triggerEl={importTrigger.current} />}
   </section>;
 }

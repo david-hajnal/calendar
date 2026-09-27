@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { archiveCalendar, configureCompositeViewPublication, createCalendar, createCompositeView, createCompositeViewPublication, createEvent, deleteEventOccurrence, listCalendars, listCompositeViews, listExpandedEvents, replaceCompositeViewCalendars, restoreCalendar, rotateCompositeViewPublication, updateCalendar, updateCompositeView, updateEventOccurrence } from "./api";
+import { archiveCalendar, configureCompositeViewPublication, createCalendar, createCompositeView, createCompositeViewPublication, createEvent, deleteEventOccurrence, importIcs, IcsImportApiError, listCalendars, listCompositeViews, listExpandedEvents, replaceCompositeViewCalendars, restoreCalendar, rotateCompositeViewPublication, updateCalendar, updateCompositeView, updateEventOccurrence } from "./api";
 import type { ApiClient } from "../auth/api";
 
 function client() {
@@ -79,5 +79,49 @@ describe("event API", () => {
     expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/2/events", expect.objectContaining({ method: "POST", body: JSON.stringify({ ...timedEvent, recurrence_rule: "FREQ=DAILY;COUNT=2" }) }));
     expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/2/events/3/occurrences/1750000100", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ version: 4, ...timedEvent }) }));
     expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/2/events/3/occurrences/1750000100", expect.objectContaining({ method: "DELETE", body: JSON.stringify({ version: 4 }) }));
+  });
+});
+
+describe("ICS import API", () => {
+  it("posts the unmodified File as calendar content and returns typed counts", async () => {
+    const api = client();
+    const file = new File(["BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"], "calendar.ics", { type: "text/calendar" });
+    vi.mocked(api.request).mockResolvedValue(new Response(JSON.stringify({ imported_events: 2, imported_exceptions: 1 }), { status: 201 }));
+
+    await expect(importIcs(api, 7, file)).resolves.toEqual({ imported_events: 2, imported_exceptions: 1 });
+    expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/7/import-ics", {
+      method: "POST",
+      headers: { "content-type": "text/calendar; charset=utf-8" },
+      body: file,
+    });
+  });
+
+  it.each(["invalid_calendar_file", "calendar_import_limit_exceeded"] as const)(
+    "returns the recognized %s failure code",
+    async (code) => {
+      const api = client();
+      vi.mocked(api.request).mockResolvedValue(new Response(JSON.stringify({ error: { code, message: "private backend detail" } }), { status: 400 }));
+
+      const failure = await importIcs(api, 7, new File(["invalid"], "calendar.ics")).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(IcsImportApiError);
+      expect(failure).toMatchObject({ status: 400, code });
+      expect((failure as Error).message).not.toContain("private backend detail");
+    },
+  );
+
+  it.each([
+    ["an unknown code", JSON.stringify({ error: { code: "database_error", message: "private backend detail" } })],
+    ["a malformed envelope", JSON.stringify({ error: "private backend detail" })],
+    ["a non-JSON body", "private backend detail"],
+  ])("maps %s to a safe unknown failure without surfacing server text", async (_description, body) => {
+    const api = client();
+    vi.mocked(api.request).mockResolvedValue(new Response(body, { status: 500 }));
+
+    const failure = await importIcs(api, 7, new File(["invalid"], "calendar.ics")).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(IcsImportApiError);
+    expect(failure).toMatchObject({ status: 500, code: "unknown" });
+    expect((failure as Error).message).not.toContain("private backend detail");
   });
 });

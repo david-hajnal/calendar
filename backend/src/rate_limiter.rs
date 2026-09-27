@@ -236,6 +236,17 @@ pub fn write_endpoint_tier(method: &str, path: &str) -> Option<RateLimitTier> {
         }
     }
 
+    // `*/calendars/*/import-ics` + POST → Standard
+    for i in 0..segments.len().saturating_sub(2) {
+        if segments[i] == "calendars"
+            && (is_param(segments[i + 1]) || segments[i + 1].parse::<i64>().is_ok())
+            && matches(segments[i + 2], "import-ics")
+            && method == "POST"
+        {
+            return Some(RateLimitTier::Standard);
+        }
+    }
+
     // `*/calendars` + (POST/PATCH/DELETE) → Permissive
     if segments.len() >= 2 && segments.last() == Some(&"calendars") && method != "GET" {
         return Some(RateLimitTier::Permissive);
@@ -412,6 +423,23 @@ mod tests {
     fn test_write_endpoint_tier_standard_feed() {
         let tier = write_endpoint_tier("DELETE", "/api/v1/calendars/:id/external-feeds/:feed_id");
         assert_eq!(tier, Some(RateLimitTier::Standard));
+    }
+
+    #[test]
+    fn test_write_endpoint_tier_standard_ics_import() {
+        for path in [
+            "/api/v1/calendars/:id/import-ics",
+            "/api/v1/calendars/42/import-ics",
+        ] {
+            assert_eq!(
+                write_endpoint_tier("POST", path),
+                Some(RateLimitTier::Standard)
+            );
+        }
+        assert_eq!(
+            write_endpoint_tier("GET", "/api/v1/calendars/:id/import-ics"),
+            None
+        );
     }
 
     #[test]

@@ -9,7 +9,9 @@ const manager = {
   default_timezone: "UTC", default_event_visibility: "private", default_notification_rules_json: null, archived: false, version: 1,
 };
 const owner = { ...manager, id: 7, role: "owner", owner_user_id: 7 };
+const editor = { ...manager, id: 8, role: "editor" };
 const viewer = { ...manager, role: "viewer" };
+const freeBusyViewer = { ...manager, id: 9, access: "free_busy", role: "free_busy_viewer" };
 
 function response(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -24,6 +26,104 @@ function renderManager(calendars: unknown[], request = vi.fn().mockResolvedValue
 afterEach(cleanup);
 
 describe("CalendarManagement", () => {
+  it("offers import to owner manager and editor only", async () => {
+    const namedOwner = { ...owner, name: "Owner calendar" };
+    const namedManager = { ...manager, id: 12, name: "Manager calendar" };
+    const namedEditor = { ...editor, name: "Editor calendar" };
+    const archivedOwner = { ...owner, id: 10, name: "Archived", archived: true };
+    renderManager([namedOwner, namedManager, namedEditor, viewer, freeBusyViewer, archivedOwner]);
+    await screen.findByText("Active Calendars");
+
+    expect(screen.getByRole("button", { name: "Import ICS to Owner calendar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import ICS to Manager calendar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import ICS to Editor calendar" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /import ics to/i })).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Edit Editor calendar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Manage sharing for Editor calendar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Import ICS to Archived" })).not.toBeInTheDocument();
+  });
+
+  it("validates the selected ICS file before upload", async () => {
+    const request = renderManager([owner]);
+    fireEvent.click(await screen.findByRole("button", { name: "Import ICS to Team" }));
+    const input = screen.getByLabelText("ICS file");
+
+    fireEvent.change(input, { target: { files: [new File(["not a calendar"], "events.txt", { type: "text/plain" })] } });
+    expect(screen.getByRole("alert")).toHaveTextContent("ends in .ics");
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+
+    const oversized = new File([new Uint8Array(1_048_577)], "events.ics", { type: "text/calendar" });
+    fireEvent.change(input, { target: { files: [oversized] } });
+    expect(screen.getByRole("alert")).toHaveTextContent("1 MiB or smaller");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("uploads once and reports the imported event count", async () => {
+    let resolveImport!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { resolveImport = resolve; });
+    const request = vi.fn().mockResolvedValueOnce(response([owner])).mockReturnValueOnce(pending);
+    renderManager([owner], request);
+    fireEvent.click(await screen.findByRole("button", { name: "Import ICS to Team" }));
+    fireEvent.change(screen.getByLabelText("ICS file"), { target: { files: [new File(["BEGIN:VCALENDAR"], "events.ics", { type: "text/calendar" })] } });
+
+    const submit = screen.getByRole("button", { name: "Import" });
+    fireEvent.click(submit);
+    expect(await screen.findByRole("button", { name: "Importing…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Importing…" }));
+    expect(request).toHaveBeenCalledTimes(2);
+
+    resolveImport(response({ imported_events: 2, imported_exceptions: 0 }, 201));
+    expect(await screen.findByText("2 events imported")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Import ICS to Team" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Import ICS to Team" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["invalid_calendar_file", "valid supported ICS calendar"],
+    ["calendar_import_limit_exceeded", "1 MiB or 1,000 events"],
+    ["unexpected_code", "could not import this calendar"],
+  ])("shows a safe message for %s failures", async (code, safeText) => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([owner]))
+      .mockResolvedValueOnce(response({ error: { code, message: "private backend detail" } }, 400));
+    renderManager([owner], request);
+    fireEvent.click(await screen.findByRole("button", { name: "Import ICS to Team" }));
+    fireEvent.change(screen.getByLabelText("ICS file"), { target: { files: [new File(["bad"], "events.ics", { type: "text/calendar" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(safeText);
+    expect(screen.queryByText("private backend detail")).not.toBeInTheDocument();
+  });
+
+  it("closes import with Escape and restores the correct trigger", async () => {
+    const secondOwner = { ...owner, id: 11, name: "Second team" };
+    renderManager([owner, secondOwner]);
+    const trigger = await screen.findByRole("button", { name: "Import ICS to Second team" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Import ICS to Second team" });
+    expect(screen.getByRole("button", { name: "Close import" })).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Import ICS to Second team" })).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("refreshes calendar access after an import denial", async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([editor]))
+      .mockResolvedValueOnce(response({ error: { code: "not_found", message: "private backend detail" } }, 404))
+      .mockResolvedValueOnce(response([]));
+    renderManager([editor], request);
+    fireEvent.click(await screen.findByRole("button", { name: "Import ICS to Team" }));
+    fireEvent.change(screen.getByLabelText("ICS file"), { target: { files: [new File(["bad"], "events.ics", { type: "text/calendar" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your calendar access changed. The list was refreshed.");
+    await waitFor(() => expect(screen.queryByText("Team")).not.toBeInTheDocument());
+    expect(screen.queryByText("private backend detail")).not.toBeInTheDocument();
+  });
+
   it("does not render management controls for a viewer", async () => {
     renderManager([viewer]);
     await screen.findByText("Team");

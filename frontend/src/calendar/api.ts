@@ -124,9 +124,25 @@ export interface EventRange {
 export type EventUpdatePayload = EventPayload & { calendar_id: number; version: number };
 export type OccurrenceUpdatePayload = EventPayload & { version: number };
 
+export interface IcsImportSummary {
+  imported_events: number;
+  imported_exceptions: number;
+}
+
+export type IcsImportErrorCode =
+  | "invalid_calendar_file"
+  | "calendar_import_limit_exceeded"
+  | "unknown";
+
 export class CalendarApiError extends Error {
   constructor(readonly status: number) {
     super(`Calendar request failed (${status})`);
+  }
+}
+
+export class IcsImportApiError extends CalendarApiError {
+  constructor(status: number, readonly code: IcsImportErrorCode) {
+    super(status);
   }
 }
 
@@ -193,6 +209,43 @@ export function listExpandedEvents(api: ApiClient, calendarIds: readonly number[
 
 export function createEvent(api: ApiClient, calendarId: number, event: EventPayload) {
   return api.request(eventPath(calendarId), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(event) }).then(json<EventProjection>);
+}
+
+const ICS_IMPORT_ERROR_CODES: ReadonlySet<IcsImportErrorCode> = new Set([
+  "invalid_calendar_file",
+  "calendar_import_limit_exceeded",
+]);
+
+function isIcsImportErrorCode(value: unknown): value is IcsImportErrorCode {
+  return typeof value === "string" && ICS_IMPORT_ERROR_CODES.has(value as IcsImportErrorCode);
+}
+
+export async function importIcs(api: ApiClient, calendarId: number, file: File): Promise<IcsImportSummary> {
+  const response = await api.request(`/api/v1/calendars/${calendarId}/import-ics`, {
+    method: "POST",
+    headers: { "content-type": "text/calendar; charset=utf-8" },
+    body: file,
+  });
+  if (response.ok) return response.json() as Promise<IcsImportSummary>;
+
+  let code: IcsImportErrorCode = "unknown";
+  try {
+    const envelope: unknown = await response.json();
+    if (
+      typeof envelope === "object"
+      && envelope !== null
+      && "error" in envelope
+      && typeof envelope.error === "object"
+      && envelope.error !== null
+      && "code" in envelope.error
+      && isIcsImportErrorCode(envelope.error.code)
+    ) {
+      code = envelope.error.code;
+    }
+  } catch {
+    // Non-JSON error bodies intentionally map to a safe, client-owned fallback.
+  }
+  throw new IcsImportApiError(response.status, code);
 }
 
 export function updateEvent(api: ApiClient, calendarId: number, eventId: number, event: EventUpdatePayload) {

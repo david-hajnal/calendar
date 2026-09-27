@@ -233,6 +233,10 @@
   background: rgb(186 26 26 / 0.1);
 }
 
+.calendar-card__import-btn {
+  color: var(--color-primary);
+}
+
 /* Archived card */
 .calendar-card--archived {
   opacity: 0.6;
@@ -515,6 +519,147 @@
 .calendar-modal__footer .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ICS import dialog */
+.ics-import-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(20, 27, 43, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.ics-import-dialog__card {
+  inline-size: min(100%, 32rem);
+  max-block-size: calc(100dvh - 2rem);
+  overflow: auto;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: 0.75rem;
+  background: var(--color-surface-container-lowest);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+}
+
+.ics-import-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--color-outline-variant);
+}
+
+.ics-import-dialog__header h3 {
+  margin: 0;
+  color: var(--color-on-surface);
+  font-size: 1.25rem;
+  line-height: 1.4;
+}
+
+.ics-import-dialog__close {
+  border: 0;
+  border-radius: 50%;
+  padding: 0.25rem;
+  background: transparent;
+  color: var(--color-on-surface-variant);
+  cursor: pointer;
+}
+
+.ics-import-dialog__close:hover:not(:disabled) {
+  background: var(--color-surface-container);
+}
+
+.ics-import-dialog__body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+}
+
+.ics-import-dialog__file-field {
+  display: grid;
+  gap: 0.5rem;
+  color: var(--color-on-surface);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.ics-import-dialog__file-field input {
+  inline-size: 100%;
+  border: 1px solid var(--color-outline-variant);
+  border-radius: 0.5rem;
+  padding: 0.625rem;
+  background: var(--color-surface-container-lowest);
+  color: var(--color-on-surface);
+}
+
+.ics-import-dialog__file-field input:focus-visible,
+.ics-import-dialog button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgb(70 72 212 / 18%);
+}
+
+.ics-import-dialog__help,
+.ics-import-dialog__progress,
+.ics-import-dialog__error,
+.ics-import-dialog__success {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.ics-import-dialog__help {
+  color: var(--color-on-surface-variant);
+}
+
+.ics-import-dialog__progress {
+  color: var(--color-primary);
+}
+
+.ics-import-dialog__error {
+  color: var(--color-error);
+}
+
+.ics-import-dialog__success {
+  color: var(--color-on-surface);
+  font-weight: 600;
+}
+
+.ics-import-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid var(--color-outline-variant);
+}
+
+.ics-import-dialog__footer button {
+  border-radius: 0.5rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.ics-import-dialog__footer .btn-cancel {
+  border: 1px solid var(--color-outline-variant);
+  background: var(--color-surface-container-lowest);
+  color: var(--color-on-surface);
+}
+
+.ics-import-dialog__footer .btn-primary {
+  border: 0;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 600;
+}
+
+.ics-import-dialog button:disabled,
+.ics-import-dialog input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 /* Sharing dialog */

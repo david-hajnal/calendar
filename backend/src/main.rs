@@ -3,6 +3,10 @@ use commoncal_backend::{
     admin_invitation_rate_limit::AdminInvitationRateLimiterState,
     backup::{Aes256GcmEncryptor, BackupCommand, BackupService, RestoreCommand, RestoreService},
     bootstrap::{BootstrapCommand, InitialSuperadminBootstrap},
+    caldav::{
+        auth::CaldavAccountService,
+        http::{build_caldav_router, build_connection_management_router},
+    },
     calendar::CalendarService,
     config::{AppConfig, Environment},
     database::{connect_and_migrate, connect_read_only},
@@ -36,6 +40,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -143,6 +148,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let external_feed_service = ExternalFeedService::new(database.clone(), secret_key.clone());
     let shared_view_service = SharedViewService::new_with_key(database.clone(), secret_key.clone());
+    let caldav_public_origin = Url::parse(config.caldav_public_origin())
+        .expect("CALDAV_PUBLIC_ORIGIN is validated as a well-formed origin");
+    let caldav_accounts =
+        CaldavAccountService::new(database.clone(), secret_key.clone(), caldav_public_origin);
 
     let write_rate_limiter = if std::env::var("APP_ENV").ok().as_deref() == Some("development") {
         None
@@ -189,6 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("{}/invitations/accept", config.app_origin()),
         email_sender.clone(),
     );
+    let caldav_session_manager = session_manager.clone();
 
     let mut router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
         readiness,
@@ -304,6 +314,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_state(db_pool);
     router = router.merge(mcp_grant_router);
+
+    // Add CalDAV DAV router (isolated, Basic-auth, no browser session/CSRF).
+    router = router.merge(build_caldav_router(caldav_accounts.clone()));
+    // Add CalDAV connection-management browser API (cookie + CSRF protected).
+    router = router.merge(build_connection_management_router(
+        caldav_accounts,
+        caldav_session_manager,
+    ));
 
     let frontend_directory =
         std::env::var("FRONTEND_DIR").unwrap_or_else(|_| "/app/frontend".into());

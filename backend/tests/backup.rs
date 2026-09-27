@@ -748,6 +748,7 @@ fn restore_cli_refuses_the_configured_production_database_before_reading_key_mat
         .arg(&database_path)
         .env("APP_ENV", "production")
         .env("SESSION_SECRET", "not-a-real-production-secret")
+        .env("CALDAV_PUBLIC_ORIGIN", "https://dav.example")
         .env("DATABASE_PATH", &database_path)
         .env("BACKUP_ENCRYPTION_KEY_HEX", "0123456789abcdef")
         .output()

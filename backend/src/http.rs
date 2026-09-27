@@ -1,6 +1,6 @@
 use axum::{
     Extension, Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, Request, StatusCode,
@@ -43,6 +43,7 @@ use crate::{
     external_feed::{
         ExternalFeedService, FeedError, FixtureIcsFeedFetcher, NewFeed, SafeIcsFeedFetcher,
     },
+    ics_import::{IcsImportError, IcsImportService},
     identity::UserStatus,
     invitations::{ActiveUser, ConsumeInvitation, ConsumeInvitationError, InvitationConsumer},
     login::{
@@ -783,6 +784,10 @@ fn build_application_router(state: ApplicationState) -> Router {
         }
         if state.event_service.is_some() {
             protected = protected
+                .route(
+                    "/api/v1/calendars/:calendar_id/import-ics",
+                    post(import_ics),
+                )
                 .route(
                     "/api/v1/calendars/:calendar_id/events",
                     get(list_events).post(create_event),
@@ -1853,6 +1858,76 @@ async fn create_event(
     Ok((StatusCode::CREATED, Json(event)))
 }
 
+async fn import_ics(
+    State(state): State<ApplicationState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(calendar_id): Path<i64>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let byte_count = body.len();
+    let started_at = Instant::now();
+    if !is_calendar_media_type(&headers) || body.is_empty() {
+        tracing::warn!(
+            event = "ics_import_failed",
+            actor_user_id = session.user.id,
+            calendar_id,
+            error_code = "invalid_request",
+            byte_count,
+            latency_ms = started_at.elapsed().as_millis(),
+        );
+        return Err(ApiError::bad_request());
+    }
+
+    let service = IcsImportService::new(
+        state
+            .event_service
+            .ok_or_else(ApiError::service_unavailable)?,
+    );
+    match service
+        .import(
+            session.user.id,
+            session.user.is_superadmin,
+            calendar_id,
+            &body,
+        )
+        .await
+    {
+        Ok(summary) => {
+            tracing::info!(
+                event = "ics_import_succeeded",
+                actor_user_id = session.user.id,
+                calendar_id,
+                imported_events = summary.imported_events,
+                imported_exceptions = summary.imported_exceptions,
+                byte_count,
+                latency_ms = started_at.elapsed().as_millis(),
+            );
+            Ok((StatusCode::CREATED, Json(summary)))
+        }
+        Err(error) => {
+            let api_error = map_ics_import_error(error);
+            tracing::warn!(
+                event = "ics_import_failed",
+                actor_user_id = session.user.id,
+                calendar_id,
+                error_code = api_error.code,
+                byte_count,
+                latency_ms = started_at.elapsed().as_millis(),
+            );
+            Err(api_error)
+        }
+    }
+}
+
+fn is_calendar_media_type(headers: &HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/calendar"))
+}
+
 async fn read_event(
     State(state): State<ApplicationState>,
     Extension(session): Extension<AuthenticatedSession>,
@@ -2196,6 +2271,28 @@ fn map_event_error(error: EventServiceError) -> ApiError {
     }
 }
 
+fn map_ics_import_error(error: IcsImportError) -> ApiError {
+    match error {
+        IcsImportError::InvalidCalendar => ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_calendar_file",
+            message: "Invalid calendar file",
+            current_version: None,
+        },
+        IcsImportError::LimitExceeded => ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "calendar_import_limit_exceeded",
+            message: "Calendar import limit exceeded",
+            current_version: None,
+        },
+        IcsImportError::NotFound => ApiError::not_found(),
+        IcsImportError::Database(_) => {
+            tracing::error!(error_code = "ics_import_operation_failed");
+            ApiError::internal()
+        }
+    }
+}
+
 fn map_feed_error(error: FeedError) -> ApiError {
     match error {
         // Feed identifiers are global. Treat an inaccessible one like a
@@ -2494,7 +2591,7 @@ async fn access_log_middleware(
     response
 }
 
-async fn authenticated_session(
+pub(crate) async fn authenticated_session(
     State(manager): State<SessionManager>,
     mut request: Request<axum::body::Body>,
     next: Next,
@@ -3138,7 +3235,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn unauthorized() -> Self {
+    pub(crate) fn unauthorized() -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
@@ -3165,7 +3262,7 @@ impl ApiError {
         }
     }
 
-    fn not_found() -> Self {
+    pub(crate) fn not_found() -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
             code: "not_found",
@@ -3174,7 +3271,7 @@ impl ApiError {
         }
     }
 
-    fn bad_request() -> Self {
+    pub(crate) fn bad_request() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             code: "invalid_request",
@@ -3219,7 +3316,7 @@ impl ApiError {
         }
     }
 
-    fn rate_limited() -> Self {
+    pub(crate) fn rate_limited() -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             code: "rate_limited",
@@ -3238,7 +3335,7 @@ impl ApiError {
         }
     }
 
-    fn internal() -> Self {
+    pub(crate) fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "internal_error",
@@ -3247,7 +3344,7 @@ impl ApiError {
         }
     }
 
-    fn service_unavailable() -> Self {
+    pub(crate) fn service_unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "service_unavailable",

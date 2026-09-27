@@ -1,7 +1,8 @@
 # CommonCal
 
 Multi-user calendar platform with email-based authentication, shared composite views,
-public calendar sharing, external ICS feed ingestion, and encrypted backup/restore.
+public calendar sharing, one-time editable ICS file import, external ICS feed ingestion,
+and encrypted backup/restore.
 
 ## Tech stack
 
@@ -69,6 +70,7 @@ authenticated unsafe requests must match it.
 - **Event management** — CRUD events with recurring event support (update single/occurrence/this-and-following)
 - **Composite views** — combine multiple calendars into named views with per-calendar color and position
 - **Public sharing** — publish composite views via tokenized public URLs with ICS feed endpoints
+- **ICS file import** — upload a local `.ics` file into an existing writable calendar; imported events are native and editable, with no ongoing synchronization
 - **External ICS feeds** — subscribe to remote calendars with configurable refresh intervals
 - **Notifications** — in-app notification surface with event-based notification replanning
 - **Admin API** — user management (list, suspend, reactivate, promote, demote), invitation management
@@ -83,6 +85,7 @@ authenticated unsafe requests must match it.
 | Auth | `POST /api/v1/auth/login-links`, `POST /api/v1/auth/login-links/consume`, `GET/DELETE /api/v1/auth/session`, `DELETE /api/v1/auth/sessions` |
 | Admin | `GET /api/v1/admin/users`, `POST/DELETE /api/v1/admin/invitations/*`, user suspend/reactivate/promote/demote, `POST /api/v1/admin/users/:id/revoke-sessions` |
 | Calendars | `GET/POST /api/v1/calendars`, `GET/PATCH/DELETE /api/v1/calendars/:id`, `POST /api/v1/calendars/:id/archive|restore`, ACL, ownership transfer |
+| ICS import | `POST /api/v1/calendars/:id/import-ics` accepts a one-time `text/calendar` upload and creates editable native events |
 | Events | `GET/POST /api/v1/calendars/:id/events`, `GET/PATCH/DELETE /api/v1/calendars/:id/events/:id`, occurrence overrides |
 | Views | `GET/POST /api/v1/views`, `GET/PATCH/DELETE /api/v1/views/:id`, calendar composition, publication management |
 | Feeds | `GET/POST /api/v1/calendars/:id/external-feeds`, `DELETE/POST /api/v1/external-feeds/:id/disable|refresh` |

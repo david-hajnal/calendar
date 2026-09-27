@@ -182,6 +182,7 @@ pub enum TokenDomain {
     PublicView,
     Session,
     Caldav,
+    CaldavConnection,
 }
 
 impl TokenDomain {
@@ -192,6 +193,7 @@ impl TokenDomain {
             Self::PublicView => b"public-view",
             Self::Session => b"session",
             Self::Caldav => b"caldav",
+            Self::CaldavConnection => b"caldav-connection",
         }
     }
 }

@@ -687,6 +687,60 @@ describe("CalendarEventUI", () => {
     expect(body.end_utc - body.start_utc).toBe(events[0].end_utc - events[0].start_utc);
   });
 
+  it("deletes an event from the detail panel", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(null, { status: 200 }));
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete event/ }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/10", expect.objectContaining({ method: "DELETE" })));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Event details" })).not.toBeInTheDocument());
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Planning"));
+  });
+
+  it("does not delete when confirmation is declined", async () => {
+    const api = apiWithEvents();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete event/ }));
+
+    expect(vi.mocked(api.request).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    expect(screen.getByRole("complementary", { name: "Event details" })).toBeInTheDocument();
+  });
+
+  it("does not show delete button for external events", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Imported holiday (read-only external event)" }));
+    expect(screen.queryByRole("button", { name: /Delete event/ })).not.toBeInTheDocument();
+  });
+
+  it("deletes a recurring occurrence via the occurrence endpoint", async () => {
+    const occurrence = { ...events[0], recurrence_rule: "FREQ=WEEKLY", recurrence_id: 77 };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify([occurrence]), { status: 200 }));
+      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response(null, { status: 200 }));
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete event/ }));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/10/occurrences/77", expect.objectContaining({ method: "DELETE" })));
+  });
+
   it("resizes an event without turning the interaction into a move", async () => {
     const api = apiWithEvents();
     vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {

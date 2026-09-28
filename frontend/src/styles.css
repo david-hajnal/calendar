@@ -286,6 +286,15 @@ textarea {
   background: var(--app-accent-strong);
 }
 
+.app-button--danger {
+  color: var(--color-on-error);
+  background: var(--color-error);
+}
+
+.app-button--danger:hover:not(:disabled) {
+  background: var(--color-on-error-container);
+}
+
 .app-button:focus-visible,
 .app-nav__button:focus-visible {
   outline: 0.18rem solid rgb(54 89 217 / 32%);

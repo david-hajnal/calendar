@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type { ApiClient } from "../auth/api";
-import { CalendarApiError, createEvent, listExpandedEvents, updateEvent, updateEventOccurrence, type EventPayload, type EventProjection } from "./api";
+import { CalendarApiError, createEvent, deleteEvent, deleteEventOccurrence, listExpandedEvents, updateEvent, updateEventOccurrence, type EventPayload, type EventProjection } from "./api";
 import { setReminder, removeReminder } from "./reminderApi";
 import type { Calendar } from "./CalendarManagement";
 import "./CalendarEventUI.css";
@@ -140,6 +140,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const moveGeneration = useRef<Map<string, number>>(new Map());
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [savingIdentity, setSavingIdentity] = useState<EventIdentity | null>(null);
+  const [deletingIdentity, setDeletingIdentity] = useState<EventIdentity | null>(null);
   const firstWritable = calendars.find(writable)?.id ?? 0;
   const [draft, setDraft] = useState<Draft>(() => {
     const startDate = dateKey(initialDate);
@@ -416,6 +417,30 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     try { const changedStart = dateKey(new Date(changed.start_utc * 1000)); const saved = await updateEvent(api, event.calendar_id, event.id, { ...payload({ title: title(changed), allDay: false, start: inputTime(changed.start_utc), end: inputTime(changed.end_utc), startDate: changedStart, endDate: moveDateKey(changedStart, 1), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" }), calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
     catch (reason) { setError(reason instanceof CalendarApiError && reason.status === 409 ? "This event changed elsewhere. Reload it before saving again." : "We could not move this event."); }
   }
+  async function handleDelete(event: EventProjection) {
+    if (!editable(event, calendarFor(event))) return;
+    const isOccurrence = recurrenceIdentity(event) !== undefined;
+    const label = isOccurrence ? "this occurrence" : "this event";
+    if (!window.confirm(`Delete ${label} "${title(event)}"? This cannot be undone.`)) return;
+    const identity = identityOf(event);
+    setDeletingIdentity(identity);
+    setError(null);
+    try {
+      if (isOccurrence) {
+        await deleteEventOccurrence(api, event.calendar_id, event.id, recurrenceIdentity(event)!, event.version!);
+      } else {
+        await deleteEvent(api, event.calendar_id, event.id);
+      }
+      setEvents((current) => current.filter((item) => !sameProjection(item, event)));
+      setSelected(null);
+    } catch (reason) {
+      setError(reason instanceof CalendarApiError && reason.status === 409
+        ? "This event changed elsewhere. Reload it before deleting again."
+        : "We could not delete this event.");
+    } finally {
+      setDeletingIdentity((current) => current && sameIdentityPair(current, identity) ? null : current);
+    }
+  }
   function renderEvent(event: EventProjection, monthDate?: string) {
     const cal = calendarFor(event);
     const readonly = !editable(event, cal);
@@ -680,6 +705,10 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       {external(selected) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This external event is read-only.</p>}
       {!external(selected) && !editable(selected, calendarFor(selected)) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This event is read-only.</p>}
       {editable(selected, calendarFor(selected)) && <button type="button" className="app-button app-button--primary" style={{ fontSize: '0.8125rem', marginTop: '0.75rem' }} onClick={() => openEdit(selected)}>Edit event</button>}
+      {editable(selected, calendarFor(selected)) && <button type="button" className="app-button app-button--danger" style={{ fontSize: '0.8125rem', marginTop: '0.5rem' }} disabled={deletingIdentity !== null && sameIdentity(selected, deletingIdentity)} onClick={() => void handleDelete(selected)}>
+        <span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle' }}>delete</span>
+        {deletingIdentity !== null && sameIdentity(selected, deletingIdentity) ? "Deleting…" : "Delete event"}
+      </button>}
       <div className="event-ui__detail-meta">
         {selected.event_kind === "all_day" && selected.start_date && selected.end_date && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{formatAllDayRange(selected.start_date, selected.end_date)}</p>}
         {selected.start_utc && selected.end_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>schedule</span>{new Date(selected.start_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(selected.end_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}

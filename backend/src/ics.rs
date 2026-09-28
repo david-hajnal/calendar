@@ -127,6 +127,7 @@ pub fn parse_calendar(
                     && name != "VTIMEZONE"
                     && name != "STANDARD"
                     && name != "DAYLIGHT"
+                    && name != "VALARM"
                 {
                     return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
                 }

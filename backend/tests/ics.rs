@@ -104,3 +104,22 @@ fn rejects_invalid_timing_limits_and_duplicate_event_keys() {
         IcsParseErrorCode::LimitExceeded
     );
 }
+
+#[test]
+fn parses_event_with_valarm_subcomponents() {
+    let calendar = parse_calendar(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Google Inc//Google Calendar 70.9054//EN\r\nMETHOD:REQUEST\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Budapest\r\nX-LIC-LOCATION:Europe/Budapest\r\nBEGIN:DAYLIGHT\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\nTZNAME:GMT+2\r\nDTSTART:19700329T020000\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\nEND:DAYLIGHT\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nTZNAME:GMT+1\r\nDTSTART:19701025T030000\r\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Budapest:20261215T170000\r\nDTEND;TZID=Europe/Budapest:20261215T190000\r\nDTSTAMP:20260924T143219Z\r\nORGANIZER:mailto:plajerdora@gmail.com\r\nUID:ue0eli00o39blktt2id8rfkir0@google.com\r\nATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=TRUE\r\n ;X-NUM-GUESTS=0:mailto:plajerdora@gmail.com\r\nATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=\r\n TRUE;CN=Bilimbo Szilva 2026/2027;X-NUM-GUESTS=0:mailto:bilimbo-szilva-2026@\r\n googlegroups.com\r\nX-MICROSOFT-CDO-OWNERAPPTID:-23788780\r\nCREATED:20260924T143207Z\r\nDESCRIPTION:Részletek később frissítésre kerülnek\r\nLAST-MODIFIED:20260924T143208Z\r\nLOCATION:\r\nSEQUENCE:0\r\nSTATUS:CONFIRMED\r\nSUMMARY:Bilimbo: Karácsonyi buli (szilva csoport)\r\nTRANSP:OPAQUE\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nDESCRIPTION:This is an event reminder\r\nSUMMARY:Alarm notification\r\nATTENDEE:mailto:david@hajnal.space\r\nTRIGGER:-P0DT0H10M0S\r\nEND:VALARM\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:This is an event reminder\r\nTRIGGER:-P0DT0H30M0S\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        IcsParserLimits::default(),
+    )
+    .expect("ICS with VALARM subcomponents must parse");
+
+    assert_eq!(calendar.events.len(), 1);
+    assert_eq!(
+        calendar.events[0].uid,
+        "ue0eli00o39blktt2id8rfkir0@google.com"
+    );
+    assert!(matches!(
+        calendar.events[0].timing,
+        NormalizedTiming::Timed { .. }
+    ));
+}

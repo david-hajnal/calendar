@@ -827,7 +827,8 @@ impl AppState {
         }
         intent.confirmation_state = "committed".to_string();
         // Actually delete the event.
-        st.events.remove(&intent.event_id);
+        let event_id = intent.event_id;
+        st.events.remove(&event_id);
         Ok(())
     }
 

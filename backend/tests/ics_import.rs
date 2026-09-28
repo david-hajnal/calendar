@@ -29,6 +29,9 @@ use tower::ServiceExt;
 const NOW: i64 = 1_750_000_000;
 const ORIGIN: &str = "https://commoncal.test";
 
+type ExceptionDateRow = (Option<i64>, Option<String>, bool, Option<String>);
+type ExceptionStatusRow = (Option<i64>, bool, Option<String>, Option<String>);
+
 #[tokio::test]
 async fn ics_import_batch_persists_mixed_events_exceptions_and_side_effects() {
     let (_dir, pool, owner, calendar_id) = setup().await;
@@ -70,7 +73,7 @@ async fn ics_import_batch_persists_mixed_events_exceptions_and_side_effects() {
     assert_eq!(audits, vec!["event.series.create", "event.series.create"]);
     assert_eq!(external_count, 0);
 
-    let exceptions: Vec<(Option<i64>, Option<String>, bool, Option<String>)> = sqlx::query_as(
+    let exceptions: Vec<ExceptionDateRow> = sqlx::query_as(
         "SELECT recurrence_id, recurrence_date, is_deleted, title
          FROM event_recurrence_exceptions ORDER BY id",
     )
@@ -234,7 +237,7 @@ async fn ics_import_service_converts_standalone_recurrence_and_reimports() {
     .await
     .unwrap();
     assert_eq!(all_day, ("2025-06-17".into(), "2025-06-18".into()));
-    let exceptions: Vec<(Option<i64>, bool, Option<String>, Option<String>)> = sqlx::query_as(
+    let exceptions: Vec<ExceptionStatusRow> = sqlx::query_as(
         "SELECT recurrence_id, is_deleted, title, status
          FROM event_recurrence_exceptions ORDER BY recurrence_id",
     )
@@ -242,8 +245,8 @@ async fn ics_import_service_converts_standalone_recurrence_and_reimports() {
     .await
     .unwrap();
     assert_eq!(exceptions.len(), 2);
-    assert_eq!(exceptions[0].1, true);
-    assert_eq!(exceptions[1].1, false);
+    assert!(exceptions[0].1);
+    assert!(!exceptions[1].1);
     assert_eq!(exceptions[1].2.as_deref(), Some("Moved"));
     assert_eq!(exceptions[1].3.as_deref(), Some("cancelled"));
 

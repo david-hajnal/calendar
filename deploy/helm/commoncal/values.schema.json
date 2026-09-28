@@ -30,6 +30,17 @@
       "properties": {
         "size": { "type": "string", "minLength": 1 }
       }
+    },
+    "config": {
+      "type": "object",
+      "required": ["appOrigin"],
+      "properties": {
+        "appOrigin": { "type": "string", "minLength": 1 },
+        "caldavPublicOrigin": {
+          "type": "string",
+          "description": "Public origin for CalDAV. Falls back to appOrigin when empty."
+        }
+      }
     }
   }
 }

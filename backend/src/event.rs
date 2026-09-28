@@ -523,17 +523,17 @@ impl EventService {
                 .bind(
                     replacement_timing
                         .as_ref()
-                        .and_then(|timing| timing.timezone.as_deref()),
+                        .and_then(|timing| timing.timezone),
                 )
                 .bind(
                     replacement_timing
                         .as_ref()
-                        .and_then(|timing| timing.all_day_start_date.as_deref()),
+                        .and_then(|timing| timing.all_day_start_date),
                 )
                 .bind(
                     replacement_timing
                         .as_ref()
-                        .and_then(|timing| timing.all_day_end_date.as_deref()),
+                        .and_then(|timing| timing.all_day_end_date),
                 )
                 .bind(actor_user_id)
                 .bind(now)

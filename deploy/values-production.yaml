@@ -38,6 +38,7 @@ persistence:
 
 config:
   appOrigin: https://cal.hajnal.space
+  caldavPublicOrigin: https://cal.hajnal.space
 
 # Secret created externally:
 # kubectl create secret generic commoncal-session \

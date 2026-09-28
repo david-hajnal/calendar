@@ -53,6 +53,7 @@ spec:
         - ReadWriteOnce
     config:
       appOrigin: https://cal.hajnal.space
+      caldavPublicOrigin: https://cal.hajnal.space
     env:
       TZ: Europe/Budapest
     existingSecret:

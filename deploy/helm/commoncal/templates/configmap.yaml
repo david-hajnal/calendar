@@ -8,6 +8,7 @@ data:
   APP_ENV: production
   BIND_ADDRESS: 0.0.0.0:3000
   APP_ORIGIN: {{ required "config.appOrigin is required" .Values.config.appOrigin | quote }}
+  CALDAV_PUBLIC_ORIGIN: {{ .Values.config.caldavPublicOrigin | default .Values.config.appOrigin | quote }}
   DATABASE_PATH: /app/data/commoncal.sqlite
   ACCESS_LOG_LEVEL: "OFF"
   {{- if .Values.authBridge.enabled }}

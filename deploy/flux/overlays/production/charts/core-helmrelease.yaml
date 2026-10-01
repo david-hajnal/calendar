@@ -30,7 +30,7 @@ spec:
     domain: cal.hajnal.space
     image:
       repository: ghcr.io/david-hajnal/calendar-core
-      tag: "sha-6e5b8eabaab78e70b49f634e2ed4596bc081e78f"
+      tag: "sha-d5d2068cbb6bf2ba2ffa4efbbb3d86c96656fea8"
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

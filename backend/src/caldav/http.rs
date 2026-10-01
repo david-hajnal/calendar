@@ -869,9 +869,10 @@ async fn handle_put_create_event_resource(
         }
     };
 
-    if let Err(_) = repository
+    if repository
         .save_client_properties(event_id, &client_properties, now)
         .await
+        .is_err()
     {
         let _ = event_service
             .delete(session.user_id, false, calendar.calendar_id, event_id)
@@ -1400,9 +1401,10 @@ async fn handle_put_update_event_resource(
     }
 
     let repository = CaldavRepository::new(accounts.pool().clone());
-    if let Err(_) = repository
+    if repository
         .save_client_properties(resource.event_id, &client_properties, accounts.now())
         .await
+        .is_err()
     {
         return dav_server_error(accounts.metrics());
     }
@@ -4623,7 +4625,7 @@ mod tests {
         let app = build_caldav_router(accounts.clone());
         let request = Request::builder()
             .method(Method::from_bytes(b"REPORT").unwrap())
-            .uri(&format!("/dav/calendars/{principal_id}/{calendar_id}/"))
+            .uri(format!("/dav/calendars/{principal_id}/{calendar_id}/"))
             .header(
                 header::AUTHORIZATION,
                 basic_header("oversized@example.test", &password),
@@ -4672,7 +4674,7 @@ mod tests {
         let app = build_caldav_router(accounts.clone());
         let request = Request::builder()
             .method(Method::from_bytes(b"REPORT").unwrap())
-            .uri(&format!("/dav/calendars/{principal_id}/{calendar_id}/"))
+            .uri(format!("/dav/calendars/{principal_id}/{calendar_id}/"))
             .header(
                 header::AUTHORIZATION,
                 basic_header("malformed@example.test", &password),

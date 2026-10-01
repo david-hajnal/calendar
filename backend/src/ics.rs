@@ -194,10 +194,10 @@ pub fn parse_calendar(
                 if stack.pop().as_deref() != Some(name) {
                     return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
                 }
-                if name == "VALARM" {
-                    if let Some(alarm) = current_alarm.take() {
-                        alarms.push(alarm);
-                    }
+                if name == "VALARM"
+                    && let Some(alarm) = current_alarm.take()
+                {
+                    alarms.push(alarm);
                 }
                 if name == "VEVENT" {
                     let event = normalize_event(
@@ -244,10 +244,8 @@ pub fn parse_calendar(
                     }
                     target.push(property);
                 }
-                Some("VCALENDAR") => {
-                    if property.name == "METHOD" {
-                        has_method = true;
-                    }
+                Some("VCALENDAR") if property.name == "METHOD" => {
+                    has_method = true;
                 }
                 _ => {}
             },

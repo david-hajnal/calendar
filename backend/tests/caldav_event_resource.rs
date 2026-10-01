@@ -4650,8 +4650,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
     let auth = ("owner@example.test", password.as_str());
 
     // ATTENDEE must be rejected.
-    let body = format!(
-        "BEGIN:VCALENDAR\r\n\
+    let body = "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
          PRODID:-//Test//Test 1.0//EN\r\n\
          BEGIN:VEVENT\r\n\
@@ -4663,7 +4662,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
          ATTENDEE:mailto:user@example.com\r\n\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n"
-    );
+        .to_string();
     let (status, _, _) = put_request(
         build_caldav_router(accounts.clone()),
         &uri,
@@ -4675,8 +4674,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "ATTENDEE must be rejected");
 
     // ORGANIZER must be rejected.
-    let body = format!(
-        "BEGIN:VCALENDAR\r\n\
+    let body = "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
          PRODID:-//Test//Test 1.0//EN\r\n\
          BEGIN:VEVENT\r\n\
@@ -4688,7 +4686,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
          ORGANIZER:mailto:org@example.com\r\n\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n"
-    );
+        .to_string();
     let (status, _, _) = put_request(
         build_caldav_router(accounts.clone()),
         &uri,
@@ -4704,8 +4702,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
     );
 
     // METHOD must be rejected.
-    let body = format!(
-        "BEGIN:VCALENDAR\r\n\
+    let body = "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
          PRODID:-//Test//Test 1.0//EN\r\n\
          METHOD:REQUEST\r\n\
@@ -4717,7 +4714,7 @@ async fn t16_scheduling_properties_rejected_on_create() {
          SUMMARY:Test\r\n\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n"
-    );
+        .to_string();
     let (status, _, _) = put_request(
         build_caldav_router(accounts),
         &uri,

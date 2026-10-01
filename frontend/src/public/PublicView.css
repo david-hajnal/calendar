@@ -92,7 +92,7 @@
 
 .public-view__grid-header {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-block-end: 1px solid rgb(199 196 215 / 50%);
   background: var(--color-surface-container-lowest);
 }
@@ -113,12 +113,13 @@
 
 .public-view__grid-row {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   background: var(--color-surface-container-lowest);
 }
 
 .public-view__day-cell {
   min-height: 7.5rem;
+  min-inline-size: 0;
   padding: 0.5rem;
   background: var(--color-surface-container-lowest);
   display: flex;
@@ -179,6 +180,9 @@
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.33;
+  min-inline-size: 0;
+  inline-size: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

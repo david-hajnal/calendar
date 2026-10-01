@@ -102,7 +102,7 @@
 /* Month grid */
 .event-grid__headers {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0;
   margin-bottom: 0;
 }
@@ -120,7 +120,7 @@
   padding: 0;
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-template-rows: repeat(6, auto);
   gap: 0;
   background: var(--color-outline-variant);
@@ -132,6 +132,7 @@
 
 .event-grid__cell {
   min-height: 6rem;
+  min-inline-size: 0;
   padding: 0.375rem;
   background: var(--color-surface-container-lowest);
   transition: background-color 150ms ease;
@@ -190,6 +191,9 @@
   border-left: 4px solid;
   font-size: 0.75rem;
   margin-bottom: 0.125rem;
+  min-inline-size: 0;
+  inline-size: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   transition: opacity 150ms ease, background-color 150ms ease;
 }
@@ -371,7 +375,7 @@
 /* Week grid layout */
 .event-ui__week {
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
   overflow-y: auto;
   max-height: calc(100vh - 220px);
   position: relative;
@@ -844,7 +848,7 @@
 
   .event-ui__mini-cal-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0;
     text-align: center;
   }

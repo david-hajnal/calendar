@@ -64,6 +64,32 @@ describe("CalendarEventUI", () => {
     expect(await screen.findByText("Planning")).toBeInTheDocument();
   });
 
+  it("preserves the full accessible name for a very long event title in month view", async () => {
+    const longTitle = "Extremely long event title that would normally distort the calendar grid layout when rendered as a single line without proper containment";
+    const longEvent = {
+      id: 99,
+      calendar_id: 1,
+      access: "details" as const,
+      status: "confirmed" as const,
+      event_kind: "timed" as const,
+      title: longTitle,
+      start_utc: 1_750_032_800,
+      end_utc: 1_750_036_400,
+      timezone: "UTC",
+      version: 1,
+    };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => Promise.resolve(
+      new Response(JSON.stringify(String(path).includes("/events?") ? [longEvent] : []), { status: 200 }),
+    ));
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    const button = await screen.findByRole("button", { name: longTitle });
+    expect(button).toBeInTheDocument();
+    expect(button.textContent).toBe(longTitle);
+  });
+
   it.each(["Day", "Week"])("renders a backend-shaped all-day event in %s view", async (view) => {
     const allDayEvent = {
       id: 12,

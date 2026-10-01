@@ -156,7 +156,7 @@ async fn dav_root(State(accounts): State<CaldavAccountService>, request: Request
             };
             let mode = match parse_propfind_body(accounts.metrics(), request).await {
                 Ok(mode) => mode,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             render_propfind(&accounts, &session, &mode)
         }
@@ -192,7 +192,7 @@ async fn dav_principal(
             };
             let mode = match parse_propfind_body(accounts.metrics(), request).await {
                 Ok(mode) => mode,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             render_principal(&accounts, &principal_id, &principal, &mode, depth)
         }
@@ -220,7 +220,7 @@ async fn dav_calendar_home(
             };
             let mode = match parse_propfind_body(accounts.metrics(), request).await {
                 Ok(mode) => mode,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             let principal = match accounts.resolve_principal(&principal_id).await {
                 Ok(Some(principal)) => principal,
@@ -266,7 +266,7 @@ async fn dav_calendar(
             };
             let mode = match parse_propfind_body(accounts.metrics(), request).await {
                 Ok(mode) => mode,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             let principal = match accounts.resolve_principal(&principal_id).await {
                 Ok(Some(principal)) => principal,
@@ -1744,14 +1744,14 @@ fn dav_bad_depth(metrics: &CaldavMetrics) -> Response {
 async fn parse_propfind_body(
     metrics: &CaldavMetrics,
     request: Request,
-) -> Result<PropfindMode, Response> {
+) -> Result<PropfindMode, Box<Response>> {
     let body = match axum::body::to_bytes(request.into_body(), query::MAX_BODY_BYTES).await {
         Ok(body) => body,
-        Err(_) => return Err(dav_oversized_body(metrics)),
+        Err(_) => return Err(Box::new(dav_oversized_body(metrics))),
     };
     match query::parse_propfind(&body) {
         Ok(mode) => Ok(mode),
-        Err(_) => Err(dav_bad_request(metrics, "malformed PROPFIND body")),
+        Err(_) => Err(Box::new(dav_bad_request(metrics, "malformed PROPFIND body"))),
     }
 }
 

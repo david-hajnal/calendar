@@ -1751,7 +1751,10 @@ async fn parse_propfind_body(
     };
     match query::parse_propfind(&body) {
         Ok(mode) => Ok(mode),
-        Err(_) => Err(Box::new(dav_bad_request(metrics, "malformed PROPFIND body"))),
+        Err(_) => Err(Box::new(dav_bad_request(
+            metrics,
+            "malformed PROPFIND body",
+        ))),
     }
 }
 

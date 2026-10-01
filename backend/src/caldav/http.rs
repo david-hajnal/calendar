@@ -2141,6 +2141,7 @@ fn client_key_from_request(request: &Request) -> String {
 
 /// Authenticate a DAV request, checking the rate limit first.
 /// Returns `Ok((session, request))` on success, or `Err(response)` on failure.
+#[allow(clippy::result_large_err)]
 async fn authenticate_dav_request(
     accounts: &CaldavAccountService,
     request: Request,
@@ -2609,10 +2610,9 @@ async fn fetch_recurring_exceptions(
             } = row;
             let date_value = if let Some(utc) = recurrence_id {
                 CaldavIcalDateValue::Timed(utc)
-            } else if let Some(date) = recurrence_date {
-                CaldavIcalDateValue::AllDay(date)
             } else {
-                return None;
+                let date = recurrence_date?;
+                CaldavIcalDateValue::AllDay(date)
             };
             let timing = if let (Some(start), Some(end), Some(tz)) =
                 (timed_start_utc, timed_end_utc, event_timezone)

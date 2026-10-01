@@ -59,9 +59,9 @@ test.describe("caldav account tracer", () => {
     //       <D:href>/dav/</D:href>
     //       <D:propstat>
     //         <D:prop>
-    //           <D:current-principal>
+    //           <D:current-user-principal>
     //             <D:href>${baseURL}/dav/principals/&lt;principal_id&gt;/</D:href>
-    //           </D:current-principal>
+    //           </D:current-user-principal>
     //         </D:prop>
     //         <D:status>HTTP/1.1 200 OK</D:status>
     //       </D:propstat>
@@ -85,19 +85,25 @@ test.describe("caldav account tracer", () => {
     expect(options.headers()["allow"]).toContain("PROPFIND");
     expect(options.headers()["allow"]).toContain("OPTIONS");
 
-    // Discovery step 2: PROPFIND /dav/ returns the current principal.
+    // Discovery step 2: PROPFIND /dav/ returns the current user principal.
     const response = await request.fetch(`${baseURL}/dav/`, {
       method: "PROPFIND",
-      headers: davHeaders,
+      headers: { ...davHeaders, "content-type": "application/xml; charset=utf-8" },
+      data: `<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-principal/>
+  </D:prop>
+</D:propfind>`,
     });
     expect(response.status()).toBe(207);
     const body = await response.text();
-    expect(body).toContain("<D:current-principal>");
+    expect(body).toContain("<D:current-user-principal>");
     expect(body).toContain(`/dav/principals/`);
     expect(body).toContain("HTTP/1.1 200 OK");
 
-    const principalHref = /<D:current-principal>\s*<D:href>([^<]+)<\/D:href>/.exec(body)?.[1];
-    expect(principalHref, "current-principal href should be present").toBeTruthy();
+    const principalHref = /<D:current-user-principal>\s*<D:href>([^<]+)<\/D:href>/.exec(body)?.[1];
+    expect(principalHref, "current-user-principal href should be present").toBeTruthy();
 
     // Discovery step 3: PROPFIND the principal to find the calendar home.
     const principal = await request.fetch(principalHref as string, {

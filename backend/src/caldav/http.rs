@@ -2175,9 +2175,9 @@ fn render_propfind(accounts: &CaldavAccountService, session: &DavSession) -> Res
     <D:href>/dav/</D:href>
     <D:propstat>
       <D:prop>
-        <D:current-principal>
+        <D:current-user-principal>
           <D:href>{principal_url}</D:href>
-        </D:current-principal>
+        </D:current-user-principal>
       </D:prop>
       <D:status>HTTP/1.1 200 OK</D:status>
     </D:propstat>
@@ -3054,7 +3054,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn propfind_dav_root_returns_207_with_principal_link() {
+    async fn propfind_dav_root_returns_current_user_principal_link() {
         let db = TestDb::new().await;
         let key = SecretKey::generate();
         let accounts = CaldavAccountService::new_at(
@@ -3077,14 +3077,22 @@ mod tests {
                 header::AUTHORIZATION,
                 basic_header("frank@example.test", issued.password.expose()),
             )
-            .body(Body::empty())
+            .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+            .body(Body::from(
+                r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop>
+    <D:current-user-principal/>
+  </D:prop>
+</D:propfind>"#,
+            ))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::MULTI_STATUS);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("<D:current-principal>"));
+        assert!(text.contains("<D:current-user-principal>"));
         assert!(text.contains("/dav/principals/"));
         assert!(text.contains("HTTP/1.1 200 OK"));
     }

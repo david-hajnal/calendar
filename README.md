@@ -2,7 +2,7 @@
 
 Multi-user calendar platform with email-based authentication, shared composite views,
 public calendar sharing, one-time editable ICS file import, external ICS feed ingestion,
-and encrypted backup/restore.
+Apple Calendar (CalDAV) account sync, and encrypted backup/restore.
 
 ## Tech stack
 
@@ -77,6 +77,7 @@ authenticated unsafe requests must match it.
 - **Backup & restore** — encrypted backup (AES-256-GCM) with SHA-256 integrity verification
 - **Multi-session** — inspect and revoke active sessions
 - **Rate limiting** — per-user write rate limiting on authenticated endpoints (enabled in staging/production)
+- **Apple Calendar sync** — two-way CalDAV account connection for macOS/iOS Calendar with revocable per-device passwords, incremental sync, and full CRUD
 
 ## API overview
 
@@ -91,6 +92,7 @@ authenticated unsafe requests must match it.
 | Feeds | `GET/POST /api/v1/calendars/:id/external-feeds`, `DELETE/POST /api/v1/external-feeds/:id/disable|refresh` |
 | Notifications | `GET /api/v1/notifications` |
 | Public | `GET /api/v1/public/views/:token`, `GET /api/v1/public/views/:token/events` |
+| Apple Calendar | `GET/DELETE /api/v1/calendar-connections/apple`, `POST /api/v1/calendar-connections/apple/passwords`, `DELETE /api/v1/calendar-connections/apple/passwords/:id`, `GET /.well-known/caldav`, `PROPFIND/REPORT/PUT/DELETE /dav/*` |
 | Backup | `cargo run -- backup`, `cargo run -- restore` (CLI commands) |
 
 ## Rate limiting

@@ -55,7 +55,9 @@ auth (HelmRelease excluded; no installed resources or core bridge wiring)
 - **auth** — Node.js OIDC provider HelmRelease retained in Git, but excluded
   from production while managed PostgreSQL is unavailable.
 - **core** — Rust StatefulSet. The application backend; currently has no auth
-  HelmRelease dependency or auth bridge configuration.
+  HelmRelease dependency or auth bridge configuration. Also serves the
+  CalDAV account surface (`/dav/`) used by Apple Calendar on macOS and iOS;
+  see [Connect an Apple Calendar client](#connect-an-apple-calendar-client).
 - **mcp** — Rust Deployment. The MCP server. Depends on core and continues to
   use the existing OAuth issuer (the auth issuer has not been cut over).
 
@@ -150,6 +152,94 @@ Secret exists and is valid (generating a self-signed certificate on first run
 if needed), then deploys all Ingresses referencing that Secret. Resume Flux
 only after reconciling the direct deployment back into Git. A mixed state with
 any active HelmRelease is rejected to prevent split ownership.
+
+## Connect an Apple Calendar client
+
+Core exposes a real two-way CalDAV account surface on the same origin as the
+web app. Apple Calendar on macOS and iOS connects to it as a standard CalDAV
+account; Happening is the source of truth and never receives Apple
+Account/iCloud credentials.
+
+The DAV root is:
+
+```
+https://cal.hajnal.space/dav/
+```
+
+Discovery is standards-shaped: `/.well-known/caldav` redirects to the DAV
+root, `OPTIONS` advertises the `1, 2, access-control, calendar-access`
+capabilities, and the principal/calendar-home `PROPFIND` responses expose the
+user's active calendars with their names, colors, and role privileges.
+
+### Issue a connection password
+
+Connection passwords are revocable, per-device secrets. They are shown once
+at creation and stored only as a salted hash; the plaintext is never persisted
+or logged.
+
+From the web app, open **Settings → Calendar connections** and create a
+password for the device. The API equivalent is:
+
+```bash
+# Issue a new connection password (returns the plaintext once).
+curl -fsS -X POST https://cal.hajnal.space/api/v1/calendar-connections/apple/passwords \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: <session-cookie>' \
+  -d '{"label":"My iPhone"}'
+```
+
+The response carries the `username` (the account email), the one-time
+`password`, and the `server_url` to enter in the device.
+
+### Add the account on the device
+
+- **macOS:** System Settings → Internet Accounts → Add Account → Other CalDAV
+  Account. Server `cal.hajnal.space`, username the account email, password the
+  one-time secret.
+- **iOS:** Settings → Mail → Accounts → Add Account → Other → Other CalDAV
+  Account. Same server, username, and password.
+
+The device then performs discovery, lists the calendars, and syncs events.
+Initial sync is a full `sync-collection` snapshot; subsequent syncs are
+incremental and carry an opaque sync token. Supported CRUD (create, update,
+delete) and all-day and recurring events round-trip through the domain
+services, so changes made in Apple Calendar appear in Happening and vice
+versa.
+
+### Revoke a connection
+
+Revoking a password immediately invalidates it; the next DAV request from that
+device fails with `401`. Revoking one device's password does not affect the
+others.
+
+```bash
+# Revoke a single connection password.
+curl -fsS -X DELETE \
+  https://cal.hajnal.space/api/v1/calendar-connections/apple/passwords/<id> \
+  -H 'Cookie: <session-cookie>'
+
+# Disconnect all devices (revokes every active password).
+curl -fsS -X DELETE https://cal.hajnal.space/api/v1/calendar-connections/apple \
+  -H 'Cookie: <session-cookie>'
+```
+
+To verify a revocation took effect, a DAV request with the old credentials
+must return `401`:
+
+```bash
+curl -fsSI -u '<email>:<old-password>' https://cal.hajnal.space/dav/
+# expect: HTTP/2 401
+```
+
+### Deployment notes
+
+- The CalDAV surface shares the core origin and the two-hop TLS model
+  described above; no separate certificate or ingress is required.
+- DAV authentication is rate-limited independently of the browser/API routes,
+  and request bodies and REPORT payloads are bounded. Logs are redacted and
+  never contain credentials or event bodies.
+- Public ICS/WebCal export is a one-off convenience and is **not** the
+  account-level CalDAV synchronization described here.
 
 ## Images
 

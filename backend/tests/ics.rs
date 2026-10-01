@@ -123,3 +123,86 @@ fn parses_event_with_valarm_subcomponents() {
         NormalizedTiming::Timed { .. }
     ));
 }
+
+#[test]
+fn normalizes_allowlisted_client_properties() {
+    let calendar = parse_calendar(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:props@example.test\r\nDTSTART:20260803T090000Z\r\nDTEND:20260803T100000Z\r\nSUMMARY:Props\r\nCATEGORIES:Work,Personal\r\nURL:https://example.test/event\r\nTRANSP:OPAQUE\r\nX-APPLE-CEVENT-CATEGORY:TYPE:WORK\r\nX-APPLE-FALLBACK-ALARM-UID:alarm-1\r\nX-UNALLOWED-PROP:should-be-dropped\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT10M\r\nEND:VALARM\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nDESCRIPTION:Email\r\nTRIGGER:-PT5M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        IcsParserLimits::default(),
+    )
+    .expect("event with allowlisted properties must parse");
+
+    let event = &calendar.events[0];
+    assert_eq!(
+        event.categories,
+        vec!["Work".to_owned(), "Personal".to_owned()]
+    );
+    assert_eq!(event.url.as_deref(), Some("https://example.test/event"));
+    assert_eq!(event.transp.as_deref(), Some("OPAQUE"));
+
+    // Only the allowlisted X-properties survive; X-UNALLOWED-PROP is dropped.
+    assert_eq!(event.x_properties.len(), 2);
+    assert!(
+        event
+            .x_properties
+            .iter()
+            .any(|x| x.name == "X-APPLE-CEVENT-CATEGORY" && x.value == "TYPE:WORK")
+    );
+    assert!(
+        event
+            .x_properties
+            .iter()
+            .any(|x| x.name == "X-APPLE-FALLBACK-ALARM-UID" && x.value == "alarm-1")
+    );
+    assert!(
+        !event
+            .x_properties
+            .iter()
+            .any(|x| x.name == "X-UNALLOWED-PROP")
+    );
+
+    // Only DISPLAY/AUDIO alarms with a TRIGGER are preserved; EMAIL is dropped.
+    assert_eq!(event.alarms.len(), 1);
+    assert_eq!(event.alarms[0].action, "DISPLAY");
+    assert_eq!(event.alarms[0].trigger, "-PT10M");
+    assert_eq!(event.alarms[0].description.as_deref(), Some("Reminder"));
+}
+
+#[test]
+fn rejects_vtodo_and_vjournal_components() {
+    let vtodo = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:todo@example.test\r\nSUMMARY:Task\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+    assert_eq!(
+        parse_calendar(vtodo, IcsParserLimits::default())
+            .unwrap_err()
+            .code(),
+        IcsParseErrorCode::Malformed
+    );
+
+    let vjournal = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VJOURNAL\r\nUID:journal@example.test\r\nSUMMARY:Journal\r\nEND:VJOURNAL\r\nEND:VCALENDAR\r\n";
+    assert_eq!(
+        parse_calendar(vjournal, IcsParserLimits::default())
+            .unwrap_err()
+            .code(),
+        IcsParseErrorCode::Malformed
+    );
+}
+
+#[test]
+fn records_scheduling_properties_and_method() {
+    let calendar = parse_calendar(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:sched@example.test\r\nDTSTART:20260803T090000Z\r\nDTEND:20260803T100000Z\r\nSUMMARY:Sched\r\nORGANIZER:mailto:org@example.test\r\nATTENDEE:mailto:user@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        IcsParserLimits::default(),
+    )
+    .expect("scheduling event must parse (rejection is the DAV layer's job)");
+
+    assert!(calendar.has_method, "METHOD must be recorded");
+    let event = &calendar.events[0];
+    assert!(
+        event.scheduling.iter().any(|s| s == "ORGANIZER"),
+        "ORGANIZER must be recorded as a scheduling property"
+    );
+    assert!(
+        event.scheduling.iter().any(|s| s == "ATTENDEE"),
+        "ATTENDEE must be recorded as a scheduling property"
+    );
+}

@@ -5,6 +5,7 @@ use std::{
 
 use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
+use serde::{Deserialize, Serialize};
 
 use crate::recurrence::RecurrenceRule;
 
@@ -32,6 +33,28 @@ impl Default for IcsParserLimits {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NormalizedCalendar {
     pub events: Vec<NormalizedEvent>,
+    /// True when the VCALENDAR carries a `METHOD` property (scheduling).
+    /// DAV writes reject this; other consumers may ignore it.
+    pub has_method: bool,
+}
+
+/// One VALARM subcomponent, normalized for preservation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedAlarm {
+    /// `ACTION` value: `DISPLAY` or `AUDIO`.
+    pub action: String,
+    /// `TRIGGER` value, preserved verbatim (e.g. `-PT10M` or a UTC date-time).
+    pub trigger: String,
+    /// Optional `DESCRIPTION` text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// One allowlisted X-property, preserved as a name/value pair.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NormalizedXProperty {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,6 +71,19 @@ pub struct NormalizedEvent {
     pub sequence: u64,
     pub dtstamp: Option<DateTime<Utc>>,
     pub last_modified: Option<DateTime<Utc>>,
+    /// `CATEGORIES` values (comma-separated in the source).
+    pub categories: Vec<String>,
+    /// `URL` value, if present.
+    pub url: Option<String>,
+    /// `TRANSP` value (`OPAQUE` or `TRANSPARENT`), if present.
+    pub transp: Option<String>,
+    /// `VALARM` subcomponents, in document order.
+    pub alarms: Vec<NormalizedAlarm>,
+    /// Allowlisted X-properties, in document order.
+    pub x_properties: Vec<NormalizedXProperty>,
+    /// Scheduling property names present on the VEVENT (e.g. `ATTENDEE`,
+    /// `ORGANIZER`). DAV writes reject these; other consumers may ignore them.
+    pub scheduling: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +148,10 @@ pub fn parse_calendar(
     let mut stack = Vec::new();
     let mut components = 0_usize;
     let mut current: Option<Vec<Property>> = None;
+    let mut current_alarm: Option<Vec<Property>> = None;
+    let mut alarms: Vec<Vec<Property>> = Vec::new();
+    let mut scheduling: Vec<String> = Vec::new();
+    let mut has_method = false;
     let mut events = Vec::new();
     let mut keys = HashSet::new();
     for line in lines {
@@ -137,8 +177,16 @@ pub fn parse_calendar(
                 if name == "VEVENT" && stack.last().map(String::as_str) != Some("VCALENDAR") {
                     return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
                 }
+                if name == "VALARM" && stack.last().map(String::as_str) != Some("VEVENT") {
+                    return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
+                }
                 if name == "VEVENT" {
                     current = Some(Vec::new());
+                    alarms.clear();
+                    scheduling.clear();
+                }
+                if name == "VALARM" {
+                    current_alarm = Some(Vec::new());
                 }
                 stack.push(name.to_owned());
             }
@@ -146,11 +194,18 @@ pub fn parse_calendar(
                 if stack.pop().as_deref() != Some(name) {
                     return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
                 }
+                if name == "VALARM" {
+                    if let Some(alarm) = current_alarm.take() {
+                        alarms.push(alarm);
+                    }
+                }
                 if name == "VEVENT" {
                     let event = normalize_event(
                         current
                             .take()
                             .ok_or(IcsParseError::new(IcsParseErrorCode::Malformed))?,
+                        &alarms,
+                        &scheduling,
                         limits,
                     )?;
                     let key = (event.uid.clone(), event.recurrence_id.clone());
@@ -163,8 +218,13 @@ pub fn parse_calendar(
                     }
                 }
             }
-            _ => {
-                if stack.last().map(String::as_str) == Some("VEVENT") {
+            _ => match stack.last().map(String::as_str) {
+                Some("VEVENT") => {
+                    if (property.name == "ATTENDEE" || property.name == "ORGANIZER")
+                        && !scheduling.contains(&property.name)
+                    {
+                        scheduling.push(property.name.clone());
+                    }
                     let target = current
                         .as_mut()
                         .ok_or(IcsParseError::new(IcsParseErrorCode::Malformed))?;
@@ -174,13 +234,29 @@ pub fn parse_calendar(
                     }
                     target.push(property);
                 }
-            }
+                Some("VALARM") => {
+                    let target = current_alarm
+                        .as_mut()
+                        .ok_or(IcsParseError::new(IcsParseErrorCode::Malformed))?;
+                    let bytes = target.iter().map(|p| p.raw_len).sum::<usize>() + property.raw_len;
+                    if bytes > limits.max_component_bytes {
+                        return Err(IcsParseError::new(IcsParseErrorCode::LimitExceeded));
+                    }
+                    target.push(property);
+                }
+                Some("VCALENDAR") => {
+                    if property.name == "METHOD" {
+                        has_method = true;
+                    }
+                }
+                _ => {}
+            },
         }
     }
     if !stack.is_empty() || events.is_empty() {
         return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
     }
-    Ok(NormalizedCalendar { events })
+    Ok(NormalizedCalendar { events, has_method })
 }
 
 #[derive(Clone)]
@@ -239,8 +315,11 @@ fn property(line: &str) -> Result<Property, IcsParseError> {
 
 fn normalize_event(
     properties: Vec<Property>,
+    alarms: &[Vec<Property>],
+    scheduling: &[String],
     limits: IcsParserLimits,
 ) -> Result<NormalizedEvent, IcsParseError> {
+    let x_properties = collect_x_properties(&properties, limits)?;
     let mut fields: HashMap<String, Vec<Property>> = HashMap::new();
     for p in properties {
         fields.entry(p.name.clone()).or_default().push(p);
@@ -328,6 +407,27 @@ fn normalize_event(
     {
         return Err(IcsParseError::new(IcsParseErrorCode::InvalidEvent));
     }
+    let transp = one("TRANSP").map(|p| p.value.to_ascii_uppercase());
+    if transp
+        .as_deref()
+        .is_some_and(|t| !matches!(t, "OPAQUE" | "TRANSPARENT"))
+    {
+        return Err(IcsParseError::new(IcsParseErrorCode::InvalidEvent));
+    }
+    let categories = one("CATEGORIES")
+        .map(|p| {
+            text(p, limits).map(|value| {
+                value
+                    .split(',')
+                    .map(|c| c.trim().to_owned())
+                    .filter(|c| !c.is_empty())
+                    .collect::<Vec<_>>()
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let url = one("URL").map(|p| text(p, limits)).transpose()?;
+    let normalized_alarms = normalize_alarms(alarms, limits)?;
     Ok(NormalizedEvent {
         uid,
         timing,
@@ -348,7 +448,85 @@ fn normalize_event(
             .unwrap_or(0),
         dtstamp: one("DTSTAMP").map(utc_datetime).transpose()?,
         last_modified: one("LAST-MODIFIED").map(utc_datetime).transpose()?,
+        categories,
+        url,
+        transp,
+        alarms: normalized_alarms,
+        x_properties,
+        scheduling: scheduling.to_vec(),
     })
+}
+
+/// The bounded set of X-properties that are preserved. Any other X-property is
+/// ignored by the parser (it is neither preserved nor rejected here); the DAV
+/// layer enforces the write-time policy.
+const ALLOWED_X_PROPERTIES: &[&str] = &[
+    "X-APPLE-CEVENT-CATEGORY",
+    "X-APPLE-STRUCTURED-LOCATION",
+    "X-APPLE-FALLBACK-ALARM-UID",
+];
+
+/// Collect the allowlisted X-properties from a VEVENT's properties, in
+/// document order. Non-allowlisted X-properties are ignored.
+fn collect_x_properties(
+    properties: &[Property],
+    limits: IcsParserLimits,
+) -> Result<Vec<NormalizedXProperty>, IcsParseError> {
+    let mut out = Vec::new();
+    for property in properties {
+        if !property.name.starts_with("X-") {
+            continue;
+        }
+        if !ALLOWED_X_PROPERTIES.contains(&property.name.as_str()) {
+            continue;
+        }
+        let value = text(property, limits)?;
+        out.push(NormalizedXProperty {
+            name: property.name.clone(),
+            value,
+        });
+    }
+    Ok(out)
+}
+
+/// Normalize the VALARM subcomponents of a VEVENT into `NormalizedAlarm`s.
+///
+/// Only `DISPLAY` and `AUDIO` alarms with a `TRIGGER` are preserved. Alarms
+/// with other actions (e.g. `EMAIL`) or without a trigger are dropped, so the
+/// preserved set is bounded and deterministic.
+fn normalize_alarms(
+    alarms: &[Vec<Property>],
+    limits: IcsParserLimits,
+) -> Result<Vec<NormalizedAlarm>, IcsParseError> {
+    let mut out = Vec::with_capacity(alarms.len());
+    for alarm in alarms {
+        let mut action = None;
+        let mut trigger = None;
+        let mut description = None;
+        for p in alarm {
+            match p.name.as_str() {
+                "ACTION" => action = Some(p.value.to_ascii_uppercase()),
+                "TRIGGER" => trigger = Some(p.value.clone()),
+                "DESCRIPTION" => description = Some(text(p, limits)?),
+                _ => {}
+            }
+        }
+        let Some(action) = action else {
+            continue;
+        };
+        if !matches!(action.as_str(), "DISPLAY" | "AUDIO") {
+            continue;
+        }
+        let Some(trigger) = trigger else {
+            continue;
+        };
+        out.push(NormalizedAlarm {
+            action,
+            trigger,
+            description,
+        });
+    }
+    Ok(out)
 }
 fn text(p: &Property, limits: IcsParserLimits) -> Result<String, IcsParseError> {
     if p.value.len() > limits.max_text_bytes {

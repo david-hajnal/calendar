@@ -364,9 +364,238 @@ impl EventService {
             now,
         )
         .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            event_id,
+            "created",
+            now,
+            None,
+        )
+        .await?;
         transaction.commit().await?;
         self.notification_replanner.send(event_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, event_id)
+            .await
+    }
+
+    /// Replaces a recurring master and its exceptions in one transaction.
+    ///
+    /// CalDAV represents a series as a single resource, so a failed occurrence
+    /// update must never leave the master (or its prior exceptions) changed.
+    pub async fn replace_recurring_series(
+        &self,
+        actor_user_id: i64,
+        is_superadmin: bool,
+        calendar_id: i64,
+        series_id: i64,
+        change: RecurringSeriesChange,
+    ) -> Result<EventProjection, EventServiceError> {
+        validate_mutation(&change.event)?;
+        for exception in &change.exceptions {
+            match exception {
+                RecurringExceptionChange::UpdateTimed(change) => {
+                    validate_mutation(&change.event)?;
+                    if !matches!(change.event.timing, EventTiming::Timed { .. }) {
+                        return Err(EventServiceError::InvalidInput);
+                    }
+                }
+                RecurringExceptionChange::UpdateAllDay(change) => {
+                    validate_mutation(&change.event)?;
+                    if !matches!(change.event.timing, EventTiming::AllDay { .. }) {
+                        return Err(EventServiceError::InvalidInput);
+                    }
+                }
+                RecurringExceptionChange::DeleteTimed(_)
+                | RecurringExceptionChange::DeleteAllDay(_) => {}
+            }
+        }
+        let now = (self.clock)();
+        let timing = StoredTiming::from(&change.event.timing);
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        authorize_in_transaction(
+            &mut transaction,
+            actor_user_id,
+            is_superadmin,
+            calendar_id,
+            CalendarAction::EditAnyEvent,
+        )
+        .await?;
+        ensure_not_imported(&mut transaction, series_id).await?;
+
+        let result = sqlx::query(
+            "UPDATE events
+             SET title = ?, description = ?, location = ?, status = ?, event_kind = ?,
+                 timed_start_utc = ?, timed_end_utc = ?, event_timezone = ?,
+                 all_day_start_date = ?, all_day_end_date = ?,
+                 last_edited_by_user_id = ?, version = version + 1, updated_at = ?
+             WHERE calendar_id = ? AND id = ? AND recurrence_rule IS NOT NULL AND version = ?",
+        )
+        .bind(&change.event.title)
+        .bind(&change.event.description)
+        .bind(&change.event.location)
+        .bind(change.event.status.as_str())
+        .bind(timing.kind)
+        .bind(timing.timed_start_utc)
+        .bind(timing.timed_end_utc)
+        .bind(timing.timezone)
+        .bind(timing.all_day_start_date)
+        .bind(timing.all_day_end_date)
+        .bind(actor_user_id)
+        .bind(now)
+        .bind(calendar_id)
+        .bind(series_id)
+        .bind(change.expected_version)
+        .execute(&mut *transaction)
+        .await?;
+        if result.rows_affected() != 1 {
+            let current_version: Option<i64> = sqlx::query_scalar(
+                "SELECT version FROM events WHERE calendar_id = ? AND id = ? AND recurrence_rule IS NOT NULL",
+            )
+            .bind(calendar_id)
+            .bind(series_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            return match current_version {
+                Some(current_version) => Err(EventServiceError::Conflict { current_version }),
+                None => Err(EventServiceError::NotFound),
+            };
+        }
+        sqlx::query("DELETE FROM event_recurrence_exceptions WHERE series_id = ?")
+            .bind(series_id)
+            .execute(&mut *transaction)
+            .await?;
+
+        for (version, exception) in (change.expected_version + 1..).zip(change.exceptions) {
+            match exception {
+                RecurringExceptionChange::UpdateTimed(change) => {
+                    ensure_series_occurrence(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        change.recurrence_id,
+                    )
+                    .await?;
+                    bump_series_version(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        version,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                    insert_timed_exception(
+                        &mut transaction,
+                        series_id,
+                        change.recurrence_id,
+                        &change.event,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                }
+                RecurringExceptionChange::UpdateAllDay(change) => {
+                    ensure_all_day_series_occurrence(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        &change.recurrence_date,
+                    )
+                    .await?;
+                    bump_series_version(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        version,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                    insert_all_day_exception(
+                        &mut transaction,
+                        series_id,
+                        &change.recurrence_date,
+                        &change.event,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                }
+                RecurringExceptionChange::DeleteTimed(recurrence_id) => {
+                    ensure_series_occurrence(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        recurrence_id,
+                    )
+                    .await?;
+                    bump_series_version(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        version,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                    insert_deleted_timed_exception(
+                        &mut transaction,
+                        series_id,
+                        recurrence_id,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                }
+                RecurringExceptionChange::DeleteAllDay(recurrence_date) => {
+                    ensure_all_day_series_occurrence(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        &recurrence_date,
+                    )
+                    .await?;
+                    bump_series_version(
+                        &mut transaction,
+                        calendar_id,
+                        series_id,
+                        version,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                    insert_deleted_all_day_exception(
+                        &mut transaction,
+                        series_id,
+                        &recurrence_date,
+                        actor_user_id,
+                        now,
+                    )
+                    .await?;
+                }
+            }
+        }
+        insert_event_audit(
+            &mut transaction,
+            actor_user_id,
+            "event.update",
+            series_id,
+            now,
+        )
+        .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            series_id,
+            "updated",
+            now,
+            None,
+        )
+        .await?;
+        transaction.commit().await?;
+        self.notification_replanner.send(series_id).await;
+        self.get(actor_user_id, is_superadmin, calendar_id, series_id)
             .await
     }
 
@@ -424,6 +653,15 @@ impl EventService {
             "event.series.create",
             event_id,
             now,
+        )
+        .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            event_id,
+            "created",
+            now,
+            None,
         )
         .await?;
         transaction.commit().await?;
@@ -893,6 +1131,15 @@ impl EventService {
             now,
         )
         .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            series_id,
+            "updated",
+            now,
+            None,
+        )
+        .await?;
         transaction.commit().await?;
         self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
@@ -960,6 +1207,15 @@ impl EventService {
             "event.occurrence.delete",
             series_id,
             now,
+        )
+        .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            series_id,
+            "updated",
+            now,
+            None,
         )
         .await?;
         transaction.commit().await?;
@@ -1051,6 +1307,15 @@ impl EventService {
             now,
         )
         .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            series_id,
+            "updated",
+            now,
+            None,
+        )
+        .await?;
         transaction.commit().await?;
         self.notification_replanner.send(series_id).await;
         self.get(actor_user_id, is_superadmin, calendar_id, series_id)
@@ -1113,6 +1378,15 @@ impl EventService {
             "event.occurrence.delete",
             series_id,
             now,
+        )
+        .await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            series_id,
+            "updated",
+            now,
+            None,
         )
         .await?;
         transaction.commit().await?;
@@ -1267,6 +1541,54 @@ impl EventService {
             now,
         )
         .await?;
+        if target_calendar_id != source_calendar_id {
+            let resource_name: Option<String> = sqlx::query_scalar(
+                "SELECT resource_name FROM caldav_event_resources
+                  WHERE calendar_id = ? AND event_id = ? AND deleted_at IS NULL",
+            )
+            .bind(source_calendar_id)
+            .bind(event_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            record_caldav_change(
+                &mut transaction,
+                source_calendar_id,
+                event_id,
+                "deleted",
+                now,
+                resource_name.as_deref(),
+            )
+            .await?;
+            record_caldav_change(
+                &mut transaction,
+                target_calendar_id,
+                event_id,
+                "created",
+                now,
+                None,
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE caldav_event_resources
+                     SET calendar_id = ?, updated_at = ?
+                   WHERE event_id = ? AND deleted_at IS NULL",
+            )
+            .bind(target_calendar_id)
+            .bind(now)
+            .bind(event_id)
+            .execute(&mut *transaction)
+            .await?;
+        } else {
+            record_caldav_change(
+                &mut transaction,
+                target_calendar_id,
+                event_id,
+                "updated",
+                now,
+                None,
+            )
+            .await?;
+        }
         transaction.commit().await?;
         self.notification_replanner.send(event_id).await;
         self.get(actor_user_id, is_superadmin, target_calendar_id, event_id)
@@ -1298,6 +1620,31 @@ impl EventService {
         .bind(now)
         .bind(event_id)
         .execute(&mut *transaction)
+        .await?;
+        // Capture the DAV resource name from the live mapping before the
+        // tombstone clears the event reference. The change log carries it so
+        // sync-collection (T11) can emit the correct href for the deletion.
+        let resource_name: Option<String> = sqlx::query_scalar(
+            "SELECT resource_name FROM caldav_event_resources
+              WHERE calendar_id = ? AND event_id = ? AND deleted_at IS NULL",
+        )
+        .bind(calendar_id)
+        .bind(event_id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+        // Tombstone the live DAV mapping (if any) before removing the event so
+        // the mapping's foreign key stays satisfied and the deletion is durable
+        // for other clients. Then record the deletion in the change log. Both
+        // share this transaction, so a rolled-back delete leaves neither.
+        tombstone_caldav_mapping(&mut transaction, calendar_id, event_id, now).await?;
+        record_caldav_change(
+            &mut transaction,
+            calendar_id,
+            event_id,
+            "deleted",
+            now,
+            resource_name.as_deref(),
+        )
         .await?;
         let deleted = sqlx::query("DELETE FROM events WHERE calendar_id = ? AND id = ?")
             .bind(calendar_id)
@@ -1552,6 +1899,71 @@ async fn bump_series_version(
     }
 }
 
+async fn insert_timed_exception(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    series_id: i64,
+    recurrence_id: i64,
+    event: &EventMutation,
+    actor_user_id: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let EventTiming::Timed {
+        start_utc,
+        end_utc,
+        timezone,
+    } = &event.timing
+    else {
+        return Ok(());
+    };
+    sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_id, is_deleted, title, description, location, status, timed_start_utc, timed_end_utc, event_timezone, last_edited_by_user_id, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(series_id, recurrence_id) DO UPDATE SET is_deleted = 0, title = excluded.title, description = excluded.description, location = excluded.location, status = excluded.status, timed_start_utc = excluded.timed_start_utc, timed_end_utc = excluded.timed_end_utc, event_timezone = excluded.event_timezone, last_edited_by_user_id = excluded.last_edited_by_user_id, updated_at = excluded.updated_at")
+        .bind(series_id).bind(recurrence_id).bind(&event.title).bind(&event.description).bind(&event.location).bind(event.status.as_str()).bind(start_utc).bind(end_utc).bind(timezone).bind(actor_user_id).bind(now).bind(now).execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn insert_all_day_exception(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    series_id: i64,
+    recurrence_date: &str,
+    event: &EventMutation,
+    actor_user_id: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let EventTiming::AllDay {
+        start_date,
+        end_date,
+    } = &event.timing
+    else {
+        return Ok(());
+    };
+    sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_id, recurrence_date, is_deleted, title, description, location, status, timed_start_utc, timed_end_utc, event_timezone, all_day_start_date, all_day_end_date, last_edited_by_user_id, created_at, updated_at) VALUES (?, NULL, ?, 0, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?) ON CONFLICT(series_id, recurrence_date) DO UPDATE SET is_deleted = 0, title = excluded.title, description = excluded.description, location = excluded.location, status = excluded.status, timed_start_utc = NULL, timed_end_utc = NULL, event_timezone = NULL, all_day_start_date = excluded.all_day_start_date, all_day_end_date = excluded.all_day_end_date, last_edited_by_user_id = excluded.last_edited_by_user_id, updated_at = excluded.updated_at")
+        .bind(series_id).bind(recurrence_date).bind(&event.title).bind(&event.description).bind(&event.location).bind(event.status.as_str()).bind(start_date).bind(end_date).bind(actor_user_id).bind(now).bind(now).execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn insert_deleted_timed_exception(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    series_id: i64,
+    recurrence_id: i64,
+    actor_user_id: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_id, is_deleted, title, description, location, status, timed_start_utc, timed_end_utc, event_timezone, last_edited_by_user_id, created_at, updated_at) VALUES (?, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?) ON CONFLICT(series_id, recurrence_id) DO UPDATE SET is_deleted = 1, title = NULL, description = NULL, location = NULL, status = NULL, timed_start_utc = NULL, timed_end_utc = NULL, event_timezone = NULL, last_edited_by_user_id = excluded.last_edited_by_user_id, updated_at = excluded.updated_at")
+        .bind(series_id).bind(recurrence_id).bind(actor_user_id).bind(now).bind(now).execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn insert_deleted_all_day_exception(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    series_id: i64,
+    recurrence_date: &str,
+    actor_user_id: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_id, recurrence_date, is_deleted, title, description, location, status, timed_start_utc, timed_end_utc, event_timezone, all_day_start_date, all_day_end_date, last_edited_by_user_id, created_at, updated_at) VALUES (?, NULL, ?, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?) ON CONFLICT(series_id, recurrence_date) DO UPDATE SET is_deleted = 1, title = NULL, description = NULL, location = NULL, status = NULL, timed_start_utc = NULL, timed_end_utc = NULL, event_timezone = NULL, all_day_start_date = NULL, all_day_end_date = NULL, last_edited_by_user_id = excluded.last_edited_by_user_id, updated_at = excluded.updated_at")
+        .bind(series_id).bind(recurrence_date).bind(actor_user_id).bind(now).bind(now).execute(&mut **transaction).await?;
+    Ok(())
+}
+
 async fn insert_event_audit(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor_user_id: i64,
@@ -1568,6 +1980,66 @@ async fn insert_event_audit(
     .bind(action)
     .bind(event_id.to_string())
     .bind(now)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+/// Record one CalDAV change-log entry inside the caller's transaction.
+///
+/// This is the single, centralized point where base event mutations are
+/// recorded for CalDAV sync. Because the insert shares the caller's
+/// transaction, a committed mutation leaves exactly one row and a rolled-back
+/// mutation leaves none. DAV-originated mutations flow through the same
+/// domain-service methods, so they are recorded exactly once and never
+/// double-counted by the DAV layer.
+///
+/// `resource_name` is carried for deleted changes so sync-collection (T11) can
+/// emit the correct href after the tombstone has cleared the live mapping's
+/// event reference. It is `None` for created/updated changes, where the name
+/// is resolved from the live mapping at read time.
+async fn record_caldav_change(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    calendar_id: i64,
+    event_id: i64,
+    change_type: &'static str,
+    now: i64,
+    resource_name: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO caldav_event_changes (
+            calendar_id, event_id, change_type, created_at, resource_name
+         ) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(calendar_id)
+    .bind(event_id)
+    .bind(change_type)
+    .bind(now)
+    .bind(resource_name)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+/// Tombstone the live DAV mapping for an event, if any, inside the caller's
+/// transaction. Clearing the event reference before the event row is removed
+/// keeps the mapping's foreign key satisfied and leaves a durable tombstone
+/// for other clients, matching the DAV delete path (T09).
+async fn tombstone_caldav_mapping(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    calendar_id: i64,
+    event_id: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE caldav_event_resources
+             SET event_id = NULL, deleted_at = ?, updated_at = ?
+           WHERE calendar_id = ? AND event_id = ? AND deleted_at IS NULL",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(calendar_id)
+    .bind(event_id)
     .execute(&mut **transaction)
     .await?;
     Ok(())
@@ -1679,6 +2151,21 @@ pub struct AllDayOccurrenceChange {
     pub recurrence_date: String,
     pub expected_version: i64,
     pub event: EventMutation,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecurringSeriesChange {
+    pub expected_version: i64,
+    pub event: EventMutation,
+    pub exceptions: Vec<RecurringExceptionChange>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RecurringExceptionChange {
+    UpdateTimed(OccurrenceChange),
+    UpdateAllDay(AllDayOccurrenceChange),
+    DeleteTimed(i64),
+    DeleteAllDay(String),
 }
 
 #[derive(Clone, Copy)]

@@ -8,6 +8,7 @@ use sha2::Sha256;
 const TOKEN_BYTES: usize = 32;
 const TOKEN_HASH_CONTEXT: &[u8] = b"commoncal/token-hash/v1\0";
 const CSRF_CONTEXT: &[u8] = b"commoncal/csrf/v1\0";
+const SYNC_TOKEN_CONTEXT: &[u8] = b"commoncal/caldav-sync-token/v1\0";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -111,6 +112,36 @@ impl SecretKey {
         mac.verify_slice(&expected.0).is_ok()
     }
 
+    /// Sign a CalDAV sync revision, returning the revision bytes and an HMAC
+    /// tag. The token is opaque to clients and tamper-evident: a client cannot
+    /// forge a revision without the key.
+    pub fn sign_sync_revision(&self, revision: i64) -> (Vec<u8>, Vec<u8>) {
+        let revision_bytes = revision.to_be_bytes().to_vec();
+        let tag = self.sync_mac(&revision_bytes);
+        (revision_bytes, tag)
+    }
+
+    /// Verify a CalDAV sync revision against its HMAC tag in constant time.
+    pub fn verify_sync_revision(&self, revision_bytes: &[u8], tag: &[u8]) -> bool {
+        let expected = self.sync_mac(revision_bytes);
+        if tag.len() != expected.len() {
+            return false;
+        }
+        let mut diff = 0_u8;
+        for (a, b) in tag.iter().zip(expected.iter()) {
+            diff |= a ^ b;
+        }
+        diff == 0
+    }
+
+    fn sync_mac(&self, revision_bytes: &[u8]) -> Vec<u8> {
+        let mut mac =
+            <HmacSha256 as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        mac.update(SYNC_TOKEN_CONTEXT);
+        mac.update(revision_bytes);
+        mac.finalize().into_bytes().to_vec()
+    }
+
     pub fn generate_csrf_token(&self, session: &SecretToken) -> CsrfToken {
         let nonce = self.generate_token();
         let tag = self.csrf_tag(session.expose(), nonce.expose());
@@ -181,7 +212,6 @@ pub enum TokenDomain {
     Login,
     PublicView,
     Session,
-    Caldav,
     CaldavConnection,
 }
 
@@ -192,7 +222,6 @@ impl TokenDomain {
             Self::Login => b"login",
             Self::PublicView => b"public-view",
             Self::Session => b"session",
-            Self::Caldav => b"caldav",
             Self::CaldavConnection => b"caldav-connection",
         }
     }

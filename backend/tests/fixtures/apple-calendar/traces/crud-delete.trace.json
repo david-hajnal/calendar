@@ -1,0 +1,36 @@
+{
+  "name": "crud-delete",
+  "description": "Apple Calendar client deletes an event via conditional DELETE",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Conditional DELETE with If-Match carrying the current ETag removes the event",
+      "request": {
+        "method": "DELETE",
+        "uri": "/dav/calendars/<principal>/<calendar>/existing-event.ics",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "If-Match": "<sanitized-etag>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {}
+      }
+    },
+    {
+      "note": "A subsequent GET for the deleted resource must return 404",
+      "request": {
+        "method": "GET",
+        "uri": "/dav/calendars/<principal>/<calendar>/existing-event.ics",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {}
+      }
+    }
+  ]
+}

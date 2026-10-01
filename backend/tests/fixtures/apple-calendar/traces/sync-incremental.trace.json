@@ -1,0 +1,29 @@
+{
+  "name": "sync-incremental",
+  "description": "Apple Calendar client incremental sync-collection using an opaque token",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Incremental sync-collection REPORT carrying the opaque token from the previous snapshot",
+      "request": {
+        "method": "REPORT",
+        "uri": "/dav/calendars/<principal>/<calendar>/",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Content-Type": "application/xml; charset=utf-8",
+          "Depth": "1"
+        },
+        "body": "<C:sync-collection xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:calendarserver/\"><D:sync-token>opaque-token-0001</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/><D:getcontenttype/><C:calendar-data/></D:prop></C:sync-collection>"
+      },
+      "response": {
+        "status": 207,
+        "headers": {
+          "Content-Type": "application/xml; charset=utf-8"
+        },
+        "body_contains": [
+          "sync-token"
+        ]
+      }
+    }
+  ]
+}

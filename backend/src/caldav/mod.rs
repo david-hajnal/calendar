@@ -1,5 +1,8 @@
 pub mod auth;
 pub mod http;
+pub mod ical;
+pub mod query;
+pub mod repository;
 pub mod types;
 
 pub const TOKEN_PREFIX_LENGTH: usize = 8;

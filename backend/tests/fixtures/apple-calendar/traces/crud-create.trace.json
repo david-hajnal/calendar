@@ -1,0 +1,32 @@
+{
+  "name": "crud-create",
+  "description": "Apple Calendar client creates a timed event via conditional PUT",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Conditional PUT with If-None-Match: * creates a new event resource",
+      "request": {
+        "method": "PUT",
+        "uri": "/dav/calendars/<principal>/<calendar>/new-event.ics",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Content-Type": "text/calendar; charset=utf-8",
+          "If-None-Match": "*"
+        },
+        "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:create-0001@example.test\r\nDTSTAMP:20260115T000000Z\r\nDTSTART:20260115T090000Z\r\nDTEND:20260115T100000Z\r\nSUMMARY:New event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Location": "/dav/calendars/<principal>/<calendar>/new-event.ics",
+          "ETag": "<sanitized-etag>",
+          "Content-Type": "text/calendar; charset=utf-8"
+        },
+        "body_contains": [
+          "BEGIN:VCALENDAR",
+          "SUMMARY:New event"
+        ]
+      }
+    }
+  ]
+}

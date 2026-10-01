@@ -532,8 +532,9 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {miniCalDays.map((day, idx) => {
           const isCurrentMonth = day.getMonth() === date.getMonth();
           const isTodayDate = isToday(day);
-          const hasEvents = displayed.some(e => eventDateKey(e) === dateKey(day));
-          const cal = hasEvents ? calendarFor(displayed.find(e => eventDateKey(e) === dateKey(day))!) : null;
+          const miniDayKey = dateKey(day);
+          const hasEvents = displayed.some(e => allDayCovers(e, miniDayKey) || (e.event_kind !== "all_day" && eventDateKey(e) === miniDayKey));
+          const cal = hasEvents ? calendarFor(displayed.find(e => allDayCovers(e, miniDayKey) || (e.event_kind !== "all_day" && eventDateKey(e) === miniDayKey))!) : null;
           const accentColor = cal?.color || 'var(--color-primary)';
           return <button key={idx} type="button" className={`event-ui__mini-cal-day ${!isCurrentMonth ? 'event-ui__mini-cal-day--other' : ''} ${isTodayDate ? 'event-ui__mini-cal-day--today' : ''}`} onClick={() => setDate(startOfDay(day))} style={{ background: isTodayDate ? accentColor : undefined, color: isTodayDate ? '#fff' : undefined }}>
             {day.getDate()}
@@ -557,7 +558,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                 for (let i = 0; i < totalCells; i++) {
                   const d = addDays(from, i - startOffset);
                   const dateStr = dateKey(d);
-                  const dayEvents = displayed.filter(e => eventDateKey(e) === dateStr);
+                  const dayEvents = displayed.filter(e => allDayCovers(e, dateStr) || (e.event_kind !== "all_day" && eventDateKey(e) === dateStr));
                   cells.push({ date: d, events: dayEvents, isCurrentMonth: d.getMonth() === date.getMonth(), isToday: isToday(d) });
                 }
                 return cells.map((cell, idx) => {

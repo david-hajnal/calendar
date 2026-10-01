@@ -5,8 +5,10 @@
 // and grant management without exposing the database directly.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -203,23 +205,134 @@ pub struct ReminderResponse {
     pub reminder_id: String,
 }
 
-/// Validate the x-mcp-api-key header.
-#[allow(dead_code)]
-fn validate_mcp_api_key(headers: &axum::http::HeaderMap) -> Result<(), (StatusCode, &'static str)> {
-    let api_key = headers
-        .get("x-mcp-api-key")
-        .ok_or((StatusCode::UNAUTHORIZED, "missing API key"))?;
+/// Shared state for the MCP internal API key middleware.
+#[derive(Clone)]
+pub struct McpApiKeyAuth {
+    expected_key: String,
+}
 
-    let api_key_str = api_key
-        .to_str()
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid API key encoding"))?;
-
-    let expected = std::env::var("MCP_INTERNAL_API_KEY").unwrap_or_default();
-    if expected.is_empty() || api_key_str == expected {
-        Ok(())
-    } else {
-        Err((StatusCode::UNAUTHORIZED, "invalid API key"))
+impl McpApiKeyAuth {
+    pub fn new(expected_key: impl Into<String>) -> Self {
+        Self {
+            expected_key: expected_key.into(),
+        }
     }
+}
+
+/// Constant-time byte comparison to avoid timing side channels.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+fn unauthorized_response() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::json!({ "error": "unauthorized" }).to_string(),
+        ))
+        .expect("static response cannot fail to build")
+}
+
+/// Middleware enforcing the `x-mcp-api-key` header on MCP internal routes.
+///
+/// Fails closed: when no key is configured, every request is rejected.
+/// Returns 401 for missing or invalid keys and never logs key material.
+pub async fn mcp_api_key_middleware(
+    State(auth): State<McpApiKeyAuth>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if auth.expected_key.is_empty() {
+        return unauthorized_response();
+    }
+    let provided = request
+        .headers()
+        .get("x-mcp-api-key")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if constant_time_eq(provided.as_bytes(), auth.expected_key.as_bytes()) {
+        return next.run(request).await;
+    }
+    unauthorized_response()
+}
+
+/// Build the MCP internal API router with every protected route and the
+/// API-key middleware applied.
+pub fn build_mcp_internal_router(pool: SqlitePool, auth: McpApiKeyAuth) -> axum::Router {
+    axum::Router::new()
+        .route(
+            "/internal/token-exchange",
+            axum::routing::post(token_exchange),
+        )
+        .route(
+            "/internal/mcp/users/:user_id/status",
+            axum::routing::get(get_user_status),
+        )
+        .route(
+            "/internal/mcp/users/:user_id/calendars",
+            axum::routing::get(list_calendars_for_mcp),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/role/:user_id",
+            axum::routing::get(get_calendar_role),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/events/:event_id",
+            axum::routing::get(get_event),
+        )
+        .route(
+            "/internal/mcp/calendars/:calendar_id/events/search",
+            axum::routing::get(search_events),
+        )
+        .route(
+            "/internal/mcp/events/:calendar_id",
+            axum::routing::post(create_event),
+        )
+        .route(
+            "/internal/mcp/events/:calendar_id/:event_id",
+            axum::routing::patch(update_event),
+        )
+        .route(
+            "/internal/mcp/delete-intents",
+            axum::routing::post(create_delete_intent),
+        )
+        .route(
+            "/internal/mcp/delete-intents/:intent_id",
+            axum::routing::get(get_delete_intent),
+        )
+        .route(
+            "/internal/mcp/delete-intents/:intent_id/commit",
+            axum::routing::post(commit_delete_intent),
+        )
+        .route(
+            "/internal/mcp/mcp-grants",
+            axum::routing::get(get_mcp_grants),
+        )
+        .route(
+            "/internal/mcp/idempotency/:operation_id",
+            axum::routing::get(check_idempotency),
+        )
+        .route(
+            "/internal/mcp/idempotency",
+            axum::routing::post(record_idempotency),
+        )
+        .route(
+            "/api/v1/calendars/:calendar_id/reminders",
+            axum::routing::post(create_reminder),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            mcp_api_key_middleware,
+        ))
+        .with_state(pool)
 }
 
 /// RFC 8693 token exchange endpoint.
@@ -730,4 +843,134 @@ pub async fn create_reminder(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ReminderResponse { reminder_id }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use tower::ServiceExt;
+
+    const TEST_KEY: &str = "test-mcp-internal-key";
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::new()
+            .filename(":memory:")
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn build_app(pool: SqlitePool) -> axum::Router {
+        build_mcp_internal_router(pool, McpApiKeyAuth::new(TEST_KEY))
+    }
+
+    fn make_request(method: &str, path: &str, key: Option<&str>) -> axum::extract::Request {
+        let mut builder = axum::http::Request::builder().method(method).uri(path);
+        if let Some(key) = key {
+            builder = builder.header("x-mcp-api-key", key);
+        }
+        builder.body(axum::body::Body::empty()).unwrap()
+    }
+
+    /// Every protected route: (method, path).
+    fn protected_routes() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("POST", "/internal/token-exchange"),
+            ("GET", "/internal/mcp/users/1/status"),
+            ("GET", "/internal/mcp/users/1/calendars"),
+            ("GET", "/internal/mcp/calendars/1/role/1"),
+            ("GET", "/internal/mcp/calendars/1/events/1"),
+            ("GET", "/internal/mcp/calendars/1/events/search"),
+            ("POST", "/internal/mcp/events/1"),
+            ("PATCH", "/internal/mcp/events/1/1"),
+            ("POST", "/internal/mcp/delete-intents"),
+            ("GET", "/internal/mcp/delete-intents/abc"),
+            ("POST", "/internal/mcp/delete-intents/abc/commit"),
+            ("GET", "/internal/mcp/mcp-grants"),
+            ("GET", "/internal/mcp/idempotency/op1"),
+            ("POST", "/internal/mcp/idempotency"),
+            ("POST", "/api/v1/calendars/1/reminders"),
+        ]
+    }
+
+    #[tokio::test]
+    async fn missing_key_rejected_on_all_routes() {
+        let pool = test_pool().await;
+        for (method, path) in protected_routes() {
+            let app = build_app(pool.clone());
+            let response = app.oneshot(make_request(method, path, None)).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} must be 401 without a key"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_key_rejected_on_all_routes() {
+        let pool = test_pool().await;
+        for (method, path) in protected_routes() {
+            let app = build_app(pool.clone());
+            let response = app
+                .oneshot(make_request(method, path, Some("wrong-key")))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} must be 401 with an invalid key"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn valid_key_passes_auth_on_all_routes() {
+        let pool = test_pool().await;
+        for (method, path) in protected_routes() {
+            let app = build_app(pool.clone());
+            let response = app
+                .oneshot(make_request(method, path, Some(TEST_KEY)))
+                .await
+                .unwrap();
+            assert_ne!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} must not be 401 with a valid key"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_configured_key_rejects_all_requests() {
+        let pool = test_pool().await;
+        let app = build_mcp_internal_router(pool, McpApiKeyAuth::new(""));
+        for (method, path) in protected_routes() {
+            let app = app.clone();
+            let response = app
+                .oneshot(make_request(method, path, Some("anything")))
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} must be 401 when no key is configured"
+            );
+        }
+    }
+
+    #[test]
+    fn constant_time_eq_matches_and_mismatches() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(constant_time_eq(b"", b""));
+    }
 }

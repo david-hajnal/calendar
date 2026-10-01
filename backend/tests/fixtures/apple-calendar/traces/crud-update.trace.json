@@ -1,0 +1,47 @@
+{
+  "name": "crud-update",
+  "description": "Apple Calendar client updates an existing event via conditional PUT",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Conditional PUT with If-Match carrying the current ETag updates the event",
+      "request": {
+        "method": "PUT",
+        "uri": "/dav/calendars/<principal>/<calendar>/existing-event.ics",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Content-Type": "text/calendar; charset=utf-8",
+          "If-Match": "<sanitized-etag>"
+        },
+        "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:update-0001@example.test\r\nDTSTAMP:20260115T000000Z\r\nDTSTART:20260116T090000Z\r\nDTEND:20260116T100000Z\r\nSUMMARY:Updated event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "ETag": "<sanitized-rotated-etag>",
+          "Content-Type": "text/calendar; charset=utf-8"
+        },
+        "body_contains": [
+          "SUMMARY:Updated event"
+        ]
+      }
+    },
+    {
+      "note": "A stale If-Match must fail with 412 without mutating the event",
+      "request": {
+        "method": "PUT",
+        "uri": "/dav/calendars/<principal>/<calendar>/existing-event.ics",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Content-Type": "text/calendar; charset=utf-8",
+          "If-Match": "<stale-etag>"
+        },
+        "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:update-0001@example.test\r\nDTSTAMP:20260115T000000Z\r\nDTSTART:20260117T090000Z\r\nDTEND:20260117T100000Z\r\nSUMMARY:Stale write\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      },
+      "response": {
+        "status": 412,
+        "headers": {}
+      }
+    }
+  ]
+}

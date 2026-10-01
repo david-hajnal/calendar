@@ -87,6 +87,32 @@ describe("CalendarEventUI", () => {
     expect(await screen.findByText("Conference")).toBeInTheDocument();
   });
 
+  it("renders a multi-day all-day event on every day it spans in month view", async () => {
+    const multiDayEvent = {
+      id: 13,
+      calendar_id: 1,
+      access: "details" as const,
+      status: "confirmed" as const,
+      event_kind: "all_day" as const,
+      title: "Multi-day trip",
+      start_date: "2025-06-16",
+      end_date: "2025-06-19",
+      version: 1,
+    };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => Promise.resolve(
+      new Response(JSON.stringify(String(path).includes("/events?") ? [multiDayEvent] : []), { status: 200 }),
+    ));
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    const month = await screen.findByRole("list", { name: "Month calendar" });
+    const chips = month.querySelectorAll(".event-chip__text");
+    const titles = Array.from(chips).map((el) => el.textContent);
+    // Event spans Jun 16, 17, 18 (end_date Jun 19 is exclusive)
+    expect(titles.filter((t) => t === "Multi-day trip")).toHaveLength(3);
+  });
+
   it("does not let a stale month response overwrite newer day events", async () => {
     let resolveMonth!: (response: Response) => void;
     let resolveDay!: (response: Response) => void;
@@ -193,7 +219,8 @@ describe("CalendarEventUI", () => {
     });
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    fireEvent.doubleClick(await screen.findByRole("button", { name: "Conference" }));
+    const [conferenceBtn] = await screen.findAllByRole("button", { name: "Conference" });
+    fireEvent.doubleClick(conferenceBtn);
     expect(screen.getByRole("form", { name: "Edit event" })).toBeInTheDocument();
     expect(screen.getByLabelText("All day")).toBeChecked();
     expect(screen.getByLabelText("Start date")).toHaveValue("2025-06-16");
@@ -219,7 +246,8 @@ describe("CalendarEventUI", () => {
     });
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Conference" }));
+    const [conferenceBtn] = await screen.findAllByRole("button", { name: "Conference" });
+    fireEvent.click(conferenceBtn);
     const detail = screen.getByRole("complementary", { name: "Event details" });
     expect(detail).toHaveTextContent(/Jun 16/);
     expect(detail).toHaveTextContent(/Jun 17/);
@@ -235,7 +263,8 @@ describe("CalendarEventUI", () => {
     });
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Move Conference later" }));
+    const [moveBtn] = await screen.findAllByRole("button", { name: "Move Conference later" });
+    fireEvent.click(moveBtn);
 
     await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/12", expect.objectContaining({ method: "PATCH" })));
     const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
@@ -475,7 +504,7 @@ describe("CalendarEventUI", () => {
     });
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
-    const conference = await screen.findByRole("button", { name: "Conference" });
+    const [conference] = await screen.findAllByRole("button", { name: "Conference" });
     const june19 = monthCell("19");
     fireEvent(conference, pointerEvent("pointerdown", 100));
     fireEvent(conference, pointerEvent("pointermove", 106));

@@ -1,0 +1,30 @@
+{
+  "name": "sync-initial",
+  "description": "Apple Calendar client initial sync-collection snapshot",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Initial sync-collection REPORT with an empty sync-token requests a full snapshot",
+      "request": {
+        "method": "REPORT",
+        "uri": "/dav/calendars/<principal>/<calendar>/",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Content-Type": "application/xml; charset=utf-8",
+          "Depth": "1"
+        },
+        "body": "<C:sync-collection xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:calendarserver/\"><D:sync-token></D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/><D:getcontenttype/><C:calendar-data/></D:prop></C:sync-collection>"
+      },
+      "response": {
+        "status": 207,
+        "headers": {
+          "Content-Type": "application/xml; charset=utf-8"
+        },
+        "body_contains": [
+          "sync-token",
+          "sync-level"
+        ]
+      }
+    }
+  ]
+}

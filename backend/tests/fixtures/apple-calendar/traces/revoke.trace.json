@@ -1,0 +1,41 @@
+{
+  "name": "revoke",
+  "description": "Revoking a connection password immediately fails the next DAV request",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "A valid request before revocation succeeds",
+      "request": {
+        "method": "PROPFIND",
+        "uri": "/dav/",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Depth": "0"
+        }
+      },
+      "response": {
+        "status": 207,
+        "headers": {
+          "Content-Type": "application/xml; charset=utf-8"
+        }
+      }
+    },
+    {
+      "note": "After revocation the same credentials must be rejected with 401",
+      "request": {
+        "method": "PROPFIND",
+        "uri": "/dav/",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Depth": "0"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "WWW-Authenticate": "Basic realm=\"commoncal-dav\""
+        }
+      }
+    }
+  ]
+}

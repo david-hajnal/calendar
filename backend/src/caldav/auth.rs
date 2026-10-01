@@ -4,7 +4,10 @@ use std::{
 };
 
 use axum::http::HeaderValue;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use sqlx::SqlitePool;
 use url::Url;
 
@@ -12,12 +15,28 @@ use crate::{
     caldav::{
         MAX_LABEL_LENGTH, TOKEN_PREFIX_LENGTH,
         types::{
-            CaldavAccount, CaldavAuthError, ConnectionStatus, CredentialMetadata, DavSession,
-            IssuedCredential, PrincipalInfo,
+            CaldavAccount, CaldavAuthError, CaldavCalendar, CaldavMetrics, ConnectionStatus,
+            CredentialMetadata, DavSession, IssuedCredential, PrincipalInfo,
         },
     },
+    rate_limiter::FixedWindowRateLimiter,
     security::{SecretKey, SecretToken, TokenDomain},
 };
+
+type CalendarRow = (
+    i64,
+    i64,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+);
+
+/// Maximum failed DAV auth attempts per client key before throttling.
+pub const DAV_AUTH_MAX_ATTEMPTS: u32 = 10;
+/// Window (seconds) for the DAV auth rate limiter.
+pub const DAV_AUTH_WINDOW_SECONDS: i64 = 60;
 
 #[derive(Clone)]
 pub struct CaldavAccountService {
@@ -25,9 +44,44 @@ pub struct CaldavAccountService {
     key: SecretKey,
     public_origin: Url,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    auth_rate_limiter: Arc<FixedWindowRateLimiter>,
+    metrics: Arc<CaldavMetrics>,
 }
 
 impl CaldavAccountService {
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub fn now(&self) -> i64 {
+        (self.clock)()
+    }
+
+    pub fn metrics(&self) -> &CaldavMetrics {
+        &self.metrics
+    }
+
+    /// Check the DAV auth rate limit for a client key (typically the IP).
+    /// Returns `Err((retry_after, error))` when the limit is exceeded.
+    pub fn check_auth_rate_limit(&self, client_key: &str) -> Result<(), (i64, CaldavAuthError)> {
+        let (allowed, retry_after) = self.auth_rate_limiter.check_by_key(client_key);
+        if !allowed {
+            self.metrics.record_rate_limited();
+            return Err((retry_after, CaldavAuthError::RateLimited));
+        }
+        Ok(())
+    }
+
+    /// Record a failed authentication attempt in metrics.
+    pub fn record_auth_failure(&self) {
+        self.metrics.record_auth_failure();
+    }
+
+    /// Record a successful authentication in metrics.
+    pub fn record_auth_success(&self) {
+        self.metrics.record_success();
+    }
+
     pub fn new(pool: SqlitePool, key: SecretKey, public_origin: Url) -> Self {
         Self {
             pool,
@@ -39,12 +93,22 @@ impl CaldavAccountService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
+            auth_rate_limiter: Arc::new(FixedWindowRateLimiter::new(
+                DAV_AUTH_MAX_ATTEMPTS,
+                DAV_AUTH_WINDOW_SECONDS,
+            )),
+            metrics: Arc::new(CaldavMetrics::new()),
         }
     }
 
     pub fn new_at(pool: SqlitePool, key: SecretKey, public_origin: Url, now: i64) -> Self {
         let mut service = Self::new(pool, key, public_origin);
         service.clock = Arc::new(move || now);
+        service.auth_rate_limiter = Arc::new(FixedWindowRateLimiter::new_at(
+            DAV_AUTH_MAX_ATTEMPTS,
+            DAV_AUTH_WINDOW_SECONDS,
+            now,
+        ));
         service
     }
 
@@ -379,15 +443,94 @@ impl CaldavAccountService {
             .unwrap_or_else(|_| format!("{}/dav/calendars/{}/", self.public_origin, principal_id))
     }
 
+    pub async fn list_calendars(
+        &self,
+        user_id: i64,
+    ) -> Result<Vec<CaldavCalendar>, CaldavAuthError> {
+        let rows: Vec<CalendarRow> = sqlx::query_as(
+            "SELECT calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
+                    calendars.name, calendars.description, calendars.color,
+                    calendar_acl.role
+              FROM calendars
+              JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
+              LEFT JOIN caldav_accounts owner_accounts
+                ON owner_accounts.user_id = calendars.owner_user_id
+              WHERE calendar_acl.user_id = ?
+                AND calendars.archived = 0
+              ORDER BY calendars.id",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| CaldavAuthError::Persistence)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    calendar_id,
+                    owner_user_id,
+                    owner_principal_id,
+                    name,
+                    description,
+                    color,
+                    role,
+                )| CaldavCalendar {
+                    calendar_id,
+                    owner_user_id,
+                    owner_principal_id,
+                    name,
+                    description,
+                    color,
+                    role,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn resolve_calendar(
+        &self,
+        user_id: i64,
+        calendar_id: i64,
+    ) -> Result<Option<CaldavCalendar>, CaldavAuthError> {
+        let row: Option<CalendarRow> = sqlx::query_as(
+            "SELECT calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
+                    calendars.name, calendars.description, calendars.color,
+                    calendar_acl.role
+             FROM calendars
+             JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
+             LEFT JOIN caldav_accounts owner_accounts
+               ON owner_accounts.user_id = calendars.owner_user_id
+             WHERE calendars.id = ? AND calendar_acl.user_id = ? AND calendars.archived = 0",
+        )
+        .bind(calendar_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| CaldavAuthError::Persistence)?;
+        Ok(row.map(
+            |(calendar_id, owner_user_id, owner_principal_id, name, description, color, role)| {
+                CaldavCalendar {
+                    calendar_id,
+                    owner_user_id,
+                    owner_principal_id,
+                    name,
+                    description,
+                    color,
+                    role,
+                }
+            },
+        ))
+    }
+
     pub async fn resolve_principal(
         &self,
         principal_id: &str,
     ) -> Result<Option<PrincipalInfo>, CaldavAuthError> {
         let row: Option<(i64, Option<String>, String)> = sqlx::query_as(
             "SELECT a.user_id, u.display_name, u.normalized_email
-             FROM caldav_accounts a
-             JOIN users u ON u.id = a.user_id
-             WHERE a.principal_id = ?",
+              FROM caldav_accounts a
+              JOIN users u ON u.id = a.user_id
+              WHERE a.principal_id = ?",
         )
         .bind(principal_id)
         .fetch_optional(&self.pool)
@@ -399,6 +542,39 @@ impl CaldavAccountService {
                 .filter(|name| !name.trim().is_empty())
                 .unwrap_or(email),
         }))
+    }
+
+    /// Encode a change-log revision into an opaque, tamper-evident sync token.
+    ///
+    /// The token is `base64url(revision) . base64url(hmac)`. Clients treat it
+    /// as an opaque string; the server verifies the HMAC before trusting the
+    /// revision, so a forged or truncated token fails safely.
+    pub fn encode_sync_token(&self, revision: i64) -> String {
+        let (revision_bytes, tag) = self.key.sign_sync_revision(revision);
+        format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(revision_bytes),
+            URL_SAFE_NO_PAD.encode(tag)
+        )
+    }
+
+    /// Decode and verify a sync token, returning the revision it carries.
+    ///
+    /// Returns `None` for any malformed, truncated, or tampered token so the
+    /// caller can fail safely without leaking which check failed.
+    pub fn decode_sync_token(&self, token: &str) -> Option<i64> {
+        let (encoded_revision, encoded_tag) = token.split_once('.')?;
+        let revision_bytes = URL_SAFE_NO_PAD.decode(encoded_revision).ok()?;
+        let tag = URL_SAFE_NO_PAD.decode(encoded_tag).ok()?;
+        if revision_bytes.len() != 8 {
+            return None;
+        }
+        if !self.key.verify_sync_revision(&revision_bytes, &tag) {
+            return None;
+        }
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(&revision_bytes);
+        Some(i64::from_be_bytes(bytes))
     }
 }
 

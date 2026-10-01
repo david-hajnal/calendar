@@ -16,6 +16,7 @@ export function CalendarConnections({ api }: { api: ApiClient }) {
   const { state } = useAuth();
   const username = state.status === "authenticated" ? state.session.user.email : "";
   const [connection, setConnection] = useState<AppleCalendarConnection | null>(null);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [label, setLabel] = useState("");
   const [creating, setCreating] = useState(false);
@@ -25,10 +26,13 @@ export function CalendarConnections({ api }: { api: ApiClient }) {
 
   const load = useCallback(async () => {
     setLoadError(false);
+    setLoading(true);
     try {
       setConnection(await getAppleCalendarConnection(api));
     } catch {
       setLoadError(true);
+    } finally {
+      setLoading(false);
     }
   }, [api]);
 
@@ -86,6 +90,17 @@ export function CalendarConnections({ api }: { api: ApiClient }) {
     } catch {
       setCopied(false);
     }
+  }
+
+  if (loading && connection === null) {
+    return (
+      <section className="calendar-connections" aria-labelledby="calendar-connections-heading" aria-busy="true">
+        <h2 id="calendar-connections-heading">Apple Calendar</h2>
+        <p className="app-message app-message--status" role="status">
+          Loading your Apple Calendar connection…
+        </p>
+      </section>
+    );
   }
 
   if (loadError) {

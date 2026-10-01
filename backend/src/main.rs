@@ -222,69 +222,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Add MCP internal API routes (separate router with its own state).
-    let db_pool = database.clone();
-    let mcp_router = axum::Router::new()
-        .route(
-            "/internal/token-exchange",
-            axum::routing::post(commoncal_backend::mcp_internal::token_exchange),
-        )
-        .route(
-            "/internal/mcp/users/:user_id/status",
-            axum::routing::get(commoncal_backend::mcp_internal::get_user_status),
-        )
-        .route(
-            "/internal/mcp/users/:user_id/calendars",
-            axum::routing::get(commoncal_backend::mcp_internal::list_calendars_for_mcp),
-        )
-        .route(
-            "/internal/mcp/calendars/:calendar_id/role/:user_id",
-            axum::routing::get(commoncal_backend::mcp_internal::get_calendar_role),
-        )
-        .route(
-            "/internal/mcp/calendars/:calendar_id/events/:event_id",
-            axum::routing::get(commoncal_backend::mcp_internal::get_event),
-        )
-        .route(
-            "/internal/mcp/calendars/:calendar_id/events/search",
-            axum::routing::get(commoncal_backend::mcp_internal::search_events),
-        )
-        .route(
-            "/internal/mcp/events/:calendar_id",
-            axum::routing::post(commoncal_backend::mcp_internal::create_event),
-        )
-        .route(
-            "/internal/mcp/events/:calendar_id/:event_id",
-            axum::routing::patch(commoncal_backend::mcp_internal::update_event),
-        )
-        .route(
-            "/internal/mcp/delete-intents",
-            axum::routing::post(commoncal_backend::mcp_internal::create_delete_intent),
-        )
-        .route(
-            "/internal/mcp/delete-intents/:intent_id",
-            axum::routing::get(commoncal_backend::mcp_internal::get_delete_intent),
-        )
-        .route(
-            "/internal/mcp/delete-intents/:intent_id/commit",
-            axum::routing::post(commoncal_backend::mcp_internal::commit_delete_intent),
-        )
-        .route(
-            "/internal/mcp/mcp-grants",
-            axum::routing::get(commoncal_backend::mcp_internal::get_mcp_grants),
-        )
-        .route(
-            "/internal/mcp/idempotency/:operation_id",
-            axum::routing::get(commoncal_backend::mcp_internal::check_idempotency),
-        )
-        .route(
-            "/internal/mcp/idempotency",
-            axum::routing::post(commoncal_backend::mcp_internal::record_idempotency),
-        )
-        .route(
-            "/api/v1/calendars/:calendar_id/reminders",
-            axum::routing::post(commoncal_backend::mcp_internal::create_reminder),
-        )
-        .with_state(db_pool);
+    // The internal API key is required in production; startup fails when it is
+    // absent or empty so the boundary can never be left open.
+    let mcp_internal_api_key = std::env::var("MCP_INTERNAL_API_KEY").unwrap_or_default();
+    if config.environment == Environment::Production && mcp_internal_api_key.is_empty() {
+        return Err("MCP_INTERNAL_API_KEY is required in production".into());
+    }
+    let mcp_router = commoncal_backend::mcp_internal::build_mcp_internal_router(
+        database.clone(),
+        commoncal_backend::mcp_internal::McpApiKeyAuth::new(mcp_internal_api_key),
+    );
     router = router.merge(mcp_router);
 
     // Add McpGrant management routes (frontend-facing).

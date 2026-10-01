@@ -1712,7 +1712,7 @@ async fn feed_ics(
     let events = state
         .shared_view_service
         .ok_or_else(ApiError::service_unavailable)?
-        .caldav_events(
+        .public_events_raw(
             event_service,
             &token,
             EventRange {

@@ -218,5 +218,31 @@ describe("routing", () => {
     expect(new URLSearchParams(window.location.search).get("redirect")).toBe("/");
   });
 
+  it("settings button opens calendar connections", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/session") {
+        return new Response(JSON.stringify(session), { status: 200 });
+      }
+      if (url === "/api/v1/calendar-connections/apple") {
+        return new Response(
+          JSON.stringify({
+            server_url: "http://127.0.0.1:3100/dav/",
+            principal_id: "abc",
+            credentials: [],
+            last_successful_access_at: null,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    renderAt("/calendars", fetcher);
 
+    await screen.findByText("CommonCal");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(window.location.pathname).toBe("/settings/calendar-connections");
+    expect(await screen.findByRole("heading", { name: "Apple Calendar" })).toBeInTheDocument();
+  });
 });

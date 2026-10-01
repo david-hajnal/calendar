@@ -1,0 +1,57 @@
+{
+  "name": "connect",
+  "description": "Apple Calendar client discovery and authentication handshake",
+  "sanitized": true,
+  "steps": [
+    {
+      "note": "Capability discovery before authentication",
+      "request": {
+        "method": "OPTIONS",
+        "uri": "/dav/",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "DAV": "1, 2, access-control, calendar-access",
+          "Allow": "PROPFIND, OPTIONS, REPORT"
+        }
+      }
+    },
+    {
+      "note": "Well-known discovery redirects to the DAV root",
+      "request": {
+        "method": "GET",
+        "uri": "/.well-known/caldav",
+        "headers": {}
+      },
+      "response": {
+        "status": 301,
+        "headers": {
+          "Location": "https://cal.example.test/dav/"
+        }
+      }
+    },
+    {
+      "note": "Authenticated root PROPFIND returns the principal link",
+      "request": {
+        "method": "PROPFIND",
+        "uri": "/dav/",
+        "headers": {
+          "Authorization": "Basic <sanitized-credentials>",
+          "Depth": "0"
+        }
+      },
+      "response": {
+        "status": 207,
+        "headers": {
+          "Content-Type": "application/xml; charset=utf-8"
+        },
+        "body_contains": [
+          "DAV:principal-URL",
+          "/dav/principals/"
+        ]
+      }
+    }
+  ]
+}

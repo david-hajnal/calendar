@@ -469,8 +469,7 @@ async fn propfind_depth_one_lists_event_resource_with_matching_etag() {
     let text = String::from_utf8_lossy(&body);
     let href = format!("/dav/calendars/{principal_id}/{calendar_id}/{resource_name}.ics");
     assert!(text.contains(&href));
-    assert!(text.contains("<C:calendar-component/>"));
-    assert!(text.contains("<C:vevent/>"));
+    assert!(text.contains("<D:resourcetype/>"));
     assert!(text.contains("<D:getetag>"));
 
     // The listed ETag must match the resource GET ETag.
@@ -2893,7 +2892,7 @@ async fn report_request(
 fn calendar_query_xml(start: &str, end: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
     <D:getetag/>
     <D:getcontenttype/>
@@ -2909,7 +2908,7 @@ fn calendar_query_xml(start: &str, end: &str) -> String {
 fn multiget_xml(href: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
     <D:getetag/>
     <D:getcontenttype/>
@@ -3701,7 +3700,7 @@ async fn change_log_is_ordered_and_pageable() {
 fn sync_collection_xml(sync_token: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:sync-token>{sync_token}</D:sync-token>
   <D:sync-level>1</D:sync-level>
   <D:prop>
@@ -4079,7 +4078,7 @@ async fn sync_collection_rejects_bad_sync_level() {
     ) = scenario().await;
 
     let body = r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:sync-token></D:sync-token>
   <D:sync-level>2</D:sync-level>
   <D:prop><D:getetag/></D:prop>

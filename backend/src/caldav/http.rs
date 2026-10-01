@@ -23,7 +23,7 @@ use crate::{
             CaldavIcalDateValue, CaldavIcalEvent, CaldavIcalTiming, etag_for_ical,
             serialize_event_resource, serialize_recurring_series,
         },
-        query::{self, CalendarMultiget, CalendarQuery, MAX_RESULTS},
+        query::{self, CalendarMultiget, CalendarQuery, MAX_RESULTS, PropfindMode},
         repository::CaldavRepository,
         types::{
             CaldavAuthError, CaldavCalendar, CaldavClientProperties, CaldavEventResource,
@@ -47,7 +47,14 @@ const OPTIONS: &str = "OPTIONS";
 const REPORT: &str = "REPORT";
 const DAV: header::HeaderName = header::HeaderName::from_static("dav");
 const DAV_CAPABILITIES: &str = "1, 2, access-control, calendar-access";
-const DAV_ALLOW: &str = "PROPFIND, OPTIONS, REPORT";
+
+/// Endpoint-specific `Allow` sets. Each lists only the methods that endpoint
+/// actually implements, so `OPTIONS` and `405` responses stay honest.
+const DAV_ROOT_ALLOW: &str = "PROPFIND, OPTIONS";
+const DAV_PRINCIPAL_ALLOW: &str = "PROPFIND, OPTIONS";
+const DAV_CALENDAR_HOME_ALLOW: &str = "PROPFIND, OPTIONS";
+const DAV_CALENDAR_ALLOW: &str = "PROPFIND, OPTIONS, REPORT";
+const DAV_RESOURCE_ALLOW: &str = "GET, HEAD, PUT, DELETE, OPTIONS";
 
 /// Effective event-read scope for a calendar role, derived from the single
 /// authorization projection. `Details` exposes full event content; `FreeBusy`
@@ -141,15 +148,19 @@ async fn well_known_caldav(State(accounts): State<CaldavAccountService>) -> Resp
 
 async fn dav_root(State(accounts): State<CaldavAccountService>, request: Request) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
+        OPTIONS => dav_capabilities(DAV_ROOT_ALLOW),
         PROPFIND => {
-            let (session, _request) = match authenticate_dav_request(&accounts, request).await {
+            let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
-            render_propfind(&accounts, &session)
+            let mode = match parse_propfind_body(accounts.metrics(), request).await {
+                Ok(mode) => mode,
+                Err(response) => return response,
+            };
+            render_propfind(&accounts, &session, &mode)
         }
-        _ => method_not_allowed(),
+        _ => method_not_allowed(DAV_ROOT_ALLOW),
     }
 }
 
@@ -159,16 +170,12 @@ async fn dav_principal(
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
+        OPTIONS => dav_capabilities(DAV_PRINCIPAL_ALLOW),
         PROPFIND => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
-            if depth_is_infinite(request.headers()) {
-                return (StatusCode::BAD_REQUEST, "Depth: infinity is not supported")
-                    .into_response();
-            }
             let principal = match accounts.resolve_principal(&principal_id).await {
                 Ok(Some(principal)) => principal,
                 Ok(None) => return dav_not_found(accounts.metrics()),
@@ -177,9 +184,19 @@ async fn dav_principal(
             if principal.user_id != session.user_id {
                 return dav_not_found(accounts.metrics());
             }
-            render_principal(&accounts, &principal_id, &principal)
+            let depth = match parse_depth(request.headers()) {
+                DepthOutcome::Zero => DavDepth::Zero,
+                DepthOutcome::One => DavDepth::One,
+                DepthOutcome::Infinite => return dav_propfind_finite_depth(accounts.metrics()),
+                DepthOutcome::Malformed => return dav_bad_depth(accounts.metrics()),
+            };
+            let mode = match parse_propfind_body(accounts.metrics(), request).await {
+                Ok(mode) => mode,
+                Err(response) => return response,
+            };
+            render_principal(&accounts, &principal_id, &principal, &mode, depth)
         }
-        _ => method_not_allowed(),
+        _ => method_not_allowed(DAV_PRINCIPAL_ALLOW),
     }
 }
 
@@ -189,14 +206,21 @@ async fn dav_calendar_home(
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
+        OPTIONS => dav_capabilities(DAV_CALENDAR_HOME_ALLOW),
         PROPFIND => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
-            let Some(depth) = parse_depth(request.headers()) else {
-                return dav_bad_depth(accounts.metrics());
+            let depth = match parse_depth(request.headers()) {
+                DepthOutcome::Zero => DavDepth::Zero,
+                DepthOutcome::One => DavDepth::One,
+                DepthOutcome::Infinite => return dav_propfind_finite_depth(accounts.metrics()),
+                DepthOutcome::Malformed => return dav_bad_depth(accounts.metrics()),
+            };
+            let mode = match parse_propfind_body(accounts.metrics(), request).await {
+                Ok(mode) => mode,
+                Err(response) => return response,
             };
             let principal = match accounts.resolve_principal(&principal_id).await {
                 Ok(Some(principal)) => principal,
@@ -209,9 +233,16 @@ async fn dav_calendar_home(
             let Ok(calendars) = accounts.list_calendars(session.user_id).await else {
                 return dav_server_error(accounts.metrics());
             };
-            render_calendar_home(&accounts, &principal_id, &principal, &calendars, depth)
+            render_calendar_home(
+                &accounts,
+                &principal_id,
+                &principal,
+                &calendars,
+                &mode,
+                depth,
+            )
         }
-        _ => method_not_allowed(),
+        _ => method_not_allowed(DAV_CALENDAR_HOME_ALLOW),
     }
 }
 
@@ -221,14 +252,21 @@ async fn dav_calendar(
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
+        OPTIONS => dav_capabilities(DAV_CALENDAR_ALLOW),
         PROPFIND => {
-            let (session, _request) = match authenticate_dav_request(&accounts, request).await {
+            let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
-            let Some(depth) = parse_depth(_request.headers()) else {
-                return dav_bad_depth(accounts.metrics());
+            let depth = match parse_depth(request.headers()) {
+                DepthOutcome::Zero => DavDepth::Zero,
+                DepthOutcome::One => DavDepth::One,
+                DepthOutcome::Infinite => return dav_propfind_finite_depth(accounts.metrics()),
+                DepthOutcome::Malformed => return dav_bad_depth(accounts.metrics()),
+            };
+            let mode = match parse_propfind_body(accounts.metrics(), request).await {
+                Ok(mode) => mode,
+                Err(response) => return response,
             };
             let principal = match accounts.resolve_principal(&principal_id).await {
                 Ok(Some(principal)) => principal,
@@ -280,7 +318,7 @@ async fn dav_calendar(
                     Err(_) => return dav_server_error(accounts.metrics()),
                 }
             }
-            render_calendar(&accounts, &principal_id, &calendar, depth, &listed)
+            render_calendar(&accounts, &principal_id, &calendar, &mode, depth, &listed)
         }
         REPORT => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {
@@ -329,7 +367,7 @@ async fn dav_calendar(
                 }
             }
         }
-        _ => method_not_allowed(),
+        _ => method_not_allowed(DAV_CALENDAR_ALLOW),
     }
 }
 
@@ -339,7 +377,7 @@ async fn dav_event_resource(
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(),
+        OPTIONS => dav_capabilities(DAV_RESOURCE_ALLOW),
         "GET" | "HEAD" => {
             let head = request.method().as_str() == "HEAD";
             let (session, _request) = match authenticate_dav_request(&accounts, request).await {
@@ -488,7 +526,7 @@ async fn dav_event_resource(
             handle_delete_event_resource(&accounts, &session, &calendar, resource_name, request)
                 .await
         }
-        _ => method_not_allowed(),
+        _ => method_not_allowed(DAV_RESOURCE_ALLOW),
     }
 }
 
@@ -1628,16 +1666,16 @@ fn etag_matches(if_match: &str, current_etag: &str) -> bool {
         .any(|tag| tag == current_etag)
 }
 
-fn dav_capabilities() -> Response {
+fn dav_capabilities(allow: &str) -> Response {
     (
         StatusCode::OK,
-        [(DAV, DAV_CAPABILITIES), (header::ALLOW, DAV_ALLOW)],
+        [(DAV, DAV_CAPABILITIES), (header::ALLOW, allow)],
     )
         .into_response()
 }
 
-fn method_not_allowed() -> Response {
-    (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, DAV_ALLOW)]).into_response()
+fn method_not_allowed(allow: &str) -> Response {
+    (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, allow)]).into_response()
 }
 
 fn dav_not_found(metrics: &CaldavMetrics) -> Response {
@@ -1650,32 +1688,71 @@ fn dav_server_error(metrics: &CaldavMetrics) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
 }
 
-fn depth_is_infinite(headers: &axum::http::HeaderMap) -> bool {
-    headers
-        .get("depth")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.eq_ignore_ascii_case("infinity"))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DavDepth {
     Zero,
     One,
 }
 
-fn parse_depth(headers: &axum::http::HeaderMap) -> Option<DavDepth> {
+/// The outcome of parsing a `Depth` header for a PROPFIND request.
+///
+/// Per RFC 4918 the default Depth is `infinity`, so an absent header is
+/// treated as `Infinite`. Only `0` and `1` are supported; `infinity` (explicit
+/// or default) is rejected with `403 D:propfind-finite-depth`, and any other
+/// value is malformed and rejected with `400`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DepthOutcome {
+    Zero,
+    One,
+    Infinite,
+    Malformed,
+}
+
+fn parse_depth(headers: &axum::http::HeaderMap) -> DepthOutcome {
     let value = headers.get("depth").and_then(|value| value.to_str().ok());
     match value {
-        None => Some(DavDepth::One),
-        Some(value) if value.eq_ignore_ascii_case("0") => Some(DavDepth::Zero),
-        Some(value) if value.eq_ignore_ascii_case("1") => Some(DavDepth::One),
-        Some(_) => None,
+        None => DepthOutcome::Infinite,
+        Some(value) if value.eq_ignore_ascii_case("0") => DepthOutcome::Zero,
+        Some(value) if value.eq_ignore_ascii_case("1") => DepthOutcome::One,
+        Some(value) if value.eq_ignore_ascii_case("infinity") => DepthOutcome::Infinite,
+        Some(_) => DepthOutcome::Malformed,
     }
+}
+
+/// 400 with a `DAV:error` carrying `D:propfind-finite-depth`, per RFC 4918,
+/// when an unsupported infinite Depth is requested.
+fn dav_propfind_finite_depth(metrics: &CaldavMetrics) -> Response {
+    metrics.record_malformed_request();
+    let body = r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:error xmlns:D="DAV:">
+  <D:propfind-finite-depth/>
+</D:error>"#;
+    (
+        StatusCode::BAD_REQUEST,
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 fn dav_bad_depth(metrics: &CaldavMetrics) -> Response {
     metrics.record_malformed_request();
     (StatusCode::BAD_REQUEST, "Depth: only 0 and 1 are supported").into_response()
+}
+
+/// Read and parse a PROPFIND body into its requested property mode.
+async fn parse_propfind_body(
+    metrics: &CaldavMetrics,
+    request: Request,
+) -> Result<PropfindMode, Response> {
+    let body = match axum::body::to_bytes(request.into_body(), query::MAX_BODY_BYTES).await {
+        Ok(body) => body,
+        Err(_) => return Err(dav_oversized_body(metrics)),
+    };
+    match query::parse_propfind(&body) {
+        Ok(mode) => Ok(mode),
+        Err(_) => Err(dav_bad_request(metrics, "malformed PROPFIND body")),
+    }
 }
 
 fn dav_calendar_not_found(metrics: &CaldavMetrics) -> Response {
@@ -1761,7 +1838,7 @@ async fn handle_calendar_query(
     };
     let xml = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
 {body}
 </D:multistatus>"#
     );
@@ -1848,7 +1925,7 @@ async fn handle_calendar_multiget(
     let body = responses.join("\n");
     let xml = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
 {body}
 </D:multistatus>"#
     );
@@ -2002,7 +2079,7 @@ async fn handle_sync_collection(
         .join("\n");
     let xml = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
 {body}
 </D:multistatus>"#
     );
@@ -2167,77 +2244,56 @@ async fn authenticate_dav_request(
     }
 }
 
-fn render_propfind(accounts: &CaldavAccountService, session: &DavSession) -> Response {
+fn render_propfind(
+    accounts: &CaldavAccountService,
+    session: &DavSession,
+    mode: &PropfindMode,
+) -> Response {
     let principal_url = accounts.principal_url(&session.principal_id);
-    let body = format!(
-        r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/dav/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:current-user-principal>
-          <D:href>{principal_url}</D:href>
-        </D:current-user-principal>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#
-    );
-    (
-        StatusCode::MULTI_STATUS,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
+    let props = vec![DavProp::new(
+        "DAV:current-user-principal",
+        format!(
+            "        <D:current-user-principal>\n          <D:href>{principal_url}</D:href>\n        </D:current-user-principal>"
+        ),
+    )];
+    render_propfind_response(&[("/dav/".to_owned(), props)], mode)
 }
 
 fn render_principal(
     accounts: &CaldavAccountService,
     principal_id: &str,
     principal: &PrincipalInfo,
+    mode: &PropfindMode,
+    _depth: DavDepth,
 ) -> Response {
     let principal_url = accounts.principal_url(principal_id);
     let calendar_home = accounts.calendar_home_url(principal_id);
     let display_name = xml_escape(&principal.display_name);
-    let body = format!(
-        r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:">
-  <D:response>
-    <D:href>/dav/principals/{principal_id}/</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:principal-URL>
-          <D:href>{principal_url}</D:href>
-        </D:principal-URL>
-        <D:calendar-home-set>
-          <D:href>{calendar_home}</D:href>
-        </D:calendar-home-set>
-        <D:displayname>{display_name}</D:displayname>
-        <D:supported-report-set>
-          <D:report>
-            <D:name>calendar-query</D:name>
-          </D:report>
-          <D:report>
-            <D:name>calendar-multiget</D:name>
-          </D:report>
-          <D:report>
-            <D:name>sync-collection</D:name>
-          </D:report>
-        </D:supported-report-set>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>
-</D:multistatus>"#
-    );
-    (
-        StatusCode::MULTI_STATUS,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
+    let props = vec![
+        DavProp::new(
+            "DAV:resourcetype",
+            "        <D:resourcetype>\n          <D:principal/>\n        </D:resourcetype>"
+                .to_owned(),
+        ),
+        DavProp::new(
+            "DAV:displayname",
+            format!("        <D:displayname>{display_name}</D:displayname>"),
+        ),
+        DavProp::new(
+            "DAV:principal-URL",
+            format!(
+                "        <D:principal-URL>\n          <D:href>{principal_url}</D:href>\n        </D:principal-URL>"
+            ),
+        ),
+        DavProp::new(
+            "urn:ietf:params:xml:ns:caldav:calendar-home-set",
+            format!(
+                "        <C:calendar-home-set>\n          <D:href>{calendar_home}</D:href>\n        </C:calendar-home-set>"
+            ),
+        ),
+    ];
+    let href = format!("/dav/principals/{principal_id}/");
+    render_propfind_response(&[(href, props)], mode)
 }
 
 fn privileges_for_role(role: &str) -> Vec<&'static str> {
@@ -2256,15 +2312,13 @@ fn privileges_for_role(role: &str) -> Vec<&'static str> {
     let can_read = allows(CalendarAction::ReadDetails) || allows(CalendarAction::ReadFreeBusy);
     if can_read {
         privileges.push("DAV:read");
-        privileges.push("DAV:calendar-subscribe");
     }
     if allows(CalendarAction::ReadFreeBusy) {
-        privileges.push("DAV:calendar-write-freebusy");
+        privileges.push("urn:ietf:params:xml:ns:caldav:read-free-busy");
     }
     let writable = allows(CalendarAction::CreateEvent) || allows(CalendarAction::EditAnyEvent);
     if writable {
         privileges.push("DAV:write-content");
-        privileges.push("DAV:calendar-write");
     }
     if allows(CalendarAction::ManageSettings) {
         privileges.push("DAV:write-properties");
@@ -2282,10 +2336,17 @@ fn privileges_for_role(role: &str) -> Vec<&'static str> {
     privileges
 }
 
+/// Render a `D:current-user-privilege-set` whose `D:privilege` children are
+/// privilege QName elements (e.g. `<D:privilege><D:read/></D:privilege>`), per
+/// RFC 3744 — never `D:href` text.
 fn privilege_set_xml(privileges: &[&str]) -> String {
     let entries = privileges
         .iter()
-        .map(|privilege| format!("        <D:privilege>\n          <D:href>{privilege}</D:href>\n        </D:privilege>"))
+        .map(|privilege| {
+            let (ns, local) = split_expanded(privilege);
+            let prefix = prefix_for_ns(ns);
+            format!("        <D:privilege>\n          <{prefix}:{local}/>\n        </D:privilege>")
+        })
         .collect::<Vec<_>>()
         .join("\n");
     format!(
@@ -2293,12 +2354,9 @@ fn privilege_set_xml(privileges: &[&str]) -> String {
     )
 }
 
-fn calendar_response_xml(
-    accounts: &CaldavAccountService,
-    principal_id: &str,
-    calendar: &CaldavCalendar,
-) -> String {
-    let href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
+/// The supported properties of a calendar collection, in RFC 4791 / Apple
+/// namespaces.
+fn calendar_props(accounts: &CaldavAccountService, calendar: &CaldavCalendar) -> Vec<DavProp> {
     let displayname = xml_escape(&calendar.name);
     let color = xml_escape(&calendar.color);
     let description = calendar
@@ -2308,47 +2366,48 @@ fn calendar_response_xml(
         .unwrap_or_default();
     let privileges = privileges_for_role(&calendar.role);
     let privilege_set = privilege_set_xml(&privileges);
-    let owner_principal = calendar
-        .owner_principal_id
-        .as_ref()
-        .map(|owner_principal_id| {
+    let mut props = vec![
+        DavProp::new(
+            "DAV:resourcetype",
+            "        <D:resourcetype>\n          <D:collection/>\n          <C:calendar/>\n        </D:resourcetype>"
+                .to_owned(),
+        ),
+        DavProp::new(
+            "DAV:displayname",
+            format!("        <D:displayname>{displayname}</D:displayname>"),
+        ),
+        DavProp::new(
+            "urn:ietf:params:xml:ns:caldav:calendar-description",
             format!(
-                "      <D:principal-URL>\n        <D:href>{}</D:href>\n      </D:principal-URL>",
+                "        <C:calendar-description>{description}</C:calendar-description>"
+            ),
+        ),
+        DavProp::new(
+            "urn:ietf:params:xml:ns:caldav:supported-calendar-component-set",
+            "        <C:supported-calendar-component-set>\n          <C:comp name=\"VEVENT\"/>\n        </C:supported-calendar-component-set>"
+                .to_owned(),
+        ),
+        DavProp::new(
+            "http://apple.com/ns/ical/calendar-color",
+            format!("        <A:calendar-color>{color}</A:calendar-color>"),
+        ),
+        DavProp::new(
+            "DAV:supported-report-set",
+            "        <D:supported-report-set>\n          <D:supported-report>\n            <D:report><C:calendar-query/></D:report>\n          </D:supported-report>\n          <D:supported-report>\n            <D:report><C:calendar-multiget/></D:report>\n          </D:supported-report>\n          <D:supported-report>\n            <D:report><D:sync-collection/></D:report>\n          </D:supported-report>\n        </D:supported-report-set>"
+                .to_owned(),
+        ),
+        DavProp::new("DAV:current-user-privilege-set", privilege_set),
+    ];
+    if let Some(owner_principal_id) = &calendar.owner_principal_id {
+        props.push(DavProp::new(
+            "DAV:owner",
+            format!(
+                "        <D:owner>\n          <D:href>{}</D:href>\n        </D:owner>",
                 accounts.principal_url(owner_principal_id)
-            )
-        });
-    let owner_block = owner_principal
-        .map(|block| format!("\n{block}"))
-        .unwrap_or_default();
-    format!(
-        r#"  <D:response>
-    <D:href>{href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype>
-          <D:collection/>
-          <C:calendar/>
-        </D:resourcetype>
-        <D:displayname>{displayname}</D:displayname>
-        <D:description>{description}</D:description>
-        <C:calendar-color>{color}</C:calendar-color>
-        <D:supported-report-set>
-          <D:report>
-            <D:name>calendar-query</D:name>
-          </D:report>
-          <D:report>
-            <D:name>calendar-multiget</D:name>
-          </D:report>
-          <D:report>
-            <D:name>sync-collection</D:name>
-          </D:report>
-        </D:supported-report-set>
-{privilege_set}{owner_block}
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
-    )
+            ),
+        ));
+    }
+    props
 }
 
 fn render_calendar_home(
@@ -2356,62 +2415,41 @@ fn render_calendar_home(
     principal_id: &str,
     principal: &PrincipalInfo,
     calendars: &[CaldavCalendar],
+    mode: &PropfindMode,
     depth: DavDepth,
 ) -> Response {
     let href = format!("/dav/calendars/{principal_id}/");
     let displayname = xml_escape(&principal.display_name);
     let home_privileges = vec!["DAV:read", "DAV:read-current-user-privilege-set"];
     let home_privilege_set = privilege_set_xml(&home_privileges);
-    let home = format!(
-        r#"  <D:response>
-    <D:href>{href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype>
-          <D:collection/>
-        </D:resourcetype>
-        <D:displayname>{displayname}</D:displayname>
-        <D:principal-URL>
-          <D:href>{}</D:href>
-        </D:principal-URL>
-{home_privilege_set}
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#,
-        accounts.principal_url(principal_id)
-    );
-    let children = if depth == DavDepth::One {
-        calendars
-            .iter()
-            .map(|calendar| calendar_response_xml(accounts, principal_id, calendar))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        String::new()
-    };
-    let body = if children.is_empty() {
-        format!(
-            r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
-{home}
-</D:multistatus>"#
-        )
-    } else {
-        format!(
-            r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
-{home}
-{children}
-</D:multistatus>"#
-        )
-    };
-    (
-        StatusCode::MULTI_STATUS,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
+    let home_props = vec![
+        DavProp::new(
+            "DAV:resourcetype",
+            "        <D:resourcetype>\n          <D:collection/>\n        </D:resourcetype>"
+                .to_owned(),
+        ),
+        DavProp::new(
+            "DAV:displayname",
+            format!("        <D:displayname>{displayname}</D:displayname>"),
+        ),
+        DavProp::new(
+            "DAV:principal-URL",
+            format!(
+                "        <D:principal-URL>\n          <D:href>{}</D:href>\n        </D:principal-URL>",
+                accounts.principal_url(principal_id)
+            ),
+        ),
+        DavProp::new("DAV:current-user-privilege-set", home_privilege_set),
+    ];
+    let mut resources = vec![(href, home_props)];
+    if depth == DavDepth::One {
+        for calendar in calendars {
+            let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
+            let cal_props = calendar_props(accounts, calendar);
+            resources.push((cal_href, cal_props));
+        }
+    }
+    render_propfind_response(&resources, mode)
 }
 
 /// Canonical iCalendar content and strong ETag for one exposed event, rendered
@@ -2643,75 +2681,46 @@ async fn fetch_recurring_exceptions(
         .collect()
 }
 
-fn resource_response_xml(
-    principal_id: &str,
-    calendar_id: i64,
-    resource: &CaldavEventResource,
-    etag: &str,
-) -> String {
-    let href = format!(
-        "/dav/calendars/{principal_id}/{calendar_id}/{}.ics",
-        resource.resource_name
-    );
-    format!(
-        r#"  <D:response>
-    <D:href>{href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:resourcetype>
-          <C:calendar-component/>
-          <C:vevent/>
-        </D:resourcetype>
-        <D:getetag>{etag}</D:getetag>
-        <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
-    )
+/// The supported properties of a calendar-object (`.ics`) resource.
+///
+/// Calendar objects are non-collection resources, so `D:resourcetype` is
+/// empty (RFC 4791 §5.10).
+fn resource_props(etag: &str) -> Vec<DavProp> {
+    vec![
+        DavProp::new("DAV:resourcetype", "        <D:resourcetype/>".to_owned()),
+        DavProp::new(
+            "DAV:getetag",
+            format!("        <D:getetag>{etag}</D:getetag>"),
+        ),
+        DavProp::new(
+            "DAV:getcontenttype",
+            "        <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>".to_owned(),
+        ),
+    ]
 }
 
 fn render_calendar(
     accounts: &CaldavAccountService,
     principal_id: &str,
     calendar: &CaldavCalendar,
+    mode: &PropfindMode,
     depth: DavDepth,
     resources: &[(CaldavEventResource, String)],
 ) -> Response {
-    let response = calendar_response_xml(accounts, principal_id, calendar);
-    let children = if depth == DavDepth::One {
-        resources
-            .iter()
-            .map(|(resource, etag)| {
-                resource_response_xml(principal_id, calendar.calendar_id, resource, etag)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        String::new()
-    };
-    let body = if children.is_empty() {
-        format!(
-            r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
-{response}
-</D:multistatus>"#
-        )
-    } else {
-        format!(
-            r#"<?xml version="1.0" encoding="utf-8" ?>
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
-{response}
-{children}
-</D:multistatus>"#
-        )
-    };
-    (
-        StatusCode::MULTI_STATUS,
-        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
-        body,
-    )
-        .into_response()
+    let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
+    let cal_props = calendar_props(accounts, calendar);
+    let mut all = vec![(cal_href, cal_props)];
+    if depth == DavDepth::One {
+        for (resource, etag) in resources {
+            let res_href = format!(
+                "/dav/calendars/{principal_id}/{}/{}.ics",
+                calendar.calendar_id, resource.resource_name
+            );
+            let res_props = resource_props(etag);
+            all.push((res_href, res_props));
+        }
+    }
+    render_propfind_response(&all, mode)
 }
 
 fn xml_escape(value: &str) -> String {
@@ -2721,6 +2730,143 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+// --- PROPFIND rendering (RFC 4918 §12, namespace-aware) ---
+
+/// A supported property: its expanded name and the XML element to render.
+struct DavProp {
+    name: String,
+    xml: String,
+}
+
+impl DavProp {
+    fn new(name: &str, xml: String) -> Self {
+        Self {
+            name: name.to_owned(),
+            xml,
+        }
+    }
+}
+
+/// Split an expanded property name into (namespace, local name).
+///
+/// Each known namespace is matched with its trailing separator included so
+/// the local name is returned cleanly (no leading `:` or `/`).
+fn split_expanded(name: &str) -> (&str, &str) {
+    for (ns, full) in [
+        (
+            "urn:ietf:params:xml:ns:caldav",
+            "urn:ietf:params:xml:ns:caldav:",
+        ),
+        ("http://apple.com/ns/ical/", "http://apple.com/ns/ical/"),
+        ("DAV:", "DAV:"),
+    ] {
+        if let Some(local) = name.strip_prefix(full) {
+            return (ns, local);
+        }
+    }
+    match name.rsplit_once(':') {
+        Some((ns, local)) => (ns, local),
+        None => ("", name),
+    }
+}
+
+/// The XML prefix for a namespace URI.
+fn prefix_for_ns(ns: &str) -> &'static str {
+    match ns {
+        "DAV:" => "D",
+        "urn:ietf:params:xml:ns:caldav" => "C",
+        "http://apple.com/ns/ical/" => "A",
+        _ => "X",
+    }
+}
+
+/// Render an empty property element for a requested-but-unsupported property,
+/// preserving its exact QName.
+fn prop_element(expanded_name: &str) -> String {
+    let (ns, local) = split_expanded(expanded_name);
+    let prefix = prefix_for_ns(ns);
+    format!("{prefix}:{local}")
+}
+
+/// Render the propstat block(s) for a resource given its supported properties
+/// and the requested PROPFIND mode.
+///
+/// `Prop` returns the requested supported properties in a 200 propstat and each
+/// requested unsupported property (preserving its exact QName) in a separate
+/// 404 propstat. `AllProp` returns every supported property in a 200 propstat.
+/// `PropName` returns the names of the supported properties in a 200 propstat.
+fn propstat_xml(supported: &[DavProp], mode: &PropfindMode) -> String {
+    match mode {
+        PropfindMode::Prop(requested) => {
+            let ok: Vec<&DavProp> = supported
+                .iter()
+                .filter(|p| requested.iter().any(|r| r == &p.name))
+                .collect();
+            let missing: Vec<&String> = requested
+                .iter()
+                .filter(|r| !supported.iter().any(|p| p.name == **r))
+                .collect();
+            let ok_xml = ok
+                .iter()
+                .map(|p| p.xml.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let missing_xml = missing
+                .iter()
+                .map(|name| prop_element(name))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "    <D:propstat>\n      <D:prop>\n{ok_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>\n    <D:propstat>\n      <D:prop>\n{missing_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 404 Not Found</D:status>\n    </D:propstat>"
+            )
+        }
+        PropfindMode::AllProp => {
+            let ok_xml = supported
+                .iter()
+                .map(|p| p.xml.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "    <D:propstat>\n      <D:prop>\n{ok_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>"
+            )
+        }
+        PropfindMode::PropName => {
+            let names = supported
+                .iter()
+                .map(|p| prop_element(&p.name))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "    <D:propstat>\n      <D:prop>\n{names}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>"
+            )
+        }
+    }
+}
+
+/// Render a full PROPFIND multistatus response for one or more resources.
+fn render_propfind_response(resources: &[(String, Vec<DavProp>)], mode: &PropfindMode) -> Response {
+    let responses = resources
+        .iter()
+        .map(|(href, supported)| {
+            let propstat = propstat_xml(supported, mode);
+            format!("  <D:response>\n    <D:href>{href}</D:href>\n{propstat}\n  </D:response>")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = format!(
+        r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:A="http://apple.com/ns/ical/">
+{responses}
+</D:multistatus>"#
+    );
+    (
+        StatusCode::MULTI_STATUS,
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -3169,7 +3315,7 @@ mod tests {
         );
     }
 
-    async fn assert_options_capabilities(app: Router, uri: &str) {
+    async fn assert_options_capabilities(app: Router, uri: &str, expected_allow: &str) {
         let request = Request::builder()
             .method(Method::OPTIONS)
             .uri(uri)
@@ -3185,7 +3331,7 @@ mod tests {
         );
         assert_eq!(
             response.headers().get(header::ALLOW).unwrap(),
-            "PROPFIND, OPTIONS, REPORT",
+            expected_allow,
             "OPTIONS {uri} should list only implemented methods"
         );
     }
@@ -3202,9 +3348,25 @@ mod tests {
         );
 
         let app = build_caldav_router(accounts);
-        assert_options_capabilities(app.clone(), "/dav/").await;
-        assert_options_capabilities(app.clone(), "/dav/principals/some-principal/").await;
-        assert_options_capabilities(app, "/dav/calendars/some-principal/").await;
+        assert_options_capabilities(app.clone(), "/dav/", "PROPFIND, OPTIONS").await;
+        assert_options_capabilities(
+            app.clone(),
+            "/dav/principals/some-principal/",
+            "PROPFIND, OPTIONS",
+        )
+        .await;
+        assert_options_capabilities(
+            app.clone(),
+            "/dav/calendars/some-principal/",
+            "PROPFIND, OPTIONS",
+        )
+        .await;
+        assert_options_capabilities(
+            app,
+            "/dav/calendars/some-principal/1/",
+            "PROPFIND, OPTIONS, REPORT",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -3237,6 +3399,7 @@ mod tests {
                 header::AUTHORIZATION,
                 basic_header("hank@example.test", issued.password.expose()),
             )
+            .header("depth", "0")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -3245,12 +3408,9 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("<D:principal-URL>"));
-        assert!(text.contains("<D:calendar-home-set>"));
+        assert!(text.contains("<C:calendar-home-set>"));
         assert!(text.contains("/dav/calendars/"));
         assert!(text.contains("<D:displayname>"));
-        assert!(text.contains("calendar-query"));
-        assert!(text.contains("calendar-multiget"));
-        assert!(text.contains("sync-collection"));
     }
 
     #[tokio::test]
@@ -3434,7 +3594,7 @@ mod tests {
         assert_eq!(status, StatusCode::MULTI_STATUS);
         assert!(body.contains(&format!("/dav/calendars/{principal_id}/{active}/")));
         assert!(body.contains("<D:displayname>Work</D:displayname>"));
-        assert!(body.contains("<C:calendar-color>#ff0000</C:calendar-color>"));
+        assert!(body.contains("<A:calendar-color>#ff0000</A:calendar-color>"));
         assert!(body.contains("<C:calendar/>"));
         assert!(body.contains("<D:collection/>"));
         // Archived and foreign calendars must not appear.
@@ -3485,18 +3645,17 @@ mod tests {
         assert_eq!(status, StatusCode::MULTI_STATUS);
         assert!(body.contains("<C:calendar/>"));
         assert!(body.contains("<D:displayname>Work</D:displayname>"));
-        assert!(body.contains("<C:calendar-color>#ff0000</C:calendar-color>"));
+        assert!(body.contains("<A:calendar-color>#ff0000</A:calendar-color>"));
         assert!(body.contains("calendar-query"));
         assert!(body.contains("calendar-multiget"));
         assert!(body.contains("sync-collection"));
-        // Owner gets the full privilege set.
-        assert!(body.contains("<D:href>DAV:all</D:href>"));
-        assert!(body.contains("<D:href>DAV:read</D:href>"));
-        assert!(body.contains("<D:href>DAV:write</D:href>"));
-        assert!(body.contains("<D:href>DAV:write-properties</D:href>"));
-        assert!(body.contains("<D:href>DAV:write-content</D:href>"));
-        assert!(body.contains("<D:href>DAV:write-acl</D:href>"));
-        assert!(body.contains("<D:href>DAV:calendar-write</D:href>"));
+        // Owner gets the full privilege set as QName elements.
+        assert!(body.contains("<D:all/>"));
+        assert!(body.contains("<D:read/>"));
+        assert!(body.contains("<D:write/>"));
+        assert!(body.contains("<D:write-properties/>"));
+        assert!(body.contains("<D:write-content/>"));
+        assert!(body.contains("<D:write-acl/>"));
     }
 
     #[tokio::test]
@@ -3545,12 +3704,11 @@ mod tests {
             Some("0"),
         )
         .await;
-        assert!(editor_body.contains("<D:href>DAV:read</D:href>"));
-        assert!(editor_body.contains("<D:href>DAV:write-content</D:href>"));
-        assert!(editor_body.contains("<D:href>DAV:calendar-write</D:href>"));
-        assert!(!editor_body.contains("<D:href>DAV:all</D:href>"));
-        assert!(!editor_body.contains("<D:href>DAV:write-properties</D:href>"));
-        assert!(!editor_body.contains("<D:href>DAV:write-acl</D:href>"));
+        assert!(editor_body.contains("<D:read/>"));
+        assert!(editor_body.contains("<D:write-content/>"));
+        assert!(!editor_body.contains("<D:all/>"));
+        assert!(!editor_body.contains("<D:write-properties/>"));
+        assert!(!editor_body.contains("<D:write-acl/>"));
 
         let app = build_caldav_router(accounts.clone());
         let (_, viewer_body) = propfind(
@@ -3561,10 +3719,9 @@ mod tests {
             Some("0"),
         )
         .await;
-        assert!(viewer_body.contains("<D:href>DAV:read</D:href>"));
-        assert!(!viewer_body.contains("<D:href>DAV:write-content</D:href>"));
-        assert!(!viewer_body.contains("<D:href>DAV:calendar-write</D:href>"));
-        assert!(!viewer_body.contains("<D:href>DAV:all</D:href>"));
+        assert!(viewer_body.contains("<D:read/>"));
+        assert!(!viewer_body.contains("<D:write-content/>"));
+        assert!(!viewer_body.contains("<D:all/>"));
 
         let app = build_caldav_router(accounts);
         let (_, freebusy_body) = propfind(
@@ -3575,10 +3732,10 @@ mod tests {
             Some("0"),
         )
         .await;
-        assert!(freebusy_body.contains("<D:href>DAV:read</D:href>"));
-        assert!(freebusy_body.contains("<D:href>DAV:calendar-write-freebusy</D:href>"));
-        assert!(!freebusy_body.contains("<D:href>DAV:write-content</D:href>"));
-        assert!(!freebusy_body.contains("<D:href>DAV:all</D:href>"));
+        assert!(freebusy_body.contains("<D:read/>"));
+        assert!(freebusy_body.contains("<C:read-free-busy/>"));
+        assert!(!freebusy_body.contains("<D:write-content/>"));
+        assert!(!freebusy_body.contains("<D:all/>"));
     }
 
     #[tokio::test]
@@ -3755,9 +3912,9 @@ mod tests {
         assert_eq!(href_status, StatusCode::MULTI_STATUS);
         assert!(href_body.contains("<C:calendar/>"));
         assert!(href_body.contains("<D:displayname>Work</D:displayname>"));
-        assert!(href_body.contains("<C:calendar-color>#ff0000</C:calendar-color>"));
-        assert!(href_body.contains("<D:href>DAV:write-content</D:href>"));
-        assert!(!href_body.contains("<D:href>DAV:all</D:href>"));
+        assert!(href_body.contains("<A:calendar-color>#ff0000</A:calendar-color>"));
+        assert!(href_body.contains("<D:write-content/>"));
+        assert!(!href_body.contains("<D:all/>"));
     }
 
     async fn insert_timed_event(
@@ -3849,7 +4006,7 @@ mod tests {
     fn calendar_query_xml(start: &str, end: &str) -> String {
         format!(
             r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
     <D:getetag/>
     <D:getcontenttype/>
@@ -4016,7 +4173,7 @@ mod tests {
         let (_db, accounts, _owner_id, password, principal_id, active, _archived, _foreign) =
             setup_owner_with_calendars().await;
 
-        let body = r#"<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:comp-filter name="VEVENT"><C:prop-filter name="SUMMARY"><C:is-text>test</C:is-text></C:prop-filter></C:comp-filter></C:filter></C:calendar-query>"#;
+        let body = r#"<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav"><C:filter><C:comp-filter name="VEVENT"><C:prop-filter name="SUMMARY"><C:is-text>test</C:is-text></C:prop-filter></C:comp-filter></C:filter></C:calendar-query>"#;
         let app = build_caldav_router(accounts);
         let (status, _resp) = report_request(
             app,
@@ -4143,7 +4300,7 @@ mod tests {
             .join("");
         format!(
             r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/">
+<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
     <D:getetag/>
     <D:getcontenttype/>
@@ -4333,7 +4490,7 @@ mod tests {
             .uri(format!("/dav/calendars/{principal_id}/{active}/"))
             .header(header::CONTENT_TYPE, "application/xml")
             .body(Body::from(
-                r#"<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><D:href>/x/</D:href></C:calendar-multiget>"#
+                r#"<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href>/x/</D:href></C:calendar-multiget>"#
                     .to_owned(),
             ))
             .unwrap();
@@ -4626,7 +4783,7 @@ mod tests {
 
         // Build an oversized REPORT body.
         let huge_body = format!(
-            r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:filter><!-- {} --></C:calendar-query>"#,
+            r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:filter><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:filter><!-- {} --></C:calendar-query>"#,
             "x".repeat(crate::caldav::query::MAX_BODY_BYTES)
         );
 

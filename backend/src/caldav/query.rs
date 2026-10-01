@@ -331,10 +331,8 @@ fn parse_prop_set(body: &[u8]) -> Vec<String> {
             }
             Ok(Event::End(_)) => {
                 depth = depth.saturating_sub(1);
-                if let Some(pd) = prop_depth {
-                    if depth < pd {
-                        prop_depth = None;
-                    }
+                if prop_depth.is_some_and(|pd| depth < pd) {
+                    prop_depth = None;
                 }
             }
             Ok(Event::Eof) => break,

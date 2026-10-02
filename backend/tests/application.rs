@@ -4,7 +4,10 @@ use axum::{
 };
 use commoncal_backend::{
     config::{AppConfig, Environment},
-    http::{ResponseSecurityConfig, build_router, secure_responses, serve_frontend},
+    http::{
+        AccessLogConfig, ResponseSecurityConfig, apply_shared_middleware, build_router,
+        secure_responses, serve_frontend,
+    },
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -32,7 +35,11 @@ async fn health_endpoints_report_success() {
 
 #[tokio::test]
 async fn request_id_is_propagated_to_the_response() {
-    let app = build_router();
+    let app = apply_shared_middleware(
+        build_router(),
+        AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),
+        ResponseSecurityConfig::local_http(),
+    );
     let response = app
         .oneshot(
             Request::builder()
@@ -77,7 +84,11 @@ async fn unknown_routes_return_the_safe_json_error_envelope() {
 
 #[tokio::test]
 async fn json_mutations_reject_oversized_bodies() {
-    let app = build_router();
+    let app = apply_shared_middleware(
+        build_router(),
+        AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),
+        ResponseSecurityConfig::local_http(),
+    );
     let response = app
         .oneshot(
             Request::builder()
@@ -161,7 +172,11 @@ async fn response_hardening_covers_html_api_public_and_authentication_routes() {
         "<main>CommonCal</main>",
     )
     .unwrap();
-    let app = serve_frontend(build_router(), directory.path());
+    let app = apply_shared_middleware(
+        serve_frontend(build_router(), directory.path()),
+        AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),
+        ResponseSecurityConfig::local_http(),
+    );
 
     for (path, cache_control, robots) in [
         ("/calendar", "no-cache", None),

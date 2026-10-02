@@ -14,9 +14,10 @@ use commoncal_backend::{
     event::EventService,
     external_feed::ExternalFeedService,
     http::{
-        Readiness, ResponseSecurityConfig,
+        AccessLogConfig, Readiness, ResponseSecurityConfig,
+        apply_shared_middleware,
         build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds,
-        secure_responses, serve_frontend,
+        serve_frontend,
     },
     invitations::InvitationConsumer,
     login::{FixedWindowLoginRateLimiter, LoginService},
@@ -281,13 +282,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ResponseSecurityConfig::local_http()
     };
 
+    let access_log = AccessLogConfig::new(config.access_log_level());
+
+    let router = serve_frontend(router, frontend_directory);
+    let router = apply_shared_middleware(router, access_log, response_security);
+
     axum::serve(
         listener,
-        secure_responses(
-            serve_frontend(router, frontend_directory),
-            response_security,
-        )
-        .into_make_service_with_connect_info::<SocketAddr>(),
+        router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;

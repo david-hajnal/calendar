@@ -15,7 +15,10 @@ use commoncal_backend::{
         EventChange, EventCreateBatch, EventCreateException, EventCreateItem, EventMutation,
         EventRecurrenceKey, EventService, EventServiceError, EventStatus, EventTiming,
     },
-    http::{Readiness, build_router_with_auth_flows_sessions_admin_and_calendars},
+    http::{
+        AccessLogConfig, Readiness, ResponseSecurityConfig, apply_shared_middleware,
+        build_router_with_auth_flows_sessions_admin_and_calendars,
+    },
     ics_import::{IcsImportError, IcsImportService, MAX_ICS_IMPORT_EVENTS},
     invitations::InvitationConsumer,
     login::{AllowAllLoginRateLimiter, LoginService},
@@ -588,32 +591,36 @@ impl HttpTestApplication {
     }
 
     fn router(&self) -> axum::Router {
-        build_router_with_auth_flows_sessions_admin_and_calendars(
-            Readiness::new(),
-            InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
-            LoginService::new_at(
-                self.pool.clone(),
-                self.key.clone(),
-                300,
-                300,
-                "/login",
-                Arc::new(DevelopmentEmailSender::new()),
-                Arc::new(AllowAllLoginRateLimiter),
-                NOW,
-                false,
+        apply_shared_middleware(
+            build_router_with_auth_flows_sessions_admin_and_calendars(
+                Readiness::new(),
+                InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
+                LoginService::new_at(
+                    self.pool.clone(),
+                    self.key.clone(),
+                    300,
+                    300,
+                    "/login",
+                    Arc::new(DevelopmentEmailSender::new()),
+                    Arc::new(AllowAllLoginRateLimiter),
+                    NOW,
+                    false,
+                ),
+                SessionManager::new_at(
+                    self.pool.clone(),
+                    self.key.clone(),
+                    SessionSecurityConfig::new(300, 60, ORIGIN).unwrap(),
+                    NOW,
+                ),
+                AdminService::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
+                CalendarService::new_at(self.pool.clone(), NOW),
+                EventService::new_at(self.pool.clone(), NOW),
+                None,
+                None,
+                None,
             ),
-            SessionManager::new_at(
-                self.pool.clone(),
-                self.key.clone(),
-                SessionSecurityConfig::new(300, 60, ORIGIN).unwrap(),
-                NOW,
-            ),
-            AdminService::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
-            CalendarService::new_at(self.pool.clone(), NOW),
-            EventService::new_at(self.pool.clone(), NOW),
-            None,
-            None,
-            None,
+            AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),
+            ResponseSecurityConfig::local_http(),
         )
     }
 

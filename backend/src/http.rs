@@ -91,6 +91,94 @@ impl ResponseSecurityConfig {
     }
 }
 
+/// Configuration for the shared access-log middleware. Decoupled from
+/// `ApplicationState` so it can be applied to any merged router regardless of
+/// the per-route state type.
+#[derive(Clone, Copy, Debug)]
+pub struct AccessLogConfig {
+    pub access_log_level: tracing::level_filters::LevelFilter,
+}
+
+impl AccessLogConfig {
+    pub const fn new(access_log_level: tracing::level_filters::LevelFilter) -> Self {
+        Self { access_log_level }
+    }
+}
+
+/// Applies the shared request-tracing, access-logging, request-ID, body-limit,
+/// and response-security-header middleware to a fully-assembled router.
+///
+/// Call this **after** all sub-routers (CalDAV, MCP, connection-management,
+/// frontend fallback) have been merged so that every route receives the
+/// middleware exactly once.
+pub fn apply_shared_middleware(
+    router: Router,
+    access_log: AccessLogConfig,
+    security: ResponseSecurityConfig,
+) -> Router {
+    router
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request<_>| {
+                    let path = redact_sensitive_path(request.uri());
+                    let request_id = request
+                        .headers()
+                        .get(&REQUEST_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    if request.uri().path().starts_with("/health/") {
+                        tracing::debug_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %path,
+                            request_id = %request_id
+                        )
+                    } else {
+                        tracing::info_span!(
+                            "http_request",
+                            method = %request.method(),
+                            path = %path,
+                            request_id = %request_id
+                        )
+                    }
+                })
+                .on_response(
+                    |response: &Response, latency: std::time::Duration, span: &tracing::Span| {
+                        let status = response.status().as_u16();
+                        let latency_ms = latency.as_millis();
+                        if span.metadata().is_some_and(|m| m.level() == &Level::DEBUG) {
+                            tracing::debug!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        } else {
+                            tracing::info!(
+                                status = status,
+                                latency_ms = latency_ms,
+                                "finished processing request"
+                            );
+                        }
+                    },
+                ),
+        )
+        .layer(middleware::from_fn_with_state(
+            access_log,
+            access_log_middleware,
+        ))
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
+        .layer(SetRequestIdLayer::new(
+            REQUEST_ID_HEADER.clone(),
+            MakeRequestUuid,
+        ))
+        .layer(middleware::from_fn_with_state(
+            security,
+            response_security_headers,
+        ))
+}
+
 /// Applies application-wide browser security and cache headers, including frontend fallbacks.
 pub fn secure_responses(router: Router, config: ResponseSecurityConfig) -> Router {
     router.layer(middleware::from_fn_with_state(
@@ -110,14 +198,15 @@ pub fn build_router() -> Router {
 /// The API router intentionally remains usable without frontend assets for
 /// development and integration tests. Production startup adds this fallback
 /// using the runtime image's `/app/frontend` directory.
+///
+/// Note: shared middleware (tracing, access logging, request ID, security
+/// headers) is applied by `apply_shared_middleware` after this function
+/// returns, so the frontend fallback also receives the middleware.
 pub fn serve_frontend(router: Router, frontend_directory: impl AsRef<FsPath>) -> Router {
     let frontend_directory = frontend_directory.as_ref().to_path_buf();
-    secure_responses(
-        router.fallback(get(move |request| {
-            serve_frontend_file(frontend_directory.clone(), request)
-        })),
-        ResponseSecurityConfig::local_http(),
-    )
+    router.fallback(get(move |request| {
+        serve_frontend_file(frontend_directory.clone(), request)
+    }))
 }
 
 async fn serve_frontend_file(
@@ -695,7 +784,6 @@ where
 }
 
 fn build_application_router(state: ApplicationState) -> Router {
-    let state_for_middleware = state.clone();
     let mut router = Router::new()
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
@@ -904,68 +992,7 @@ fn build_application_router(state: ApplicationState) -> Router {
         ));
         router = router.merge(protected);
     }
-    router
-        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|request: &Request<_>| {
-                    let path = redact_sensitive_path(request.uri());
-                    let request_id = request
-                        .headers()
-                        .get(&REQUEST_ID_HEADER)
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or("")
-                        .to_string();
-                    if request.uri().path().starts_with("/health/") {
-                        tracing::debug_span!(
-                            "http_request",
-                            method = %request.method(),
-                            path = %path,
-                            request_id = %request_id
-                        )
-                    } else {
-                        tracing::info_span!(
-                            "http_request",
-                            method = %request.method(),
-                            path = %path,
-                            request_id = %request_id
-                        )
-                    }
-                })
-                .on_response(
-                    |response: &Response, latency: std::time::Duration, span: &tracing::Span| {
-                        let status = response.status().as_u16();
-                        let latency_ms = latency.as_millis();
-                        if span.metadata().is_some_and(|m| m.level() == &Level::DEBUG) {
-                            tracing::debug!(
-                                status = status,
-                                latency_ms = latency_ms,
-                                "finished processing request"
-                            );
-                        } else {
-                            tracing::info!(
-                                status = status,
-                                latency_ms = latency_ms,
-                                "finished processing request"
-                            );
-                        }
-                    },
-                ),
-        )
-        .layer(middleware::from_fn_with_state(
-            state_for_middleware,
-            access_log_middleware,
-        ))
-        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER.clone()))
-        .layer(SetRequestIdLayer::new(
-            REQUEST_ID_HEADER.clone(),
-            MakeRequestUuid,
-        ))
-        .layer(middleware::from_fn_with_state(
-            ResponseSecurityConfig::local_http(),
-            response_security_headers,
-        ))
-        .with_state(state)
+    router.with_state(state)
 }
 
 fn redact_sensitive_path(uri: &axum::http::Uri) -> String {
@@ -2543,11 +2570,11 @@ fn map_user_invitation_error(error: UserInvitationError) -> ApiError {
 }
 
 async fn access_log_middleware(
-    State(state): State<ApplicationState>,
+    State(config): State<AccessLogConfig>,
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    let log_level = state.access_log_level;
+    let log_level = config.access_log_level;
     let start = Instant::now();
     let method = request.method().clone();
     let path = request.uri().path().to_owned();

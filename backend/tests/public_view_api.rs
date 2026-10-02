@@ -8,7 +8,10 @@ use commoncal_backend::{
     config::{AppConfig, Environment},
     database::connect_and_migrate,
     event::EventService,
-    http::{Readiness, build_router_with_calendars_events_and_views},
+    http::{
+        AccessLogConfig, Readiness, ResponseSecurityConfig, apply_shared_middleware,
+        build_router_with_calendars_events_and_views,
+    },
     security::{SecretKey, TokenDomain},
     sessions::{SessionManager, SessionSecurityConfig},
     shared_view::SharedViewService,
@@ -98,20 +101,24 @@ impl TestApplication {
     }
 
     fn router(&self) -> axum::Router {
-        build_router_with_calendars_events_and_views(
-            Readiness::new(),
-            SessionManager::new_at(
-                self.pool.clone(),
-                self.key.clone(),
-                SessionSecurityConfig::new(300, 60, ORIGIN).unwrap(),
-                NOW,
+        apply_shared_middleware(
+            build_router_with_calendars_events_and_views(
+                Readiness::new(),
+                SessionManager::new_at(
+                    self.pool.clone(),
+                    self.key.clone(),
+                    SessionSecurityConfig::new(300, 60, ORIGIN).unwrap(),
+                    NOW,
+                ),
+                CalendarService::new_at(self.pool.clone(), NOW),
+                EventService::new_at(self.pool.clone(), NOW),
+                SharedViewService::new_at_with_key(self.pool.clone(), self.key.clone(), NOW),
+                None,
+                None,
+                None,
             ),
-            CalendarService::new_at(self.pool.clone(), NOW),
-            EventService::new_at(self.pool.clone(), NOW),
-            SharedViewService::new_at_with_key(self.pool.clone(), self.key.clone(), NOW),
-            None,
-            None,
-            None,
+            AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),
+            ResponseSecurityConfig::local_http(),
         )
     }
 

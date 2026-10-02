@@ -14,8 +14,7 @@ use commoncal_backend::{
     event::EventService,
     external_feed::ExternalFeedService,
     http::{
-        AccessLogConfig, Readiness, ResponseSecurityConfig,
-        apply_shared_middleware,
+        AccessLogConfig, Readiness, ResponseSecurityConfig, apply_shared_middleware,
         build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds,
         serve_frontend,
     },

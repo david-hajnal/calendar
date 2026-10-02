@@ -606,8 +606,7 @@ impl AppState {
         while t < to_ts {
             let slot_end = (t + 3600).min(to_ts);
             let busy = events.iter().any(|e| {
-                e.start_utc.is_some_and(|s| s < slot_end)
-                    && e.end_utc.is_some_and(|en| en > t)
+                e.start_utc.is_some_and(|s| s < slot_end) && e.end_utc.is_some_and(|en| en > t)
             });
             slots.push(serde_json::json!({
                 "start": t,
@@ -1428,7 +1427,9 @@ async fn internal_availability(
     if !check_internal_key(&headers, &state.bridge_key) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    let slots = state.compute_availability(q.calendar_id, &q.from, &q.to).await;
+    let slots = state
+        .compute_availability(q.calendar_id, &q.from, &q.to)
+        .await;
     (StatusCode::OK, Json(serde_json::json!({ "slots": slots }))).into_response()
 }
 
@@ -1474,8 +1475,14 @@ async fn internal_event_search(
     if !check_internal_key(&headers, &state.bridge_key) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
-    let events = state.search_events(q.calendar_id, &q.from, &q.to, q.query.as_deref()).await;
-    (StatusCode::OK, Json(serde_json::json!({ "events": events }))).into_response()
+    let events = state
+        .search_events(q.calendar_id, &q.from, &q.to, q.query.as_deref())
+        .await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "events": events })),
+    )
+        .into_response()
 }
 
 // -- Slice 7 internal API: event_create, event_update, reminder_set ---------
@@ -1559,11 +1566,7 @@ async fn internal_event_update(
         )
         .await
     {
-        Ok(event) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "event": event })),
-        )
-            .into_response(),
+        Ok(event) => (StatusCode::OK, Json(serde_json::json!({ "event": event }))).into_response(),
         Err(e) => {
             let status = if e == "version_conflict" {
                 StatusCode::CONFLICT
@@ -1644,7 +1647,11 @@ async fn internal_delete_intent_create(
             req.expires_at,
         )
         .await;
-    (StatusCode::OK, Json(serde_json::json!({ "delete_intent": intent }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "delete_intent": intent })),
+    )
+        .into_response()
 }
 
 /// GET /internal/delete-intent/:intent_id
@@ -1669,7 +1676,11 @@ async fn internal_delete_intent_get(
                 )
                     .into_response()
             } else {
-                (StatusCode::OK, Json(serde_json::json!({ "delete_intent": intent }))).into_response()
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "delete_intent": intent })),
+                )
+                    .into_response()
             }
         }
         None => (
@@ -1830,7 +1841,16 @@ async fn test_add_event(
     let start_utc = req.get("start_utc").and_then(|v| v.as_i64());
     let end_utc = req.get("end_utc").and_then(|v| v.as_i64());
     let id = state
-        .test_add_event(calendar_id, title, description, location, status, event_kind, start_utc, end_utc)
+        .test_add_event(
+            calendar_id,
+            title,
+            description,
+            location,
+            status,
+            event_kind,
+            start_utc,
+            end_utc,
+        )
         .await;
     (StatusCode::OK, Json(serde_json::json!({ "event_id": id }))).into_response()
 }
@@ -1961,26 +1981,16 @@ async fn confirm_delete_page(
 ) -> Response {
     let session_token = match extract_session_cookie(&headers) {
         Some(t) => t,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                "login required".to_string(),
-            ).into_response()
-        }
+        None => return (StatusCode::UNAUTHORIZED, "login required".to_string()).into_response(),
     };
     let session = match state.get_session(&session_token).await {
         Some(user_id) => user_id,
-        None => {
-            return (StatusCode::FORBIDDEN, "invalid session").into_response()
-        }
+        None => return (StatusCode::FORBIDDEN, "invalid session").into_response(),
     };
     let intent = match state.get_delete_intent(&intent_id).await {
         Some(i) => i,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                "delete intent not found".to_string(),
-            ).into_response()
+            return (StatusCode::NOT_FOUND, "delete intent not found".to_string()).into_response();
         }
     };
     // Verify the intent belongs to the current user
@@ -2011,26 +2021,16 @@ async fn confirm_delete_commit(
 ) -> Response {
     let session_token = match extract_session_cookie(&headers) {
         Some(t) => t,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                "login required".to_string(),
-            ).into_response()
-        }
+        None => return (StatusCode::UNAUTHORIZED, "login required".to_string()).into_response(),
     };
     let session = match state.get_session(&session_token).await {
         Some(user_id) => user_id,
-        None => {
-            return (StatusCode::FORBIDDEN, "invalid session").into_response()
-        }
+        None => return (StatusCode::FORBIDDEN, "invalid session").into_response(),
     };
     let intent = match state.get_delete_intent(&intent_id).await {
         Some(i) => i,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                "delete intent not found".to_string(),
-            ).into_response()
+            return (StatusCode::NOT_FOUND, "delete intent not found".to_string()).into_response();
         }
     };
     if intent.user_id != session {
@@ -2043,11 +2043,7 @@ async fn confirm_delete_commit(
         )
             .into_response();
     }
-    (
-        StatusCode::OK,
-        "Deletion confirmed".to_string(),
-    )
-        .into_response()
+    (StatusCode::OK, "Deletion confirmed".to_string()).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -2148,11 +2144,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/internal/grant", get(internal_get_grant))
         .route("/internal/grant/revoke", post(internal_revoke_grant))
         .route("/internal/availability", get(internal_availability))
-        .route("/internal/event", get(internal_event_get).post(internal_event_create))
+        .route(
+            "/internal/event",
+            get(internal_event_get).post(internal_event_create),
+        )
         .route("/internal/events", get(internal_event_search))
         .route("/internal/event/:id", patch(internal_event_update))
         .route("/internal/reminder", post(internal_reminder_set))
-        .route("/internal/delete-intent", post(internal_delete_intent_create))
+        .route(
+            "/internal/delete-intent",
+            post(internal_delete_intent_create),
+        )
         .route(
             "/internal/delete-intent/:intent_id",
             get(internal_delete_intent_get),

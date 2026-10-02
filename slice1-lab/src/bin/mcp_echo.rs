@@ -179,7 +179,9 @@ impl CommonCalEcho {
 
     // -- Slice 6: typed read tools ------------------------------------------
 
-    #[tool(description = "Find availability slots for the specified calendars within a time range.")]
+    #[tool(
+        description = "Find availability slots for the specified calendars within a time range."
+    )]
     async fn availability_find(
         &self,
         params: Parameters<AvailabilityFindParams>,
@@ -257,9 +259,7 @@ impl CommonCalEcho {
         let key = commoncal_bridge_key();
         let url = format!(
             "{}/internal/event?calendar_id={}&event_id={}",
-            base,
-            params.0.calendar_id,
-            params.0.event_id
+            base, params.0.calendar_id, params.0.event_id
         );
         let resp = ECHO_HTTP
             .get(&url)
@@ -296,7 +296,9 @@ impl CommonCalEcho {
         )]))
     }
 
-    #[tool(description = "Search events in a calendar within a time range, optionally filtered by query.")]
+    #[tool(
+        description = "Search events in a calendar within a time range, optionally filtered by query."
+    )]
     async fn event_search(
         &self,
         params: Parameters<EventSearchParams>,
@@ -419,7 +421,9 @@ impl CommonCalEcho {
         )]))
     }
 
-    #[tool(description = "Update an existing event. Requires the expected_version for optimistic concurrency.")]
+    #[tool(
+        description = "Update an existing event. Requires the expected_version for optimistic concurrency."
+    )]
     async fn event_update(
         &self,
         params: Parameters<EventUpdateParams>,
@@ -458,7 +462,9 @@ impl CommonCalEcho {
             .await
             .map_err(|e| err(format!("event_update parse: {e}")))?;
         if status.as_u16() == 409 {
-            return Err(err("version_conflict: the event was modified by another client"));
+            return Err(err(
+                "version_conflict: the event was modified by another client",
+            ));
         }
         if status.as_u16() == 404 {
             return Err(err("event not found"));
@@ -624,7 +630,9 @@ fn parse_ts(s: &str) -> Option<i64> {
     if let Ok(ts) = s.parse::<i64>() {
         return Some(ts);
     }
-    chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 fn validate_range(from: &str, to: &str) -> Result<(i64, i64), rmcp::ErrorData> {
@@ -640,9 +648,7 @@ fn validate_range(from: &str, to: &str) -> Result<(i64, i64), rmcp::ErrorData> {
     Ok((from_ts, to_ts))
 }
 
-async fn load_grant(
-    claims: &CurrentClaims,
-) -> Result<(Vec<i64>, Vec<String>), rmcp::ErrorData> {
+async fn load_grant(claims: &CurrentClaims) -> Result<(Vec<i64>, Vec<String>), rmcp::ErrorData> {
     let base = commoncal_base();
     let key = commoncal_bridge_key();
     let grant_url = format!(

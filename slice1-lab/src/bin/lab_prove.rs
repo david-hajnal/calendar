@@ -3175,7 +3175,10 @@ async fn s4_cleanup(ctx: &mut Ctx) {
         }
     };
     if !exists_before {
-        ctx.bad("S4-1", "expired row not found after insert (test hook failed?)");
+        ctx.bad(
+            "S4-1",
+            "expired row not found after insert (test hook failed?)",
+        );
         return;
     }
 
@@ -3284,9 +3287,15 @@ async fn s4_rate_limit(ctx: &mut Ctx) {
         .await;
 
     if status.as_u16() == 429 {
-        ctx.ok("S4-2", "4th DCR request rejected with 429 (rate limit enforced)");
+        ctx.ok(
+            "S4-2",
+            "4th DCR request rejected with 429 (rate limit enforced)",
+        );
     } else {
-        ctx.bad("S4-2", &format!("4th DCR request got {status} (expected 429)"));
+        ctx.bad(
+            "S4-2",
+            &format!("4th DCR request got {status} (expected 429)"),
+        );
     }
 }
 
@@ -3314,7 +3323,10 @@ async fn s4_size_limit(ctx: &mut Ctx) {
     if status.as_u16() == 413 {
         ctx.ok("S4-3", "oversized DCR payload rejected with 413");
     } else {
-        ctx.bad("S4-3", &format!("oversized DCR got {status} (expected 413)"));
+        ctx.bad(
+            "S4-3",
+            &format!("oversized DCR got {status} (expected 413)"),
+        );
     }
 }
 
@@ -3370,12 +3382,18 @@ async fn s4_audit_log(ctx: &mut Ctx) {
 async fn s4_callback_policy(ctx: &mut Ctx) {
     // Custom-scheme redirect must be rejected.
     match dcr_register(ctx, "myapp://callback").await {
-        Ok(_) => ctx.bad("S4-5", "custom-scheme redirect was ACCEPTED (expected reject)"),
+        Ok(_) => ctx.bad(
+            "S4-5",
+            "custom-scheme redirect was ACCEPTED (expected reject)",
+        ),
         Err(e) => ctx.ok("S4-5", &format!("custom-scheme redirect rejected: {e}")),
     }
     // Exact-HTTPS redirect must be rejected (not in the catalog).
     match dcr_register(ctx, "https://legit-client.example.com/callback").await {
-        Ok(_) => ctx.bad("S4-5", "exact-HTTPS redirect was ACCEPTED (expected reject)"),
+        Ok(_) => ctx.bad(
+            "S4-5",
+            "exact-HTTPS redirect was ACCEPTED (expected reject)",
+        ),
         Err(e) => ctx.ok("S4-5", &format!("exact-HTTPS redirect rejected: {e}")),
     }
     // Loopback redirect must be accepted (already proven in P1, re-verify).
@@ -3405,7 +3423,10 @@ async fn s4_key_overlap(ctx: &mut Ctx) {
         }
     };
     if !resp.status().is_success() {
-        ctx.bad("S4-6", &format!("JWKS fetch: {} ({})", resp.status(), jwks_uri));
+        ctx.bad(
+            "S4-6",
+            &format!("JWKS fetch: {} ({})", resp.status(), jwks_uri),
+        );
         return;
     }
     let jwks: Value = match resp.json().await {
@@ -3489,9 +3510,15 @@ async fn s4_token_lifetime(ctx: &mut Ctx) {
         Ok(claims) => {
             let ttl = claims.exp - claims.iat;
             if ttl == 300 {
-                ctx.ok("S4-7", &format!("access token TTL exactly 300s (exp-iat={ttl})"));
+                ctx.ok(
+                    "S4-7",
+                    &format!("access token TTL exactly 300s (exp-iat={ttl})"),
+                );
             } else {
-                ctx.bad("S4-7", &format!("access token TTL is {ttl}s (expected 300s)"));
+                ctx.bad(
+                    "S4-7",
+                    &format!("access token TTL is {ttl}s (expected 300s)"),
+                );
             }
         }
         Err(e) => ctx.bad("S4-7", &format!("token validation failed: {e}")),
@@ -3596,11 +3623,12 @@ async fn mcp_call_tool(
         "capabilities": {},
         "clientInfo": { "name": "lab-prove", "version": "0.1.0" }
     });
-    let session = match mcp_request(ctx, Some(access), None, Some(1), "initialize", init_params).await {
-        Ok((status, body, sid)) if status.is_success() && body.get("result").is_some() => sid,
-        Ok((status, body, _)) => return Err(format!("initialize failed ({status}): {body}")),
-        Err(e) => return Err(format!("initialize transport: {e}")),
-    };
+    let session =
+        match mcp_request(ctx, Some(access), None, Some(1), "initialize", init_params).await {
+            Ok((status, body, sid)) if status.is_success() && body.get("result").is_some() => sid,
+            Ok((status, body, _)) => return Err(format!("initialize failed ({status}): {body}")),
+            Err(e) => return Err(format!("initialize transport: {e}")),
+        };
     let _ = mcp_request(
         ctx,
         Some(access),
@@ -3626,10 +3654,7 @@ async fn mcp_call_tool(
 }
 
 /// Helper: obtain a token requesting only the given scopes (plus offline_access).
-async fn scoped_tokens(
-    ctx: &mut Ctx,
-    scopes: &[&str],
-) -> Option<(String, Value)> {
+async fn scoped_tokens(ctx: &mut Ctx, scopes: &[&str]) -> Option<(String, Value)> {
     let redirect = ctx.cfg.loopback_redirect.clone();
     let resource = ctx.cfg.resource_url.clone();
     let scope_vec: Vec<String> = scopes.iter().map(|s| s.to_string()).collect();
@@ -3644,14 +3669,7 @@ async fn scoped_tokens(
     let challenge = pkce_challenge(&verifier);
     let state = format!("state_{}", uuid::Uuid::new_v4().simple());
     let (code, _) = match authorize(
-        ctx,
-        &client_id,
-        &redirect,
-        &scope_vec,
-        &resource,
-        &challenge,
-        &state,
-        "approve",
+        ctx, &client_id, &redirect, &scope_vec, &resource, &challenge, &state, "approve",
     )
     .await
     {
@@ -3826,13 +3844,14 @@ async fn slice6_prove(ctx: &mut Ctx) {
                 } else {
                     ctx.bad(
                         "S6-4",
-                        &format!(
-                            "availability_find was NOT denied ({status}): {body}"
-                        ),
+                        &format!("availability_find was NOT denied ({status}): {body}"),
                     );
                 }
             }
-            Err(e) => ctx.ok("S6-4", &format!("availability_find denied (transport error expected): {e}")),
+            Err(e) => ctx.ok(
+                "S6-4",
+                &format!("availability_find denied (transport error expected): {e}"),
+            ),
         }
     } else {
         ctx.bad("S6-4", "could not obtain scoped token");
@@ -3855,10 +3874,7 @@ async fn slice6_prove(ctx: &mut Ctx) {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
             if is_error || !status.is_success() {
-                ctx.ok(
-                    "S6-5",
-                    "event_get denied for calendar 999 (not in grant)",
-                );
+                ctx.ok("S6-5", "event_get denied for calendar 999 (not in grant)");
             } else {
                 ctx.bad(
                     "S6-5",
@@ -3866,7 +3882,10 @@ async fn slice6_prove(ctx: &mut Ctx) {
                 );
             }
         }
-        Err(e) => ctx.ok("S6-5", &format!("event_get denied (transport error expected): {e}")),
+        Err(e) => ctx.ok(
+            "S6-5",
+            &format!("event_get denied (transport error expected): {e}"),
+        ),
     }
 
     // S6-6: range validation — range > 31 days → rejected.
@@ -3887,10 +3906,7 @@ async fn slice6_prove(ctx: &mut Ctx) {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
             if is_error || !status.is_success() {
-                ctx.ok(
-                    "S6-6",
-                    "availability_find rejected range > 31 days",
-                );
+                ctx.ok("S6-6", "availability_find rejected range > 31 days");
             } else {
                 ctx.bad(
                     "S6-6",
@@ -3898,13 +3914,19 @@ async fn slice6_prove(ctx: &mut Ctx) {
                 );
             }
         }
-        Err(e) => ctx.ok("S6-6", &format!("availability_find rejected (transport error expected): {e}")),
+        Err(e) => ctx.ok(
+            "S6-6",
+            &format!("availability_find rejected (transport error expected): {e}"),
+        ),
     }
 
     // S6-7: event_get access level — basic scope only → description/location stripped.
     let basic = scoped_tokens(
         ctx,
-        &["commoncal.calendar.metadata.read", "commoncal.event.read.basic"],
+        &[
+            "commoncal.calendar.metadata.read",
+            "commoncal.event.read.basic",
+        ],
     )
     .await;
     if let Some((_, basic_toks)) = basic {
@@ -3995,7 +4017,8 @@ async fn slice7_prove(ctx: &mut Ctx) {
                 .unwrap_or("");
             let has_event = content.contains("\"event\"");
             let has_title = content.contains("Sprint Planning");
-            let has_version = content.contains("\"version\": 1") || content.contains("\"version\":1");
+            let has_version =
+                content.contains("\"version\": 1") || content.contains("\"version\":1");
             if status.is_success() && has_event && has_title && has_version {
                 ctx.ok(
                     "S7-1",
@@ -4036,7 +4059,8 @@ async fn slice7_prove(ctx: &mut Ctx) {
                 .unwrap_or("");
             let has_event = content.contains("\"event\"");
             let has_new_title = content.contains("Team Standup (Updated)");
-            let has_version2 = content.contains("\"version\": 2") || content.contains("\"version\":2");
+            let has_version2 =
+                content.contains("\"version\": 2") || content.contains("\"version\":2");
             if status.is_success() && has_event && has_new_title && has_version2 {
                 ctx.ok(
                     "S7-2",
@@ -4130,7 +4154,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                     );
                 }
             }
-            Err(e) => ctx.ok("S7-4", &format!("event_create denied (transport error expected): {e}")),
+            Err(e) => ctx.ok(
+                "S7-4",
+                &format!("event_create denied (transport error expected): {e}"),
+            ),
         }
     } else {
         ctx.bad("S7-4", "could not obtain scoped token");
@@ -4234,9 +4261,8 @@ async fn slice7_prove(ctx: &mut Ctx) {
                 .pointer("/result/content/0/text")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let has_conflict = content.contains("version_conflict")
-                || content.contains("conflict")
-                || is_error;
+            let has_conflict =
+                content.contains("version_conflict") || content.contains("conflict") || is_error;
             if has_conflict || !status.is_success() {
                 ctx.ok(
                     "S7-6",
@@ -4249,7 +4275,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                 );
             }
         }
-        Err(e) => ctx.ok("S7-6", &format!("event_update stale version rejected (transport error expected): {e}")),
+        Err(e) => ctx.ok(
+            "S7-6",
+            &format!("event_update stale version rejected (transport error expected): {e}"),
+        ),
     }
 
     // ================================================================ Slice 8: two-phase delete intent
@@ -4281,7 +4310,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
     {
         Ok(resp) => {
             let status = resp.status();
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             let intent_id = body
                 .pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
@@ -4289,7 +4321,9 @@ async fn slice7_prove(ctx: &mut Ctx) {
             if status.is_success() && !intent_id.is_empty() {
                 ctx.ok(
                     "S8-1",
-                    &format!("delete intent created (intent_id={intent_id}, expires_at={expires_at})"),
+                    &format!(
+                        "delete intent created (intent_id={intent_id}, expires_at={expires_at})"
+                    ),
                 );
             } else {
                 ctx.bad(
@@ -4319,7 +4353,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             body.pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -4339,10 +4376,7 @@ async fn slice7_prove(ctx: &mut Ctx) {
             Ok(resp2) => {
                 let status2 = resp2.status();
                 if status2 == 404 {
-                    ctx.ok(
-                        "S8-2",
-                        "expired delete intent not retrievable (404)",
-                    );
+                    ctx.ok("S8-2", "expired delete intent not retrievable (404)");
                 } else {
                     ctx.bad(
                         "S8-2",
@@ -4374,7 +4408,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             let intent_id = body
                 .pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
@@ -4400,14 +4437,14 @@ async fn slice7_prove(ctx: &mut Ctx) {
                             {
                                 Ok(resp3) => {
                                     if resp3.status() == 409 {
-                                        ctx.ok(
-                                            "S8-3",
-                                            "double commit rejected (409 conflict)",
-                                        );
+                                        ctx.ok("S8-3", "double commit rejected (409 conflict)");
                                     } else {
                                         ctx.bad(
                                             "S8-3",
-                                            &format!("double commit should be 409, got {}", resp3.status()),
+                                            &format!(
+                                                "double commit should be 409, got {}",
+                                                resp3.status()
+                                            ),
                                         );
                                     }
                                 }
@@ -4463,7 +4500,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                     .await
                 {
                     Ok(resp2) => {
-                        let body = resp2.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+                        let body = resp2
+                            .json::<serde_json::Value>()
+                            .await
+                            .unwrap_or(serde_json::json!({}));
                         let intent_id = body
                             .pointer("/delete_intent/intent_id")
                             .and_then(|v| v.as_str())
@@ -4479,7 +4519,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                             {
                                 Ok(resp3) => {
                                     let status3 = resp3.status();
-                                    let body3 = resp3.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+                                    let body3 = resp3
+                                        .json::<serde_json::Value>()
+                                        .await
+                                        .unwrap_or(serde_json::json!({}));
                                     let intent_user_id = body3
                                         .pointer("/delete_intent/user_id")
                                         .and_then(|v| v.as_i64())
@@ -4529,7 +4572,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             body.pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -4550,14 +4596,14 @@ async fn slice7_prove(ctx: &mut Ctx) {
         {
             Ok(resp) => {
                 if resp.status() == 401 {
-                    ctx.ok(
-                        "S8-5",
-                        "confirm-delete requires authentication (401)",
-                    );
+                    ctx.ok("S8-5", "confirm-delete requires authentication (401)");
                 } else {
                     ctx.bad(
                         "S8-5",
-                        &format!("confirm-delete without session should be 401, got {}", resp.status()),
+                        &format!(
+                            "confirm-delete without session should be 401, got {}",
+                            resp.status()
+                        ),
                     );
                 }
             }
@@ -4607,7 +4653,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                                 } else {
                                     ctx.bad(
                                         "S8-6",
-                                        &format!("confirm-delete page missing details: {}", &text[..text.len().min(500)]),
+                                        &format!(
+                                            "confirm-delete page missing details: {}",
+                                            &text[..text.len().min(500)]
+                                        ),
                                     );
                                 }
                             } else {
@@ -4646,7 +4695,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             body.pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -4663,7 +4715,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
             .await
         {
             Ok(resp) => {
-                let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+                let body = resp
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap_or(serde_json::json!({}));
                 let intent_client_id = body
                     .pointer("/delete_intent/oauth_client_id")
                     .and_then(|v| v.as_str())
@@ -4676,7 +4731,9 @@ async fn slice7_prove(ctx: &mut Ctx) {
                 } else {
                     ctx.bad(
                         "S8-7",
-                        &format!("client binding wrong: expected={client_id} got={intent_client_id}"),
+                        &format!(
+                            "client binding wrong: expected={client_id} got={intent_client_id}"
+                        ),
                     );
                 }
             }
@@ -4714,7 +4771,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             body.pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -4754,7 +4814,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
                         } else {
                             ctx.bad(
                                 "S8-9",
-                                &format!("version mismatch commit should succeed in lab: {}", resp.status()),
+                                &format!(
+                                    "version mismatch commit should succeed in lab: {}",
+                                    resp.status()
+                                ),
                             );
                         }
                     }
@@ -4784,7 +4847,10 @@ async fn slice7_prove(ctx: &mut Ctx) {
         .await
     {
         Ok(resp) => {
-            let body = resp.json::<serde_json::Value>().await.unwrap_or(serde_json::json!({}));
+            let body = resp
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or(serde_json::json!({}));
             body.pointer("/delete_intent/intent_id")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -4817,10 +4883,7 @@ async fn slice7_prove(ctx: &mut Ctx) {
                         );
                     }
                     Ok(resp) => {
-                        ctx.bad(
-                            "S8-10",
-                            &format!("commit failed: {}", resp.status()),
-                        );
+                        ctx.bad("S8-10", &format!("commit failed: {}", resp.status()));
                     }
                     Err(e) => ctx.bad("S8-10", &format!("commit error: {e}")),
                 }

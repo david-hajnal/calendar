@@ -155,7 +155,9 @@ async fn mcp_handler(
 
     let start = std::time::Instant::now();
 
-    let response = gateway.handle_mcp_request(request_id.clone(), request).await;
+    let response = gateway
+        .handle_mcp_request(request_id.clone(), request)
+        .await;
 
     let latency = start.elapsed().as_millis() as i64;
 

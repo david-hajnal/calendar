@@ -79,16 +79,14 @@ fn assembled_router(pool: &SqlitePool, key: &SecretKey) -> Router {
         NOW,
     );
     let session_manager = make_session_manager(pool, key);
-    let app_router = build_router_with_sessions(
-        Readiness::new(),
-        session_manager.clone(),
-        None,
-        None,
-        None,
-    );
+    let app_router =
+        build_router_with_sessions(Readiness::new(), session_manager.clone(), None, None, None);
     let router = app_router
         .merge(build_caldav_router(accounts.clone()))
-        .merge(build_connection_management_router(accounts, session_manager));
+        .merge(build_connection_management_router(
+            accounts,
+            session_manager,
+        ));
     apply_shared_middleware(
         router,
         AccessLogConfig::new(tracing::level_filters::LevelFilter::DEBUG),

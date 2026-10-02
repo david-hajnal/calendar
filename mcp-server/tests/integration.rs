@@ -190,9 +190,8 @@ async fn successful_tool_call_appends_audit_row() {
     wiremock::Mock::given(method("GET"))
         .and(path("/internal/mcp/users/42/calendars"))
         .respond_with(
-            wiremock::ResponseTemplate::new(200).set_body_string(
-                r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"}]"#,
-            ),
+            wiremock::ResponseTemplate::new(200)
+                .set_body_string(r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"}]"#),
         )
         .mount(&mock_server)
         .await;
@@ -201,8 +200,11 @@ async fn successful_tool_call_appends_audit_row() {
     let pool = connect_and_migrate(&database_path)
         .await
         .expect("a fresh database should be created and migrated");
-    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
-        .expect("gateway should build");
+    let gateway = Gateway::new(
+        gateway_config(&mock_server, database_path.clone()),
+        pool.clone(),
+    )
+    .expect("gateway should build");
 
     let message = serde_json::json!({
         "jsonrpc": "2.0",
@@ -253,8 +255,11 @@ async fn failed_authorization_appends_audit_row() {
     let pool = connect_and_migrate(&database_path)
         .await
         .expect("a fresh database should be created and migrated");
-    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
-        .expect("gateway should build");
+    let gateway = Gateway::new(
+        gateway_config(&mock_server, database_path.clone()),
+        pool.clone(),
+    )
+    .expect("gateway should build");
 
     let message = serde_json::json!({
         "jsonrpc": "2.0",
@@ -317,8 +322,11 @@ async fn audit_failure_does_not_turn_completed_mutation_into_retryable_failure()
         .await
         .expect("audit table should be removable in the test");
 
-    let gateway = Gateway::new(gateway_config(&mock_server, database_path.clone()), pool.clone())
-        .expect("gateway should build");
+    let gateway = Gateway::new(
+        gateway_config(&mock_server, database_path.clone()),
+        pool.clone(),
+    )
+    .expect("gateway should build");
 
     let message = serde_json::json!({
         "jsonrpc": "2.0",
@@ -350,7 +358,10 @@ async fn audit_failure_does_not_turn_completed_mutation_into_retryable_failure()
     pool.close().await;
     let _ = std::fs::remove_file(&database_path);
 
-    assert_eq!(audit_table, 0, "the failed audit insert must not recreate the table");
+    assert_eq!(
+        audit_table, 0,
+        "the failed audit insert must not recreate the table"
+    );
 }
 
 /// Integration test: DPoP proof validation with mock JWKS.

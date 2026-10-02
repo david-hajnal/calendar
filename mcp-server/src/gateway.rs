@@ -290,22 +290,20 @@ impl Gateway {
         {
             Ok(Some(resp)) => McpGrant::from(resp),
             Ok(None) => {
-                self.record_audit(
-                    &AuditRecord {
-                        request_id,
-                        user_id: token_result.user_id,
-                        client_id: &token_result.oauth_client_id,
-                        grant_id: None,
-                        tool: tool_name,
-                        resource_ids: None,
-                        auth_result: "denied",
-                        scope: None,
-                        auth_strength: &auth_strength,
-                        latency_ms: 0,
-                        result_type: "denied",
-                        operation_id: None,
-                    },
-                )
+                self.record_audit(&AuditRecord {
+                    request_id,
+                    user_id: token_result.user_id,
+                    client_id: &token_result.oauth_client_id,
+                    grant_id: None,
+                    tool: tool_name,
+                    resource_ids: None,
+                    auth_result: "denied",
+                    scope: None,
+                    auth_strength: &auth_strength,
+                    latency_ms: 0,
+                    result_type: "denied",
+                    operation_id: None,
+                })
                 .await;
                 return axum::http::Response::builder()
                     .status(StatusCode::FORBIDDEN)
@@ -324,22 +322,20 @@ impl Gateway {
                     .unwrap();
             }
             Err(e) => {
-                self.record_audit(
-                    &AuditRecord {
-                        request_id,
-                        user_id: token_result.user_id,
-                        client_id: &token_result.oauth_client_id,
-                        grant_id: None,
-                        tool: tool_name,
-                        resource_ids: None,
-                        auth_result: "denied",
-                        scope: None,
-                        auth_strength: &auth_strength,
-                        latency_ms: 0,
-                        result_type: "error",
-                        operation_id: None,
-                    },
-                )
+                self.record_audit(&AuditRecord {
+                    request_id,
+                    user_id: token_result.user_id,
+                    client_id: &token_result.oauth_client_id,
+                    grant_id: None,
+                    tool: tool_name,
+                    resource_ids: None,
+                    auth_result: "denied",
+                    scope: None,
+                    auth_strength: &auth_strength,
+                    latency_ms: 0,
+                    result_type: "error",
+                    operation_id: None,
+                })
                 .await;
                 return axum::http::Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -369,48 +365,42 @@ impl Gateway {
         let started = std::time::Instant::now();
         match tools::dispatch(&context, tool_name, params).await {
             Ok(response) => {
-                self.record_audit(
-                    &AuditRecord {
-                        request_id,
-                        user_id: token_result.user_id,
-                        client_id: &token_result.oauth_client_id,
-                        grant_id: Some(&grant.grant_id),
-                        tool: tool_name,
-                        resource_ids: None,
-                        auth_result: "allowed",
-                        scope: None,
-                        auth_strength: &auth_strength,
-                        latency_ms: started.elapsed().as_millis() as i64,
-                        result_type: "success",
-                        operation_id: None,
-                    },
-                )
+                self.record_audit(&AuditRecord {
+                    request_id,
+                    user_id: token_result.user_id,
+                    client_id: &token_result.oauth_client_id,
+                    grant_id: Some(&grant.grant_id),
+                    tool: tool_name,
+                    resource_ids: None,
+                    auth_result: "allowed",
+                    scope: None,
+                    auth_strength: &auth_strength,
+                    latency_ms: started.elapsed().as_millis() as i64,
+                    result_type: "success",
+                    operation_id: None,
+                })
                 .await;
                 response
             }
             Err(e) => {
                 let (auth_result, result_type) = match e {
-                    ToolError::Unauthorized(_) | ToolError::Forbidden(_) => {
-                        ("denied", "denied")
-                    }
+                    ToolError::Unauthorized(_) | ToolError::Forbidden(_) => ("denied", "denied"),
                     _ => ("allowed", "error"),
                 };
-                self.record_audit(
-                    &AuditRecord {
-                        request_id,
-                        user_id: token_result.user_id,
-                        client_id: &token_result.oauth_client_id,
-                        grant_id: Some(&grant.grant_id),
-                        tool: tool_name,
-                        resource_ids: None,
-                        auth_result,
-                        scope: None,
-                        auth_strength: &auth_strength,
-                        latency_ms: started.elapsed().as_millis() as i64,
-                        result_type,
-                        operation_id: None,
-                    },
-                )
+                self.record_audit(&AuditRecord {
+                    request_id,
+                    user_id: token_result.user_id,
+                    client_id: &token_result.oauth_client_id,
+                    grant_id: Some(&grant.grant_id),
+                    tool: tool_name,
+                    resource_ids: None,
+                    auth_result,
+                    scope: None,
+                    auth_strength: &auth_strength,
+                    latency_ms: started.elapsed().as_millis() as i64,
+                    result_type,
+                    operation_id: None,
+                })
                 .await;
                 let mcp_error = e.to_mcp_error(message.get("id"));
                 axum::http::Response::builder()

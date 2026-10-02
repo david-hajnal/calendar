@@ -171,7 +171,10 @@ mod tests {
 
         assert_eq!(audit_rows, 1, "audit rows must survive the upgrade");
         assert_eq!(audit_request, "req-1");
-        assert_eq!(duplicates, 0, "duplicate local state tables must be dropped");
+        assert_eq!(
+            duplicates, 0,
+            "duplicate local state tables must be dropped"
+        );
     }
 
     #[tokio::test]

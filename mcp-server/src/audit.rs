@@ -23,10 +23,7 @@ pub struct AuditRecord<'a> {
 }
 
 /// Append one invocation record to the audit table.
-pub async fn log_invocation(
-    pool: &SqlitePool,
-    record: &AuditRecord<'_>,
-) -> Result<(), AuditError> {
+pub async fn log_invocation(pool: &SqlitePool, record: &AuditRecord<'_>) -> Result<(), AuditError> {
     let now = chrono::Utc::now().timestamp();
 
     sqlx::query(
@@ -132,15 +129,14 @@ mod tests {
             .await
             .expect("audit insert should succeed");
 
-        let row: (i64, String, i64, String, String, String, i64, String) =
-            sqlx::query_as(
-                "SELECT timestamp, request_id, user_id, oauth_client_id, tool,
+        let row: (i64, String, i64, String, String, String, i64, String) = sqlx::query_as(
+            "SELECT timestamp, request_id, user_id, oauth_client_id, tool,
                  auth_result, latency_ms, result_type
                  FROM mcp_audit",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the audit row should be readable");
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the audit row should be readable");
 
         pool.close().await;
         let _ = std::fs::remove_file(&database_path);
@@ -186,6 +182,9 @@ mod tests {
             .await
             .expect_err("a closed pool should reject the audit insert");
 
-        assert!(error.message.contains("pool"), "error should name the pool failure");
+        assert!(
+            error.message.contains("pool"),
+            "error should name the pool failure"
+        );
     }
 }

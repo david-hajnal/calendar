@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
-use chrono::{DateTime, TimeZone};
-use chrono_tz::Tz;
+use chrono::{DateTime, Duration, Offset, TimeZone};
+use chrono_tz::{OffsetComponents, Tz};
 use sha2::{Digest, Sha256};
 
 use crate::ics::{NormalizedAlarm, NormalizedXProperty};
@@ -78,6 +78,7 @@ pub fn serialize_event_resource(event: &CaldavIcalEvent) -> String {
     out.push_str("VERSION:2.0\r\n");
     out.push_str("PRODID:-//Happening//CalDAV 1.0//EN\r\n");
     out.push_str("CALSCALE:GREGORIAN\r\n");
+    out.push_str(&timezone_components(std::iter::once(&event.timing)));
     out.push_str(&serialize_vevent(event));
     out.push_str("END:VCALENDAR\r\n");
     out
@@ -95,12 +96,85 @@ pub fn serialize_recurring_series(
     out.push_str("VERSION:2.0\r\n");
     out.push_str("PRODID:-//Happening//CalDAV 1.0//EN\r\n");
     out.push_str("CALSCALE:GREGORIAN\r\n");
+    out.push_str(&timezone_components(
+        std::iter::once(&master.timing).chain(exceptions.iter().map(|event| &event.timing)),
+    ));
     out.push_str(&serialize_vevent(master));
     for exception in exceptions {
         out.push_str(&serialize_vevent(exception));
     }
     out.push_str("END:VCALENDAR\r\n");
     out
+}
+
+/// Include timezone definitions for every TZID emitted by this resource.
+/// Group equal offset transitions into RDATE lists, keeping output compact.
+/// Uses the same bounded chrono-tz transition data as recurrence expansion.
+fn timezone_components<'a>(timings: impl Iterator<Item = &'a CaldavIcalTiming>) -> String {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        sync::{Mutex, OnceLock},
+    };
+    static CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+    let mut zones = BTreeSet::new();
+    for timing in timings {
+        if let CaldavIcalTiming::Timed { timezone, .. } = timing
+            && !timezone.eq_ignore_ascii_case("UTC")
+            && !timezone.is_empty()
+            && let Ok(zone) = Tz::from_str(timezone)
+        {
+            zones.insert(zone.name().to_owned());
+        }
+    }
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .expect("timezone cache");
+    zones.into_iter().map(|name| cache.entry(name.clone()).or_insert_with(|| {
+        let zone = Tz::from_str(&name).expect("validated timezone");
+        let mut groups: BTreeMap<(i32, i32, bool), Vec<chrono::NaiveDateTime>> = BTreeMap::new();
+        let mut instant = chrono::NaiveDate::from_ymd_opt(1800,1,1).unwrap().and_hms_opt(0,0,0).unwrap().and_utc();
+        let initial = instant.with_timezone(&zone).offset().fix().local_minus_utc();
+        let end = chrono::NaiveDate::from_ymd_opt(2101,1,1).unwrap().and_hms_opt(0,0,0).unwrap().and_utc();
+        let mut old = initial;
+        while instant < end {
+            let next = instant + Duration::days(1);
+            let next_offset = next.with_timezone(&zone).offset().fix().local_minus_utc();
+            if next_offset != old {
+                let mut lo = instant.timestamp();
+                let mut hi = next.timestamp();
+                while hi - lo > 1 {
+                    let mid = (lo + hi) / 2;
+                    let offset = DateTime::from_timestamp(mid,0).unwrap().with_timezone(&zone).offset().fix().local_minus_utc();
+                    if offset == old { lo = mid; } else { hi = mid; }
+                }
+                let transition = DateTime::from_timestamp(hi,0).unwrap();
+                let local = transition.naive_utc() + Duration::seconds(i64::from(old));
+                let daylight = transition.with_timezone(&zone).offset().dst_offset() != Duration::zero();
+                groups.entry((old,next_offset,daylight)).or_default().push(local);
+                old = next_offset;
+            }
+            instant = next;
+        }
+        let offset = |seconds: i32| {
+            let sign = if seconds < 0 { '-' } else { '+' };
+            let seconds = seconds.unsigned_abs();
+            if seconds.is_multiple_of(60) { format!("{sign}{:02}{:02}", seconds/3600, seconds/60%60) }
+            else { format!("{sign}{:02}{:02}{:02}", seconds/3600, seconds/60%60, seconds%60) }
+        };
+        let mut out = format!("BEGIN:VTIMEZONE\r\nTZID:{name}\r\nBEGIN:STANDARD\r\nDTSTART:00010101T000000\r\nTZOFFSETFROM:{}\r\nTZOFFSETTO:{}\r\nEND:STANDARD\r\n",offset(initial),offset(initial));
+        for ((from,to,daylight), dates) in groups {
+            let kind = if daylight { "DAYLIGHT" } else { "STANDARD" };
+            out.push_str(&format!("BEGIN:{kind}\r\nDTSTART:{}\r\nTZOFFSETFROM:{}\r\nTZOFFSETTO:{}\r\n",dates[0].format("%Y%m%dT%H%M%S"),offset(from),offset(to)));
+            if dates.len() > 1 {
+                out.push_str(&fold_line(&format!("RDATE:{}",dates[1..].iter().map(|date| date.format("%Y%m%dT%H%M%S").to_string()).collect::<Vec<_>>().join(","))));
+            }
+            out.push_str(&format!("END:{kind}\r\n"));
+
+        }
+        out.push_str("END:VTIMEZONE\r\n");
+        out
+    }).clone()).collect()
 }
 
 fn serialize_vevent(event: &CaldavIcalEvent) -> String {
@@ -161,7 +235,7 @@ fn serialize_vevent(event: &CaldavIcalEvent) -> String {
             out.push_str(&fold_line(&format!("CATEGORIES:{joined}")));
         }
         if let Some(url) = &event.url {
-            out.push_str(&fold_line(&format!("URL:{}", escape_text(url))));
+            out.push_str(&fold_line(&format!("URL:{url}")));
         }
         if let Some(transp) = &event.transp {
             out.push_str(&format!("TRANSP:{transp}\r\n"));

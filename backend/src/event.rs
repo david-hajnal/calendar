@@ -248,10 +248,19 @@ impl NotificationReplanner {
 }
 
 #[derive(Clone)]
+struct CaldavCreate {
+    uid: String,
+    resource_name: String,
+    exceptions: Vec<RecurringExceptionChange>,
+}
+
+#[derive(Clone)]
 pub struct EventService {
     pool: SqlitePool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     notification_replanner: Arc<NotificationReplanner>,
+    caldav_properties: Option<crate::caldav::types::CaldavClientProperties>,
+    caldav_create: Option<CaldavCreate>,
 }
 
 impl EventService {
@@ -264,6 +273,8 @@ impl EventService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
+            caldav_properties: None,
+            caldav_create: None,
             notification_replanner: Arc::new(NotificationReplanner::noop()),
         }
     }
@@ -272,6 +283,8 @@ impl EventService {
         Self {
             pool,
             clock: Arc::new(move || now),
+            caldav_properties: None,
+            caldav_create: None,
             notification_replanner: Arc::new(NotificationReplanner::noop()),
         }
     }
@@ -289,6 +302,8 @@ impl EventService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
+            caldav_properties: None,
+            caldav_create: None,
             notification_replanner: Arc::new(replanner),
         }
     }
@@ -302,8 +317,132 @@ impl EventService {
         Self {
             pool,
             clock: Arc::new(move || now),
+            caldav_properties: None,
+            caldav_create: None,
             notification_replanner: Arc::new(replanner),
         }
+    }
+
+    /// Persist DAV metadata in the same transaction as event content and its
+    /// revision. Failed stale writes cannot overwrite another client's metadata.
+    pub fn with_caldav_properties(
+        mut self,
+        properties: crate::caldav::types::CaldavClientProperties,
+    ) -> Self {
+        self.caldav_properties = Some(properties);
+        self
+    }
+    pub fn with_caldav_create(
+        mut self,
+        uid: String,
+        resource_name: String,
+        exceptions: Vec<RecurringExceptionChange>,
+    ) -> Self {
+        self.caldav_create = Some(CaldavCreate {
+            uid,
+            resource_name,
+            exceptions,
+        });
+        self
+    }
+
+    async fn record_caldav_change(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        calendar_id: i64,
+        event_id: i64,
+        change_type: &'static str,
+        now: i64,
+        resource_name: Option<&str>,
+    ) -> Result<(), EventServiceError> {
+        if change_type == "created"
+            && let Some(create) = &self.caldav_create
+        {
+            sqlx::query("INSERT INTO caldav_event_resources (event_id, calendar_id, uid, resource_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+                    .bind(event_id).bind(calendar_id).bind(&create.uid).bind(&create.resource_name).bind(now).bind(now).execute(&mut **transaction).await?;
+            let actor: i64 =
+                sqlx::query_scalar("SELECT created_by_user_id FROM events WHERE id = ?")
+                    .bind(event_id)
+                    .fetch_one(&mut **transaction)
+                    .await?;
+            for exception in &create.exceptions {
+                match exception {
+                    RecurringExceptionChange::UpdateTimed(change) => {
+                        validate_mutation(&change.event)?;
+                        ensure_series_occurrence(
+                            transaction,
+                            calendar_id,
+                            event_id,
+                            change.recurrence_id,
+                        )
+                        .await?;
+                        insert_timed_exception(
+                            transaction,
+                            event_id,
+                            change.recurrence_id,
+                            &change.event,
+                            actor,
+                            now,
+                        )
+                        .await?;
+                    }
+                    RecurringExceptionChange::UpdateAllDay(change) => {
+                        validate_mutation(&change.event)?;
+                        ensure_all_day_series_occurrence(
+                            transaction,
+                            calendar_id,
+                            event_id,
+                            &change.recurrence_date,
+                        )
+                        .await?;
+                        insert_all_day_exception(
+                            transaction,
+                            event_id,
+                            &change.recurrence_date,
+                            &change.event,
+                            actor,
+                            now,
+                        )
+                        .await?;
+                    }
+                    RecurringExceptionChange::DeleteTimed(recurrence_id) => {
+                        ensure_series_occurrence(
+                            transaction,
+                            calendar_id,
+                            event_id,
+                            *recurrence_id,
+                        )
+                        .await?;
+                        sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_id, is_deleted, last_edited_by_user_id, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?) ON CONFLICT(series_id, recurrence_id) DO UPDATE SET is_deleted = 1")
+                                .bind(event_id).bind(recurrence_id).bind(actor).bind(now).bind(now).execute(&mut **transaction).await?;
+                    }
+                    RecurringExceptionChange::DeleteAllDay(date) => {
+                        ensure_all_day_series_occurrence(transaction, calendar_id, event_id, date)
+                            .await?;
+                        sqlx::query("INSERT INTO event_recurrence_exceptions (series_id, recurrence_date, is_deleted, last_edited_by_user_id, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?) ON CONFLICT(series_id, recurrence_date) DO UPDATE SET is_deleted = 1")
+                                .bind(event_id).bind(date).bind(actor).bind(now).bind(now).execute(&mut **transaction).await?;
+                    }
+                }
+            }
+        }
+        if change_type != "deleted"
+            && let Some(properties) = &self.caldav_properties
+        {
+            let json = serde_json::to_string(properties)
+                .map_err(|error| sqlx::Error::Encode(Box::new(error)))?;
+            sqlx::query("INSERT INTO caldav_event_properties (event_id, properties_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET properties_json = excluded.properties_json, updated_at = excluded.updated_at")
+                    .bind(event_id).bind(json).bind(now).execute(&mut **transaction).await?;
+        }
+        record_caldav_change(
+            transaction,
+            calendar_id,
+            event_id,
+            change_type,
+            now,
+            resource_name,
+        )
+        .await?;
+        Ok(())
     }
 
     pub fn validate_requested_range(&self, range: &EventRange) -> Result<(), EventServiceError> {
@@ -364,7 +503,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             event_id,
@@ -584,7 +723,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             series_id,
@@ -655,7 +794,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             event_id,
@@ -1131,7 +1270,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             series_id,
@@ -1209,7 +1348,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             series_id,
@@ -1307,7 +1446,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             series_id,
@@ -1380,7 +1519,7 @@ impl EventService {
             now,
         )
         .await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             series_id,
@@ -1550,7 +1689,7 @@ impl EventService {
             .bind(event_id)
             .fetch_optional(&mut *transaction)
             .await?;
-            record_caldav_change(
+            self.record_caldav_change(
                 &mut transaction,
                 source_calendar_id,
                 event_id,
@@ -1559,7 +1698,7 @@ impl EventService {
                 resource_name.as_deref(),
             )
             .await?;
-            record_caldav_change(
+            self.record_caldav_change(
                 &mut transaction,
                 target_calendar_id,
                 event_id,
@@ -1579,7 +1718,7 @@ impl EventService {
             .execute(&mut *transaction)
             .await?;
         } else {
-            record_caldav_change(
+            self.record_caldav_change(
                 &mut transaction,
                 target_calendar_id,
                 event_id,
@@ -1602,6 +1741,18 @@ impl EventService {
         calendar_id: i64,
         event_id: i64,
     ) -> Result<(), EventServiceError> {
+        self.delete_if_version(actor_user_id, is_superadmin, calendar_id, event_id, None)
+            .await
+    }
+
+    pub async fn delete_if_version(
+        &self,
+        actor_user_id: i64,
+        is_superadmin: bool,
+        calendar_id: i64,
+        event_id: i64,
+        expected_version: Option<i64>,
+    ) -> Result<(), EventServiceError> {
         let now = (self.clock)();
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         authorize_in_transaction(
@@ -1612,6 +1763,21 @@ impl EventService {
             CalendarAction::EditAnyEvent,
         )
         .await?;
+        if let Some(expected_version) = expected_version {
+            let current: Option<i64> =
+                sqlx::query_scalar("SELECT version FROM events WHERE calendar_id = ? AND id = ?")
+                    .bind(calendar_id)
+                    .bind(event_id)
+                    .fetch_optional(&mut *transaction)
+                    .await?;
+            match current {
+                Some(current_version) if current_version != expected_version => {
+                    return Err(EventServiceError::Conflict { current_version });
+                }
+                None => return Err(EventServiceError::NotFound),
+                _ => {}
+            }
+        }
         ensure_not_imported(&mut transaction, event_id).await?;
         sqlx::query(
             "UPDATE notification_jobs SET state = 'cancelled', updated_at = ?
@@ -1637,7 +1803,7 @@ impl EventService {
         // for other clients. Then record the deletion in the change log. Both
         // share this transaction, so a rolled-back delete leaves neither.
         tombstone_caldav_mapping(&mut transaction, calendar_id, event_id, now).await?;
-        record_caldav_change(
+        self.record_caldav_change(
             &mut transaction,
             calendar_id,
             event_id,

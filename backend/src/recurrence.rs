@@ -147,6 +147,29 @@ pub fn expand_occurrences(
     modified: &HashMap<DateTime<Utc>, ModifiedOccurrence>,
     limits: ExpansionLimits,
 ) -> Result<Vec<Occurrence>, RecurrenceError> {
+    expand(event, requested, excluded, modified, limits, false)
+}
+
+/// Existence check uses identical recurrence/DST/exception semantics but stops
+/// at the first matching occurrence, allowing legal open-ended DAV filters.
+pub fn occurrence_overlaps(
+    event: &RecurringEvent,
+    requested: TimeInterval,
+    excluded: &HashSet<DateTime<Utc>>,
+    modified: &HashMap<DateTime<Utc>, ModifiedOccurrence>,
+    limits: ExpansionLimits,
+) -> Result<bool, RecurrenceError> {
+    Ok(!expand(event, requested, excluded, modified, limits, true)?.is_empty())
+}
+
+fn expand(
+    event: &RecurringEvent,
+    requested: TimeInterval,
+    excluded: &HashSet<DateTime<Utc>>,
+    modified: &HashMap<DateTime<Utc>, ModifiedOccurrence>,
+    limits: ExpansionLimits,
+    stop_at_first: bool,
+) -> Result<Vec<Occurrence>, RecurrenceError> {
     if requested.start >= requested.end {
         return Err(RecurrenceError::InvalidInterval);
     }
@@ -227,6 +250,9 @@ pub fn expand_occurrences(
                 return Err(RecurrenceError::OccurrenceLimitExceeded);
             }
             occurrences.push(occurrence);
+            if stop_at_first {
+                return Ok(occurrences);
+            }
         }
 
         if event.rule.count.is_some_and(|count| generated == count) {

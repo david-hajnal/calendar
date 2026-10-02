@@ -252,6 +252,7 @@ impl ExternalFeedService {
         let calendar = self.calendar_for(id).await?;
         self.authorize(actor, superadmin, calendar).await?;
         let mut tx = self.pool.begin().await?;
+        tombstone_feed_events(&mut tx, id, None, (self.clock)()).await?;
         sqlx::query("DELETE FROM events WHERE id IN (SELECT event_id FROM external_event_mapping WHERE feed_id=?)").bind(id).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM external_feeds WHERE id=?")
             .bind(id)
@@ -317,6 +318,7 @@ impl ExternalFeedService {
             self.upsert_event(&mut tx, id, row.calendar_id, actor, sync, event)
                 .await?;
         }
+        tombstone_feed_events(&mut tx, id, Some(sync), now).await?;
         sqlx::query("DELETE FROM events WHERE id IN (SELECT event_id FROM external_event_mapping WHERE feed_id=? AND last_seen_sync_id<>?)").bind(id).bind(sync).execute(&mut *tx).await?;
         sqlx::query("UPDATE external_feeds SET etag=?,last_modified=?,last_attempt_at=?,last_success_at=?,last_error_code=NULL,consecutive_failures=0,next_refresh_at=? WHERE id=?").bind(response.etag).bind(response.last_modified).bind(now).bind(now).bind(now+row.refresh_interval_seconds).bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -347,17 +349,57 @@ impl ExternalFeedService {
             Some("TENTATIVE") => "tentative",
             _ => "confirmed",
         };
+        let mut changed = false;
+        let change_type = if existing.is_some() {
+            "updated"
+        } else {
+            "created"
+        };
         let id = if let Some((id, sequence, content_hash)) = existing {
             if sequence != Some(event.sequence as i64)
                 || content_hash.as_deref() != Some(hash.as_slice())
             {
+                changed = true;
                 sqlx::query("UPDATE events SET title=?,description=?,location=?,status=?,event_kind=?,timed_start_utc=?,timed_end_utc=?,event_timezone=?,all_day_start_date=?,all_day_end_date=?,last_edited_by_user_id=?,version=version+1,updated_at=?,recurrence_rule=? WHERE id=?").bind(&event.summary).bind(&event.description).bind(&event.location).bind(status).bind(kind).bind(ts).bind(te).bind(tz).bind(ds).bind(de).bind(actor).bind(sync).bind(&event.rrule).bind(id).execute(&mut **tx).await?;
             }
             id
         } else {
+            changed = true;
             let r=sqlx::query("INSERT INTO events (calendar_id,title,description,location,status,event_kind,timed_start_utc,timed_end_utc,event_timezone,all_day_start_date,all_day_end_date,created_by_user_id,last_edited_by_user_id,version,created_at,updated_at,recurrence_rule) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)").bind(calendar).bind(&event.summary).bind(&event.description).bind(&event.location).bind(status).bind(kind).bind(ts).bind(te).bind(tz).bind(ds).bind(de).bind(actor).bind(actor).bind(sync).bind(sync).bind(&event.rrule).execute(&mut **tx).await?;
             r.last_insert_rowid()
         };
+        let properties = crate::caldav::types::CaldavClientProperties {
+            categories: event.categories.clone(),
+            url: event.url.clone(),
+            transp: event.transp.clone(),
+            alarms: event.alarms.clone(),
+            x_properties: event.x_properties.clone(),
+        };
+        let properties_json =
+            serde_json::to_string(&properties).map_err(|_| FeedError::ParseFailed)?;
+        if !changed {
+            let stored: Option<String> = sqlx::query_scalar(
+                "SELECT properties_json FROM caldav_event_properties WHERE event_id = ?",
+            )
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
+            changed = stored.as_deref() != Some(properties_json.as_str());
+            if changed {
+                sqlx::query("UPDATE events SET version = version + 1, updated_at = ? WHERE id = ?")
+                    .bind(sync)
+                    .bind(id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+        }
+        if changed {
+            sqlx::query("INSERT INTO caldav_event_properties (event_id, properties_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(event_id) DO UPDATE SET properties_json = excluded.properties_json, updated_at = excluded.updated_at")
+                .bind(id).bind(properties_json).bind((self.clock)()).execute(&mut **tx).await?;
+            sqlx::query("INSERT INTO caldav_event_changes (calendar_id, event_id, change_type, created_at, resource_name) SELECT ?, ?, ?, ?, resource_name FROM caldav_event_resources WHERE calendar_id = ? AND event_id = ? AND deleted_at IS NULL UNION ALL SELECT ?, ?, ?, ?, NULL WHERE NOT EXISTS (SELECT 1 FROM caldav_event_resources WHERE calendar_id = ? AND event_id = ? AND deleted_at IS NULL)")
+                .bind(calendar).bind(id).bind(change_type).bind((self.clock)()).bind(calendar).bind(id)
+                .bind(calendar).bind(id).bind(change_type).bind((self.clock)()).bind(calendar).bind(id).execute(&mut **tx).await?;
+        }
         sqlx::query("INSERT INTO external_event_mapping (feed_id,external_uid,recurrence_id,event_id,external_sequence,external_modified_at,content_hash,last_seen_sync_id) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(feed_id,external_uid,recurrence_id) DO UPDATE SET event_id=excluded.event_id,external_sequence=excluded.external_sequence,external_modified_at=excluded.external_modified_at,content_hash=excluded.content_hash,last_seen_sync_id=excluded.last_seen_sync_id").bind(feed).bind(&event.uid).bind(recurrence).bind(id).bind(event.sequence as i64).bind(event.last_modified.map(|v|v.timestamp())).bind(hash).bind(sync).execute(&mut **tx).await?;
         Ok(())
     }
@@ -473,4 +515,18 @@ fn timing(e: &NormalizedEvent) -> Result<EventTimingColumns, FeedError> {
             Some(end_date.to_string()),
         )),
     }
+}
+
+/// Feed removals preserve hrefs and revisions atomically before deleting events.
+async fn tombstone_feed_events(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    feed: i64,
+    keep_sync: Option<i64>,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO caldav_event_changes (calendar_id, event_id, change_type, created_at, resource_name) SELECT e.calendar_id, e.id, 'deleted', ?, r.resource_name FROM events e JOIN external_event_mapping m ON m.event_id = e.id LEFT JOIN caldav_event_resources r ON r.event_id = e.id AND r.deleted_at IS NULL WHERE m.feed_id = ? AND (? IS NULL OR m.last_seen_sync_id <> ?)")
+        .bind(now).bind(feed).bind(keep_sync).bind(keep_sync).execute(&mut **tx).await?;
+    sqlx::query("UPDATE caldav_event_resources SET event_id = NULL, deleted_at = ?, updated_at = ? WHERE event_id IN (SELECT event_id FROM external_event_mapping WHERE feed_id = ? AND (? IS NULL OR last_seen_sync_id <> ?)) AND deleted_at IS NULL")
+        .bind(now).bind(now).bind(feed).bind(keep_sync).bind(keep_sync).execute(&mut **tx).await?;
+    Ok(())
 }

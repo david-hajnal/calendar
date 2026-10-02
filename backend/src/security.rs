@@ -121,6 +121,10 @@ impl SecretKey {
         (revision_bytes, tag)
     }
 
+    pub fn sign_sync_payload(&self, payload: &[u8]) -> Vec<u8> {
+        self.sync_mac(payload)
+    }
+
     /// Verify a CalDAV sync revision against its HMAC tag in constant time.
     pub fn verify_sync_revision(&self, revision_bytes: &[u8], tag: &[u8]) -> bool {
         let expected = self.sync_mac(revision_bytes);

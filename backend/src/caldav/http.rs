@@ -23,7 +23,7 @@ use crate::{
             CaldavIcalDateValue, CaldavIcalEvent, CaldavIcalTiming, etag_for_ical,
             serialize_event_resource, serialize_recurring_series,
         },
-        query::{self, CalendarMultiget, CalendarQuery, MAX_RESULTS, PropfindMode},
+        query::{self, CalendarMultiget, CalendarQuery, DavName, MAX_RESULTS, PropfindMode},
         repository::CaldavRepository,
         types::{
             CaldavAuthError, CaldavCalendar, CaldavClientProperties, CaldavEventResource,
@@ -46,7 +46,7 @@ const PROPFIND: &str = "PROPFIND";
 const OPTIONS: &str = "OPTIONS";
 const REPORT: &str = "REPORT";
 const DAV: header::HeaderName = header::HeaderName::from_static("dav");
-const DAV_CAPABILITIES: &str = "1, 2, access-control, calendar-access";
+const DAV_CAPABILITIES: &str = "1, calendar-access";
 
 /// Endpoint-specific `Allow` sets. Each lists only the methods that endpoint
 /// actually implements, so `OPTIONS` and `405` responses stay honest.
@@ -54,7 +54,7 @@ const DAV_ROOT_ALLOW: &str = "PROPFIND, OPTIONS";
 const DAV_PRINCIPAL_ALLOW: &str = "PROPFIND, OPTIONS";
 const DAV_CALENDAR_HOME_ALLOW: &str = "PROPFIND, OPTIONS";
 const DAV_CALENDAR_ALLOW: &str = "PROPFIND, OPTIONS, REPORT";
-const DAV_RESOURCE_ALLOW: &str = "GET, HEAD, PUT, DELETE, OPTIONS";
+const DAV_RESOURCE_ALLOW: &str = "GET, HEAD, PROPFIND, PUT, DELETE, OPTIONS";
 
 /// Effective event-read scope for a calendar role, derived from the single
 /// authorization projection. `Details` exposes full event content; `FreeBusy`
@@ -94,7 +94,7 @@ async fn event_is_imported(pool: &SqlitePool, event_id: i64) -> bool {
         .bind(event_id)
         .fetch_one(pool)
         .await
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 pub fn build_caldav_router(accounts: CaldavAccountService) -> Router {
@@ -154,6 +154,11 @@ async fn dav_root(State(accounts): State<CaldavAccountService>, request: Request
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
+            match parse_depth(request.headers()) {
+                DepthOutcome::Zero | DepthOutcome::One => {}
+                DepthOutcome::Infinite => return dav_propfind_finite_depth(accounts.metrics()),
+                DepthOutcome::Malformed => return dav_bad_depth(accounts.metrics()),
+            }
             let mode = match parse_propfind_body(accounts.metrics(), request).await {
                 Ok(mode) => mode,
                 Err(response) => return *response,
@@ -241,6 +246,7 @@ async fn dav_calendar_home(
                 &mode,
                 depth,
             )
+            .await
         }
         _ => method_not_allowed(DAV_CALENDAR_HOME_ALLOW),
     }
@@ -292,6 +298,18 @@ async fn dav_calendar(
             let Some(access) = read_access_for_role(&calendar.role) else {
                 return dav_calendar_not_found(accounts.metrics());
             };
+            if depth == DavDepth::Zero {
+                return render_calendar(
+                    &accounts,
+                    &principal_id,
+                    &calendar,
+                    &mode,
+                    depth,
+                    &[],
+                    &session.principal_id,
+                )
+                .await;
+            }
             let repository = CaldavRepository::new(accounts.pool().clone());
             let event_ids = match repository.list_exposed_event_ids(calendar_id).await {
                 Ok(event_ids) => event_ids,
@@ -312,13 +330,24 @@ async fn dav_calendar(
                                 .await
                         {
                             listed.push((resource, etag));
+                        } else {
+                            return dav_server_error(accounts.metrics());
                         }
                     }
                     Ok(None) => {}
                     Err(_) => return dav_server_error(accounts.metrics()),
                 }
             }
-            render_calendar(&accounts, &principal_id, &calendar, &mode, depth, &listed)
+            render_calendar(
+                &accounts,
+                &principal_id,
+                &calendar,
+                &mode,
+                depth,
+                &listed,
+                &session.principal_id,
+            )
+            .await
         }
         REPORT => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {
@@ -346,6 +375,10 @@ async fn dav_calendar(
             if !path_principal_ok {
                 return dav_calendar_not_found(accounts.metrics());
             }
+            let report_depth = request
+                .headers()
+                .get("depth")
+                .map(|value| value.to_str().map(str::to_owned));
             let body = match axum::body::to_bytes(request.into_body(), query::MAX_BODY_BYTES).await
             {
                 Ok(body) => body,
@@ -353,17 +386,42 @@ async fn dav_calendar(
             };
             let report = match query::parse_calendar_report(&body) {
                 Ok(report) => report,
-                Err(e) => return dav_bad_request(accounts.metrics(), e.to_string()),
+                Err(e) => return report_error(accounts.metrics(), e),
             };
+            let valid_depth = match &report {
+                query::CalendarReport::SyncCollection(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0")),
+                query::CalendarReport::Multiget(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0" || value == "1" || value == "infinity")),
+                query::CalendarReport::Query(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0" || value == "1" || value == "infinity")),
+            };
+            if !valid_depth {
+                return dav_bad_depth(accounts.metrics());
+            }
             match report {
                 query::CalendarReport::Query(cal_query) => {
-                    handle_calendar_query(&accounts, &principal_id, &calendar, &cal_query).await
+                    // RFC 4791 section 7.8: query Depth defaults to zero. A
+                    // calendar collection is not itself a calendar object.
+                    if report_depth
+                        .as_ref()
+                        .is_none_or(|value| matches!(value, Ok(value) if value == "0"))
+                    {
+                        return render_propfind_response(&[], &PropfindMode::AllProp);
+                    }
+                    handle_calendar_query(&accounts, &principal_id, &calendar, &cal_query, &session)
+                        .await
                 }
                 query::CalendarReport::Multiget(multiget) => {
-                    handle_calendar_multiget(&accounts, &principal_id, &calendar, &multiget).await
+                    handle_calendar_multiget(
+                        &accounts,
+                        &principal_id,
+                        &calendar,
+                        &multiget,
+                        &session,
+                    )
+                    .await
                 }
                 query::CalendarReport::SyncCollection(sync) => {
-                    handle_sync_collection(&accounts, &principal_id, &calendar, &sync).await
+                    handle_sync_collection(&accounts, &principal_id, &calendar, &sync, &session)
+                        .await
                 }
             }
         }
@@ -376,11 +434,18 @@ async fn dav_event_resource(
     Path((principal_id, calendar_key, resource_name)): Path<(String, String, String)>,
     request: Request,
 ) -> Response {
+    if resource_name.is_empty()
+        || resource_name.contains(['/', '\\'])
+        || resource_name.chars().any(char::is_control)
+    {
+        return dav_resource_not_found(accounts.metrics());
+    }
     match request.method().as_str() {
         OPTIONS => dav_capabilities(DAV_RESOURCE_ALLOW),
-        "GET" | "HEAD" => {
+        "GET" | "HEAD" | PROPFIND => {
             let head = request.method().as_str() == "HEAD";
-            let (session, _request) = match authenticate_dav_request(&accounts, request).await {
+            let propfind = request.method().as_str() == PROPFIND;
+            let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
                 Err(response) => return response,
             };
@@ -431,8 +496,25 @@ async fn dav_event_resource(
             let Some((ical, etag)) =
                 ical_and_etag(accounts.pool(), calendar_id, &resource, &event, access).await
             else {
-                return dav_resource_not_found(accounts.metrics());
+                return dav_server_error(accounts.metrics());
             };
+            if propfind {
+                if parse_depth(request.headers()) == DepthOutcome::Malformed {
+                    return dav_bad_depth(accounts.metrics());
+                }
+                let mode = match parse_propfind_body(accounts.metrics(), request).await {
+                    Ok(mode) => mode,
+                    Err(response) => return *response,
+                };
+                let mut props = resource_props(&etag);
+                props.extend(object_metadata(&accounts, &calendar, &session.principal_id));
+                props.push(DavProp::new(
+                    "DAV:getcontentlength",
+                    format!("<D:getcontentlength>{}</D:getcontentlength>", ical.len()),
+                ));
+                let href = event_href(&principal_id, calendar_id, resource_name);
+                return render_propfind_response(&[(href, props)], &mode);
+            }
             let content_length = ical.len().to_string();
             let mut response = (
                 StatusCode::OK,
@@ -561,6 +643,11 @@ async fn handle_put_event_resource(
             .await
         }
         None => {
+            if request.headers().contains_key(header::IF_MATCH) {
+                return (StatusCode::PRECONDITION_FAILED, "resource does not exist")
+                    .into_response();
+            }
+
             handle_put_create_event_resource(
                 accounts,
                 session,
@@ -578,7 +665,7 @@ async fn handle_put_event_resource(
 /// through the domain service and persists the DAV resource mapping.
 ///
 /// Requires `If-None-Match: *`. Fails with 412 when the resource already
-/// exists, 409 when the client-supplied UID is already mapped in the
+/// exists, 403 CALDAV:no-uid-conflict when the UID is already mapped in the
 /// calendar, and rolls back the event when the mapping cannot be written.
 async fn handle_put_create_event_resource(
     accounts: &CaldavAccountService,
@@ -703,7 +790,48 @@ async fn handle_put_create_event_resource(
         status,
         timing,
     };
-    let event_service = EventService::new_at(accounts.pool().clone(), accounts.now());
+    let mut changes = Vec::new();
+    for exception in &exceptions {
+        let timing = normalized_timing(&exception.timing);
+        let event = EventMutation {
+            title: exception.summary.clone(),
+            description: exception.description.clone(),
+            location: exception.location.clone(),
+            status: match exception.status.as_deref() {
+                Some("TENTATIVE") => EventStatus::Tentative,
+                Some("CANCELLED") => EventStatus::Cancelled,
+                _ => EventStatus::Confirmed,
+            },
+            timing,
+        };
+        match exception.recurrence_id.as_ref().expect("filtered above") {
+            crate::ics::NormalizedDateValue::Timed(dt) => {
+                changes.push(RecurringExceptionChange::UpdateTimed(OccurrenceChange {
+                    recurrence_id: dt.timestamp(),
+                    expected_version: 1,
+                    event,
+                }))
+            }
+            crate::ics::NormalizedDateValue::AllDay(date) => changes.push(
+                RecurringExceptionChange::UpdateAllDay(AllDayOccurrenceChange {
+                    recurrence_date: date.to_string(),
+                    expected_version: 1,
+                    event,
+                }),
+            ),
+        }
+    }
+    changes.extend(master.exdates.iter().map(|value| match value {
+        crate::ics::NormalizedDateValue::Timed(dt) => {
+            RecurringExceptionChange::DeleteTimed(dt.timestamp())
+        }
+        crate::ics::NormalizedDateValue::AllDay(date) => {
+            RecurringExceptionChange::DeleteAllDay(date.to_string())
+        }
+    }));
+    let event_service = EventService::new_at(accounts.pool().clone(), accounts.now())
+        .with_caldav_properties(client_properties)
+        .with_caldav_create(master.uid.clone(), resource_name.to_owned(), changes);
     let projection = if let Some(rrule) = &master.rrule {
         match event_service
             .create_recurring(
@@ -716,7 +844,7 @@ async fn handle_put_create_event_resource(
             .await
         {
             Ok(projection) => projection,
-            Err(_) => return dav_server_error(accounts.metrics()),
+            Err(error) => return create_error(accounts, calendar, resource_name, error).await,
         }
     } else {
         if !exceptions.is_empty() || !master.exdates.is_empty() {
@@ -727,196 +855,18 @@ async fn handle_put_create_event_resource(
             .await
         {
             Ok(projection) => projection,
-            Err(_) => return dav_server_error(accounts.metrics()),
+            Err(error) => return create_error(accounts, calendar, resource_name, error).await,
         }
     };
     let event_id = projection.id;
 
-    if master.rrule.is_some() {
-        let mut expected_version = projection.version.unwrap_or(1);
-        for exdate in &master.exdates {
-            let result = match exdate {
-                crate::ics::NormalizedDateValue::Timed(dt) => {
-                    event_service
-                        .delete_occurrence(
-                            session.user_id,
-                            false,
-                            calendar.calendar_id,
-                            event_id,
-                            dt.timestamp(),
-                            expected_version,
-                        )
-                        .await
-                }
-                crate::ics::NormalizedDateValue::AllDay(date) => {
-                    event_service
-                        .delete_all_day_occurrence(
-                            session.user_id,
-                            false,
-                            calendar.calendar_id,
-                            event_id,
-                            &date.format("%Y-%m-%d").to_string(),
-                            expected_version,
-                        )
-                        .await
-                }
-            };
-            match result {
-                Ok(next_projection) => {
-                    expected_version = next_projection.version.unwrap_or(expected_version);
-                }
-                Err(_) => {
-                    let _ = event_service
-                        .delete(session.user_id, false, calendar.calendar_id, event_id)
-                        .await;
-                    return dav_server_error(accounts.metrics());
-                }
-            }
-        }
-        for exception in &exceptions {
-            let result = match exception.recurrence_id.as_ref().unwrap() {
-                crate::ics::NormalizedDateValue::Timed(dt) => {
-                    let exc_timing = match &exception.timing {
-                        crate::ics::NormalizedTiming::Timed {
-                            starts_at,
-                            ends_at,
-                            timezone,
-                        } => EventTiming::Timed {
-                            start_utc: starts_at.timestamp(),
-                            end_utc: ends_at.timestamp(),
-                            timezone: timezone.clone().unwrap_or_else(|| "UTC".to_owned()),
-                        },
-                        crate::ics::NormalizedTiming::AllDay {
-                            start_date,
-                            end_date,
-                        } => EventTiming::AllDay {
-                            start_date: start_date.format("%Y-%m-%d").to_string(),
-                            end_date: end_date.format("%Y-%m-%d").to_string(),
-                        },
-                    };
-                    let exc_status = match exception.status.as_deref() {
-                        Some("TENTATIVE") => EventStatus::Tentative,
-                        Some("CANCELLED") => EventStatus::Cancelled,
-                        _ => EventStatus::Confirmed,
-                    };
-                    event_service
-                        .update_occurrence(
-                            session.user_id,
-                            false,
-                            calendar.calendar_id,
-                            event_id,
-                            crate::event::OccurrenceChange {
-                                recurrence_id: dt.timestamp(),
-                                expected_version,
-                                event: EventMutation {
-                                    title: exception.summary.clone(),
-                                    description: exception.description.clone(),
-                                    location: exception.location.clone(),
-                                    status: exc_status,
-                                    timing: exc_timing,
-                                },
-                            },
-                        )
-                        .await
-                }
-                crate::ics::NormalizedDateValue::AllDay(date) => {
-                    let exc_timing = match &exception.timing {
-                        crate::ics::NormalizedTiming::Timed {
-                            starts_at,
-                            ends_at,
-                            timezone,
-                        } => EventTiming::Timed {
-                            start_utc: starts_at.timestamp(),
-                            end_utc: ends_at.timestamp(),
-                            timezone: timezone.clone().unwrap_or_else(|| "UTC".to_owned()),
-                        },
-                        crate::ics::NormalizedTiming::AllDay {
-                            start_date,
-                            end_date,
-                        } => EventTiming::AllDay {
-                            start_date: start_date.format("%Y-%m-%d").to_string(),
-                            end_date: end_date.format("%Y-%m-%d").to_string(),
-                        },
-                    };
-                    let exc_status = match exception.status.as_deref() {
-                        Some("TENTATIVE") => EventStatus::Tentative,
-                        Some("CANCELLED") => EventStatus::Cancelled,
-                        _ => EventStatus::Confirmed,
-                    };
-                    event_service
-                        .update_all_day_occurrence(
-                            session.user_id,
-                            false,
-                            calendar.calendar_id,
-                            event_id,
-                            crate::event::AllDayOccurrenceChange {
-                                recurrence_date: date.format("%Y-%m-%d").to_string(),
-                                expected_version,
-                                event: EventMutation {
-                                    title: exception.summary.clone(),
-                                    description: exception.description.clone(),
-                                    location: exception.location.clone(),
-                                    status: exc_status,
-                                    timing: exc_timing,
-                                },
-                            },
-                        )
-                        .await
-                }
-            };
-            match result {
-                Ok(next_projection) => {
-                    expected_version = next_projection.version.unwrap_or(expected_version);
-                }
-                Err(_) => {
-                    let _ = event_service
-                        .delete(session.user_id, false, calendar.calendar_id, event_id)
-                        .await;
-                    return dav_server_error(accounts.metrics());
-                }
-            }
-        }
-    }
-
-    let now = accounts.now();
     let resource = match repository
-        .create_resource(
-            calendar.calendar_id,
-            event_id,
-            &master.uid,
-            resource_name,
-            now,
-        )
+        .resolve_resource(calendar.calendar_id, event_id)
         .await
     {
-        Ok(resource) => resource,
-        Err(error) => {
-            let _ = event_service
-                .delete(session.user_id, false, calendar.calendar_id, event_id)
-                .await;
-            return match error {
-                CaldavAuthError::ResourceExists => {
-                    accounts.metrics().record_precondition_failed();
-                    (StatusCode::PRECONDITION_FAILED, "resource already exists").into_response()
-                }
-                CaldavAuthError::UidConflict => {
-                    (StatusCode::CONFLICT, "uid already exists in calendar").into_response()
-                }
-                _ => dav_server_error(accounts.metrics()),
-            };
-        }
+        Ok(Some(resource)) => resource,
+        _ => return dav_server_error(accounts.metrics()),
     };
-
-    if repository
-        .save_client_properties(event_id, &client_properties, now)
-        .await
-        .is_err()
-    {
-        let _ = event_service
-            .delete(session.user_id, false, calendar.calendar_id, event_id)
-            .await;
-        return dav_server_error(accounts.metrics());
-    }
 
     let event_record = match EventRepository::new(accounts.pool().clone())
         .event(calendar.calendar_id, event_id)
@@ -925,7 +875,7 @@ async fn handle_put_create_event_resource(
         Ok(Some(event_record)) => event_record,
         _ => return dav_server_error(accounts.metrics()),
     };
-    let Some((ical, etag)) = ical_and_etag(
+    let Some((ical, _etag)) = ical_and_etag(
         accounts.pool(),
         calendar.calendar_id,
         &resource,
@@ -936,15 +886,11 @@ async fn handle_put_create_event_resource(
     else {
         return dav_server_error(accounts.metrics());
     };
-    let location = format!(
-        "/dav/calendars/{principal_id}/{}/{}.ics",
-        calendar.calendar_id, resource.resource_name
-    );
+    let location = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
     (
         StatusCode::CREATED,
         [
             (header::LOCATION, location.as_str()),
-            (header::ETAG, etag.as_str()),
             (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
         ],
         ical,
@@ -983,6 +929,14 @@ async fn handle_put_update_event_resource(
         return dav_resource_not_found(accounts.metrics());
     }
 
+    if request
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .is_some_and(|value| value == "*")
+    {
+        accounts.metrics().record_precondition_failed();
+        return (StatusCode::PRECONDITION_FAILED, "resource already exists").into_response();
+    }
     let if_match = request
         .headers()
         .get(header::IF_MATCH)
@@ -990,7 +944,7 @@ async fn handle_put_update_event_resource(
     let Some(if_match) = if_match else {
         accounts.metrics().record_precondition_failed();
         return (
-            StatusCode::PRECONDITION_FAILED,
+            StatusCode::PRECONDITION_REQUIRED,
             "If-Match is required to update a resource",
         )
             .into_response();
@@ -1013,7 +967,7 @@ async fn handle_put_update_event_resource(
     )
     .await
     else {
-        return dav_resource_not_found(accounts.metrics());
+        return dav_server_error(accounts.metrics());
     };
     if !etag_matches(if_match, &current_etag) {
         accounts.metrics().record_precondition_failed();
@@ -1149,7 +1103,8 @@ async fn handle_put_update_event_resource(
         status,
         timing,
     };
-    let event_service = EventService::new_at(accounts.pool().clone(), accounts.now());
+    let event_service = EventService::new_at(accounts.pool().clone(), accounts.now())
+        .with_caldav_properties(client_properties);
     let mut applied_recurring_exceptions = false;
     let mut projection = if let Some(recurrence_id) = &incoming.recurrence_id {
         match recurrence_id {
@@ -1438,15 +1393,6 @@ async fn handle_put_update_event_resource(
         }
     }
 
-    let repository = CaldavRepository::new(accounts.pool().clone());
-    if repository
-        .save_client_properties(resource.event_id, &client_properties, accounts.now())
-        .await
-        .is_err()
-    {
-        return dav_server_error(accounts.metrics());
-    }
-
     let event_record = match EventRepository::new(accounts.pool().clone())
         .event(calendar.calendar_id, projection.id)
         .await
@@ -1454,7 +1400,7 @@ async fn handle_put_update_event_resource(
         Ok(Some(event_record)) => event_record,
         _ => return dav_server_error(accounts.metrics()),
     };
-    let Some((ical, etag)) = ical_and_etag(
+    let Some((ical, _etag)) = ical_and_etag(
         accounts.pool(),
         calendar.calendar_id,
         resource,
@@ -1467,10 +1413,7 @@ async fn handle_put_update_event_resource(
     };
     (
         StatusCode::OK,
-        [
-            (header::ETAG, etag.as_str()),
-            (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
-        ],
+        [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
         ical,
     )
         .into_response()
@@ -1512,7 +1455,7 @@ async fn handle_delete_event_resource(
     let Some(if_match) = if_match else {
         accounts.metrics().record_precondition_failed();
         return (
-            StatusCode::PRECONDITION_FAILED,
+            StatusCode::PRECONDITION_REQUIRED,
             "If-Match is required to delete a resource",
         )
             .into_response();
@@ -1548,67 +1491,93 @@ async fn handle_delete_event_resource(
     )
     .await
     else {
-        return dav_resource_not_found(accounts.metrics());
+        return dav_server_error(accounts.metrics());
     };
     if !etag_matches(if_match, &current_etag) {
         accounts.metrics().record_precondition_failed();
         return (StatusCode::PRECONDITION_FAILED, "precondition failed").into_response();
     }
 
-    let now = accounts.now();
-    let tombstoned = match repository
-        .tombstone_resource(calendar.calendar_id, resource.event_id, now)
-        .await
-    {
-        Ok(tombstoned) => tombstoned,
-        Err(_) => return dav_server_error(accounts.metrics()),
-    };
-    if !tombstoned {
-        // The live mapping disappeared between the precondition check and the
-        // tombstone write; treat as an already-deleted resource.
-        return dav_resource_not_found(accounts.metrics());
-    }
-
     let event_service = EventService::new_at(accounts.pool().clone(), accounts.now());
     let delete_result = event_service
-        .delete(
+        .delete_if_version(
             session.user_id,
             false,
             calendar.calendar_id,
             resource.event_id,
+            Some(event.version),
         )
         .await;
     if let Err(error) = delete_result {
-        // Compensate the tombstone so the mapping is not left dangling.
-        let _ = repository
-            .restore_resource(
-                calendar.calendar_id,
-                resource.event_id,
-                resource_name,
-                accounts.now(),
-            )
-            .await;
         return match error {
+            EventServiceError::Conflict { .. } => {
+                (StatusCode::PRECONDITION_FAILED, "precondition failed").into_response()
+            }
             EventServiceError::NotFound => dav_resource_not_found(accounts.metrics()),
             EventServiceError::ReadOnly => dav_resource_not_found(accounts.metrics()),
             _ => dav_server_error(accounts.metrics()),
         };
     }
 
-    // The tombstone was applied before the domain delete, so the change-log
-    // entry recorded by the domain service could not resolve the resource name
-    // from the live mapping. Stamp it now so sync-collection can emit the
-    // correct href for this deletion.
-    let _ = repository
-        .stamp_change_resource_name(calendar.calendar_id, resource.event_id, resource_name)
-        .await;
-
-    StatusCode::OK.into_response()
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// True when a parsed event's end is not strictly after its start. The parser
 /// already enforces this, but the check keeps the HTTP layer fail-safe for both
 /// timed and all-day events.
+fn normalized_timing(timing: &crate::ics::NormalizedTiming) -> EventTiming {
+    match timing {
+        crate::ics::NormalizedTiming::Timed {
+            starts_at,
+            ends_at,
+            timezone,
+        } => EventTiming::Timed {
+            start_utc: starts_at.timestamp(),
+            end_utc: ends_at.timestamp(),
+            timezone: timezone.clone().unwrap_or_else(|| "UTC".into()),
+        },
+        crate::ics::NormalizedTiming::AllDay {
+            start_date,
+            end_date,
+        } => EventTiming::AllDay {
+            start_date: start_date.to_string(),
+            end_date: end_date.to_string(),
+        },
+    }
+}
+async fn create_error(
+    accounts: &CaldavAccountService,
+    calendar: &CaldavCalendar,
+    name: &str,
+    error: EventServiceError,
+) -> Response {
+    if matches!(
+        error,
+        EventServiceError::InvalidInput | EventServiceError::NotFound
+    ) {
+        return dav_bad_request(accounts.metrics(), "invalid event or recurrence");
+    }
+    if let EventServiceError::Database(error) = &error
+        && error
+            .as_database_error()
+            .is_some_and(|error| error.is_unique_violation())
+    {
+        return match CaldavRepository::new(accounts.pool().clone())
+            .resolve_by_name(calendar.calendar_id, name)
+            .await
+        {
+            Ok(Some(_)) => {
+                (StatusCode::PRECONDITION_FAILED, "resource already exists").into_response()
+            }
+            Ok(None) => {
+                dav_precondition(query::NS_CALDAV, "no-uid-conflict", StatusCode::FORBIDDEN)
+            }
+            Err(_) => dav_server_error(accounts.metrics()),
+        };
+    }
+    dav_server_error(accounts.metrics())
+}
+
 fn timing_end_not_after_start(timing: &EventTiming) -> bool {
     match timing {
         EventTiming::Timed {
@@ -1709,7 +1678,13 @@ enum DepthOutcome {
 }
 
 fn parse_depth(headers: &axum::http::HeaderMap) -> DepthOutcome {
-    let value = headers.get("depth").and_then(|value| value.to_str().ok());
+    let value = match headers.get("depth") {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value),
+            Err(_) => return DepthOutcome::Malformed,
+        },
+        None => None,
+    };
     match value {
         None => DepthOutcome::Infinite,
         Some(value) if value.eq_ignore_ascii_case("0") => DepthOutcome::Zero,
@@ -1719,7 +1694,7 @@ fn parse_depth(headers: &axum::http::HeaderMap) -> DepthOutcome {
     }
 }
 
-/// 400 with a `DAV:error` carrying `D:propfind-finite-depth`, per RFC 4918,
+/// 403 with a `DAV:error` carrying `D:propfind-finite-depth`, per RFC 4918,
 /// when an unsupported infinite Depth is requested.
 fn dav_propfind_finite_depth(metrics: &CaldavMetrics) -> Response {
     metrics.record_malformed_request();
@@ -1728,7 +1703,7 @@ fn dav_propfind_finite_depth(metrics: &CaldavMetrics) -> Response {
   <D:propfind-finite-depth/>
 </D:error>"#;
     (
-        StatusCode::BAD_REQUEST,
+        StatusCode::FORBIDDEN,
         [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
         body,
     )
@@ -1769,6 +1744,37 @@ fn dav_resource_not_found(metrics: &CaldavMetrics) -> Response {
     StatusCode::NOT_FOUND.into_response()
 }
 
+fn dav_precondition(namespace: &str, local: &str, status: StatusCode) -> Response {
+    let element = prop_element(&DavName::new(namespace, local));
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        format!("<D:error xmlns:D=\"DAV:\">{element}</D:error>"),
+    )
+        .into_response()
+}
+fn report_error(metrics: &CaldavMetrics, error: query::QueryError) -> Response {
+    match error {
+        query::QueryError::UnsupportedRoot => {
+            dav_precondition(query::NS_DAV, "supported-report", StatusCode::FORBIDDEN)
+        }
+        query::QueryError::UnsupportedFilter => {
+            dav_precondition(query::NS_CALDAV, "supported-filter", StatusCode::FORBIDDEN)
+        }
+        query::QueryError::UnsupportedCalendarData => dav_precondition(
+            query::NS_CALDAV,
+            "supported-calendar-data",
+            StatusCode::FORBIDDEN,
+        ),
+        query::QueryError::RangeTooLarge | query::QueryError::TooManyHrefs => dav_precondition(
+            query::NS_DAV,
+            "number-of-matches-within-limits",
+            StatusCode::INSUFFICIENT_STORAGE,
+        ),
+        error => dav_bad_request(metrics, error.to_string()),
+    }
+}
+
 fn dav_bad_request(metrics: &CaldavMetrics, message: impl Into<String>) -> Response {
     metrics.record_malformed_request();
     (StatusCode::BAD_REQUEST, message.into()).into_response()
@@ -1776,7 +1782,7 @@ fn dav_bad_request(metrics: &CaldavMetrics, message: impl Into<String>) -> Respo
 
 fn dav_oversized_body(metrics: &CaldavMetrics) -> Response {
     metrics.record_oversized_body();
-    (StatusCode::BAD_REQUEST, "request body too large").into_response()
+    (StatusCode::PAYLOAD_TOO_LARGE, "request body too large").into_response()
 }
 
 async fn handle_calendar_query(
@@ -1784,23 +1790,49 @@ async fn handle_calendar_query(
     principal_id: &str,
     calendar: &CaldavCalendar,
     cal_query: &CalendarQuery,
+    session: &DavSession,
 ) -> Response {
+    let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
         return dav_calendar_not_found(accounts.metrics());
     };
     let repository = CaldavRepository::new(accounts.pool().clone());
-    let event_ids = match repository
-        .list_events_in_range(
-            calendar.calendar_id,
-            cal_query.start_utc,
-            cal_query.end_utc,
-            MAX_RESULTS,
-        )
-        .await
-    {
-        Ok(ids) => ids,
-        Err(_) => return dav_server_error(accounts.metrics()),
+    let event_ids = if cal_query.has_time_range {
+        match repository
+            .list_events_in_range(
+                calendar.calendar_id,
+                cal_query.start_utc,
+                cal_query.end_utc,
+                MAX_RESULTS,
+            )
+            .await
+        {
+            Ok(ids) => ids,
+            Err(CaldavAuthError::QueryLimit) => {
+                return dav_precondition(
+                    query::NS_DAV,
+                    "number-of-matches-within-limits",
+                    StatusCode::INSUFFICIENT_STORAGE,
+                );
+            }
+            Err(_) => return dav_server_error(accounts.metrics()),
+        }
+    } else {
+        match repository
+            .list_exposed_event_ids(calendar.calendar_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(_) => return dav_server_error(accounts.metrics()),
+        }
     };
+    if event_ids.len() > MAX_RESULTS {
+        return dav_precondition(
+            query::NS_DAV,
+            "number-of-matches-within-limits",
+            StatusCode::INSUFFICIENT_STORAGE,
+        );
+    }
     let events = EventRepository::new(accounts.pool().clone());
     let now = accounts.now();
     let mut responses = Vec::new();
@@ -1823,11 +1855,17 @@ async fn handle_calendar_query(
                 )
                 .await
                 {
-                    let href = format!(
-                        "/dav/calendars/{principal_id}/{}/{}.ics",
-                        calendar.calendar_id, resource.resource_name
-                    );
-                    responses.push(calendar_query_response_xml(&href, &etag, &ical));
+                    let href =
+                        event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+                    responses.push(report_resource_xml(
+                        &href,
+                        &etag,
+                        &ical,
+                        &cal_query.props,
+                        &object_metadata(accounts, calendar, &session.principal_id),
+                    ));
+                } else {
+                    return dav_server_error(accounts.metrics());
                 }
             }
             Ok(None) => {}
@@ -1853,20 +1891,34 @@ async fn handle_calendar_query(
         .into_response()
 }
 
-fn calendar_query_response_xml(href: &str, etag: &str, ical: &str) -> String {
-    let escaped_ical = xml_escape(ical);
+fn report_resource_xml(
+    href: &str,
+    etag: &str,
+    ical: &str,
+    props: &Option<PropfindMode>,
+    metadata: &[DavProp],
+) -> String {
+    let mut supported = resource_props(etag);
+    supported.extend(metadata.iter().map(|p| DavProp {
+        name: p.name.clone(),
+        xml: p.xml.clone(),
+    }));
+    supported.push(DavProp::new(
+        "DAV:getcontentlength",
+        format!("<D:getcontentlength>{}</D:getcontentlength>", ical.len()),
+    ));
+    supported.push(DavProp::new(
+        "urn:ietf:params:xml:ns:caldav:calendar-data",
+        format!("<C:calendar-data>{}</C:calendar-data>", xml_escape(ical)),
+    ));
+    let mode = props.clone().unwrap_or(PropfindMode::AllProp);
+    if matches!(mode, PropfindMode::AllProp | PropfindMode::PropName) {
+        supported.retain(|property| property.name != "urn:ietf:params:xml:ns:caldav:calendar-data");
+    }
+    let groups = propstat_xml(&supported, &mode);
     format!(
-        r#"  <D:response>
-    <D:href>{href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:getetag>{etag}</D:getetag>
-        <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
-        <C:calendar-data>{escaped_ical}</C:calendar-data>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
+        "<D:response><D:href>{}</D:href>{groups}</D:response>",
+        xml_escape(href)
     )
 }
 
@@ -1880,7 +1932,9 @@ async fn handle_calendar_multiget(
     principal_id: &str,
     calendar: &CaldavCalendar,
     multiget: &CalendarMultiget,
+    session: &DavSession,
 ) -> Response {
+    let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
         return dav_calendar_not_found(accounts.metrics());
     };
@@ -1888,20 +1942,21 @@ async fn handle_calendar_multiget(
     let events = EventRepository::new(accounts.pool().clone());
     let mut responses = Vec::with_capacity(multiget.hrefs.len());
     for href in &multiget.hrefs {
-        let resource_name = match href_within_collection(href, principal_id, calendar.calendar_id) {
-            Some(name) => name,
-            None => {
-                responses.push(multiget_response_xml(href, None));
-                continue;
-            }
-        };
+        let resource_name =
+            match normalized_multiget_name(accounts, href, principal_id, calendar.calendar_id) {
+                Some(name) => name,
+                None => {
+                    responses.push(sync_deleted_response_xml(href));
+                    continue;
+                }
+            };
         let resource = match repository
             .resolve_by_name(calendar.calendar_id, &resource_name)
             .await
         {
             Ok(Some(resource)) => resource,
             Ok(None) => {
-                responses.push(multiget_response_xml(href, None));
+                responses.push(sync_deleted_response_xml(href));
                 continue;
             }
             Err(_) => return dav_server_error(accounts.metrics()),
@@ -1909,7 +1964,7 @@ async fn handle_calendar_multiget(
         let event = match events.event(calendar.calendar_id, resource.event_id).await {
             Ok(Some(event)) => event,
             Ok(None) => {
-                responses.push(multiget_response_xml(href, None));
+                responses.push(sync_deleted_response_xml(href));
                 continue;
             }
             Err(_) => return dav_server_error(accounts.metrics()),
@@ -1923,7 +1978,19 @@ async fn handle_calendar_multiget(
         )
         .await
         .map(|(ical, etag)| (etag, ical));
-        responses.push(multiget_response_xml(href, payload));
+        if payload.is_none() {
+            return dav_server_error(accounts.metrics());
+        }
+        responses.push(match payload {
+            Some((etag, ical)) => report_resource_xml(
+                href,
+                &etag,
+                &ical,
+                &multiget.props,
+                &object_metadata(accounts, calendar, &session.principal_id),
+            ),
+            None => sync_deleted_response_xml(href),
+        });
     }
     let body = responses.join("\n");
     let xml = format!(
@@ -1954,7 +2021,9 @@ async fn handle_sync_collection(
     principal_id: &str,
     calendar: &CaldavCalendar,
     sync: &query::SyncCollection,
+    session: &DavSession,
 ) -> Response {
+    let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
         return dav_calendar_not_found(accounts.metrics());
     };
@@ -1962,91 +2031,86 @@ async fn handle_sync_collection(
     let events = EventRepository::new(accounts.pool().clone());
     let now = accounts.now();
 
+    let context = match sync_context(accounts, calendar, session.user_id).await {
+        Ok(value) => value,
+        Err(_) => return dav_server_error(accounts.metrics()),
+    };
+    // Capture high-water before hydration. Any concurrent mutation forces retry,
+    // so a successful response cannot advance beyond an unseen mutation.
+    let high_water = match repository.latest_revision(calendar.calendar_id).await {
+        Ok(value) => value,
+        Err(_) => return dav_server_error(accounts.metrics()),
+    };
+    let limit = sync.limit.unwrap_or(MAX_RESULTS).min(MAX_RESULTS);
     let mut responses = Vec::new();
+    let truncated;
+    let mut snapshot_cursor = None;
+    let state = match &sync.sync_token {
+        Some(token) => match accounts.collection_sync_state(token, &context) {
+            Some((revision, cursor)) if revision <= high_water => Some((revision, cursor)),
+            _ => return dav_precondition(query::NS_DAV, "valid-sync-token", StatusCode::FORBIDDEN),
+        },
+        None => None,
+    };
     let new_revision;
-
-    match &sync.sync_token {
-        Some(token) => {
-            // Incremental sync: decode the opaque token and page the change log.
-            let Some(revision) = accounts.decode_sync_token(token) else {
-                return dav_bad_request(accounts.metrics(), "invalid sync token");
-            };
+    match state {
+        Some((revision, None)) => {
+            // Coalesce all changes through a fixed high-water mark, then page by
+            // the last revision for each href. Omitted hrefs always retain a
+            // revision greater than the continuation token.
             let changes = match repository
-                .list_changes_since(calendar.calendar_id, revision, MAX_RESULTS)
+                .coalesced_changes(calendar.calendar_id, revision, high_water, limit + 1)
                 .await
             {
                 Ok(changes) => changes,
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
-            new_revision = changes.last().map(|change| change.id).unwrap_or(revision);
-            for change in &changes {
-                match change.change_type.as_str() {
-                    "deleted" => {
-                        let resource_name = change.resource_name.clone().unwrap_or_default();
-                        let href = format!(
-                            "/dav/calendars/{principal_id}/{}/{}.ics",
-                            calendar.calendar_id, resource_name
-                        );
-                        responses.push(sync_deleted_response_xml(&href));
-                    }
-                    "created" | "updated" => {
-                        let Some(event_id) = change.event_id else {
-                            continue;
-                        };
-                        let resource = match repository
-                            .ensure_resource(calendar.calendar_id, event_id, now)
-                            .await
-                        {
-                            Ok(resource) => resource,
-                            Err(_) => return dav_server_error(accounts.metrics()),
-                        };
-                        match events.event(calendar.calendar_id, event_id).await {
-                            Ok(Some(event)) => {
-                                if let Some((ical, etag)) = ical_and_etag(
-                                    accounts.pool(),
-                                    calendar.calendar_id,
-                                    &resource,
-                                    &event,
-                                    access,
-                                )
-                                .await
-                                {
-                                    let href = format!(
-                                        "/dav/calendars/{principal_id}/{}/{}.ics",
-                                        calendar.calendar_id, resource.resource_name
-                                    );
-                                    responses.push(sync_changed_response_xml(&href, &etag, &ical));
-                                }
-                            }
-                            Ok(None) => {}
-                            Err(_) => return dav_server_error(accounts.metrics()),
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        None => {
-            // Initial snapshot: return every currently exposed event and mint a
-            // token at the latest revision so the next call is incremental.
-            let event_ids = match repository
-                .list_exposed_event_ids(calendar.calendar_id)
-                .await
-            {
-                Ok(event_ids) => event_ids,
-                Err(_) => return dav_server_error(accounts.metrics()),
+            truncated = changes.len() > limit;
+            let page = &changes[..changes.len().min(limit)];
+            new_revision = if truncated {
+                page.last().map(|change| change.id).unwrap_or(revision)
+            } else {
+                high_water
             };
-            for event_id in &event_ids {
-                let resource = match repository
-                    .ensure_resource(calendar.calendar_id, *event_id, now)
+            for change in page {
+                let resource_name = if let Some(name) = &change.resource_name {
+                    name.clone()
+                } else if let Some(event_id) = change.event_id {
+                    match repository
+                        .resolve_resource(calendar.calendar_id, event_id)
+                        .await
+                    {
+                        Ok(Some(resource)) => resource.resource_name,
+                        Ok(None) => {
+                            match events.event(calendar.calendar_id, event_id).await {
+                                Ok(Some(_)) => match repository
+                                    .ensure_resource(calendar.calendar_id, event_id, now)
+                                    .await
+                                {
+                                    Ok(resource) => resource.resource_name,
+                                    Err(_) => return dav_server_error(accounts.metrics()),
+                                },
+                                Ok(None) => continue, // Never exposed before creation/deletion.
+                                Err(_) => return dav_server_error(accounts.metrics()),
+                            }
+                        }
+                        Err(_) => return dav_server_error(accounts.metrics()),
+                    }
+                } else {
+                    return dav_server_error(accounts.metrics());
+                };
+                let href = event_href(principal_id, calendar.calendar_id, &resource_name);
+                match repository
+                    .resolve_by_name(calendar.calendar_id, &resource_name)
                     .await
                 {
-                    Ok(resource) => resource,
-                    Err(_) => return dav_server_error(accounts.metrics()),
-                };
-                match events.event(calendar.calendar_id, *event_id).await {
-                    Ok(Some(event)) => {
-                        if let Some((ical, etag)) = ical_and_etag(
+                    Ok(Some(resource)) => {
+                        let event =
+                            match events.event(calendar.calendar_id, resource.event_id).await {
+                                Ok(Some(event)) => event,
+                                _ => return dav_server_error(accounts.metrics()),
+                            };
+                        let (ical, etag) = match ical_and_etag(
                             accounts.pool(),
                             calendar.calendar_id,
                             &resource,
@@ -2055,31 +2119,107 @@ async fn handle_sync_collection(
                         )
                         .await
                         {
-                            let href = format!(
-                                "/dav/calendars/{principal_id}/{}/{}.ics",
-                                calendar.calendar_id, resource.resource_name
-                            );
-                            responses.push(sync_changed_response_xml(&href, &etag, &ical));
-                        }
+                            Some(value) => value,
+                            None => return dav_server_error(accounts.metrics()),
+                        };
+                        responses.push(report_resource_xml(
+                            &href,
+                            &etag,
+                            &ical,
+                            &sync.props,
+                            &object_metadata(accounts, calendar, &session.principal_id),
+                        ));
                     }
-                    Ok(None) => {}
+                    Ok(None) => responses.push(sync_deleted_response_xml(&href)),
                     Err(_) => return dav_server_error(accounts.metrics()),
                 }
             }
-            new_revision = match repository.latest_revision(calendar.calendar_id).await {
-                Ok(revision) => revision,
+        }
+        initial => {
+            let (snapshot_revision, after_id) = initial
+                .map(|(revision, cursor)| (revision, cursor.unwrap_or(0)))
+                .unwrap_or((high_water, 0));
+            let event_ids = match repository
+                .list_exposed_event_ids(calendar.calendar_id)
+                .await
+            {
+                Ok(ids) => ids,
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
+            let event_ids: Vec<i64> = event_ids
+                .into_iter()
+                .filter(|id| *id > after_id)
+                .take(limit + 1)
+                .collect();
+            truncated = event_ids.len() > limit;
+            if truncated {
+                snapshot_cursor = event_ids.get(limit - 1).copied();
+            }
+            for event_id in event_ids.into_iter().take(limit) {
+                let resource = match repository
+                    .ensure_resource(calendar.calendar_id, event_id, now)
+                    .await
+                {
+                    Ok(resource) => resource,
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
+                let event = match events.event(calendar.calendar_id, event_id).await {
+                    Ok(Some(event)) => event,
+                    _ => return dav_server_error(accounts.metrics()),
+                };
+                let (ical, etag) = match ical_and_etag(
+                    accounts.pool(),
+                    calendar.calendar_id,
+                    &resource,
+                    &event,
+                    access,
+                )
+                .await
+                {
+                    Some(value) => value,
+                    None => return dav_server_error(accounts.metrics()),
+                };
+                let href = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+                responses.push(report_resource_xml(
+                    &href,
+                    &etag,
+                    &ical,
+                    &sync.props,
+                    &object_metadata(accounts, calendar, &session.principal_id),
+                ));
+            }
+            new_revision = snapshot_revision;
         }
     }
-
-    let new_token = accounts.encode_sync_token(new_revision);
-    let collection_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
-    let collection_response = sync_collection_response_xml(&collection_href, &new_token);
-    let body = std::iter::once(collection_response.as_str())
-        .chain(responses.iter().map(|response| response.as_str()))
-        .collect::<Vec<_>>()
-        .join("\n");
+    if repository.latest_revision(calendar.calendar_id).await.ok() != Some(high_water)
+        || sync_context(accounts, calendar, session.user_id)
+            .await
+            .ok()
+            .as_ref()
+            != Some(&context)
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "1")],
+            "calendar changed during synchronization; retry",
+        )
+            .into_response();
+    }
+    let new_token = xml_escape(&match snapshot_cursor {
+        Some(cursor) => accounts.collection_snapshot_token(&context, new_revision, cursor),
+        None => accounts.collection_sync_token(&context, new_revision),
+    });
+    if truncated {
+        let href = xml_escape(&format!(
+            "/dav/calendars/{principal_id}/{}/",
+            calendar.calendar_id
+        ));
+        responses.push(format!("<D:response><D:href>{href}</D:href><D:status>HTTP/1.1 507 Insufficient Storage</D:status><D:error><D:number-of-matches-within-limits/></D:error></D:response>"));
+    }
+    let body = format!(
+        "{}\n<D:sync-token>{new_token}</D:sync-token>",
+        responses.join("\n")
+    );
     let xml = format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
 <D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -2094,41 +2234,6 @@ async fn handle_sync_collection(
         .into_response()
 }
 
-/// The collection's own response element, carrying the new sync token.
-fn sync_collection_response_xml(href: &str, sync_token: &str) -> String {
-    let escaped_href = xml_escape(href);
-    format!(
-        r#"  <D:response>
-    <D:href>{escaped_href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:sync-token>{sync_token}</D:sync-token>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
-    )
-}
-
-/// A response element for an added or modified resource.
-fn sync_changed_response_xml(href: &str, etag: &str, ical: &str) -> String {
-    let escaped_href = xml_escape(href);
-    let escaped_ical = xml_escape(ical);
-    format!(
-        r#"  <D:response>
-    <D:href>{escaped_href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:getetag>{etag}</D:getetag>
-        <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
-        <C:calendar-data>{escaped_ical}</C:calendar-data>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
-    )
-}
-
 /// A response element for a deleted resource, per RFC 6578: the `D:status` is
 /// a direct child of `D:response` (not inside a `D:propstat`).
 fn sync_deleted_response_xml(href: &str) -> String {
@@ -2141,51 +2246,71 @@ fn sync_deleted_response_xml(href: &str) -> String {
     )
 }
 
-/// Extract the resource name from a href that lives inside the given
-/// collection. Returns `None` for foreign, malformed, or traversal paths.
+/// Encode each resource href path segment before XML serialization.
+fn event_href(principal_id: &str, calendar_id: i64, resource_name: &str) -> String {
+    let mut url = url::Url::parse("http://dav.invalid/").expect("constant URL");
+    url.path_segments_mut().expect("hierarchical URL").extend([
+        "dav",
+        "calendars",
+        principal_id,
+        &calendar_id.to_string(),
+        &format!("{resource_name}.ics"),
+    ]);
+    url.path().to_owned()
+}
+fn decoded_path_segment(value: &str) -> Option<String> {
+    let mut bytes = Vec::new();
+    let mut input = value.as_bytes().iter().copied();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = char::from(input.next()?).to_digit(16)?;
+            let low = char::from(input.next()?).to_digit(16)?;
+            bytes.push((high * 16 + low) as u8);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Resolve same-origin hrefs without fetching them or normalizing traversal.
+fn normalized_multiget_name(
+    accounts: &CaldavAccountService,
+    href: &str,
+    principal_id: &str,
+    calendar_id: i64,
+) -> Option<String> {
+    let base = url::Url::parse(&accounts.calendar_home_url(principal_id)).ok()?;
+    // Reject traversal before URL normalization can erase it.
+    let lower = href.to_ascii_lowercase();
+    if lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower.contains("%5c")
+        || href.contains('\\')
+        || href.split('/').any(|part| part == "." || part == "..")
+    {
+        return None;
+    }
+    let url = base.join(href).ok()?;
+    if url.origin() != base.origin()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    href_within_collection(url.path(), principal_id, calendar_id)
+}
+
 fn href_within_collection(href: &str, principal_id: &str, calendar_id: i64) -> Option<String> {
     let prefix = format!("/dav/calendars/{principal_id}/{calendar_id}/");
     let rest = href.strip_prefix(&prefix)?;
-    let resource_name = rest.strip_suffix(".ics")?;
+    let resource_name = decoded_path_segment(rest.strip_suffix(".ics")?)?;
     if resource_name.is_empty() || resource_name.contains('/') {
         return None;
     }
-    Some(resource_name.to_owned())
-}
-
-fn multiget_response_xml(href: &str, payload: Option<(String, String)>) -> String {
-    let escaped_href = xml_escape(href);
-    match payload {
-        Some((etag, ical)) => {
-            let escaped_ical = xml_escape(&ical);
-            format!(
-                r#"  <D:response>
-    <D:href>{escaped_href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:getetag>{etag}</D:getetag>
-        <D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>
-        <C:calendar-data>{escaped_ical}</C:calendar-data>
-      </D:prop>
-      <D:status>HTTP/1.1 200 OK</D:status>
-    </D:propstat>
-  </D:response>"#
-            )
-        }
-        None => format!(
-            r#"  <D:response>
-    <D:href>{escaped_href}</D:href>
-    <D:propstat>
-      <D:prop>
-        <D:getetag/>
-        <D:getcontenttype/>
-        <C:calendar-data/>
-      </D:prop>
-      <D:status>HTTP/1.1 404 Not Found</D:status>
-    </D:propstat>
-  </D:response>"#
-        ),
-    }
+    Some(resource_name)
 }
 
 fn dav_unauthorized() -> Response {
@@ -2247,18 +2372,71 @@ async fn authenticate_dav_request(
     }
 }
 
+async fn sync_context(
+    accounts: &CaldavAccountService,
+    calendar: &CaldavCalendar,
+    user_id: i64,
+) -> Result<String, CaldavAuthError> {
+    let row: (i64, i64, i64) = sqlx::query_as("SELECT c.version, a.created_at, v.epoch FROM calendars c JOIN calendar_acl a ON a.calendar_id = c.id JOIN caldav_visibility_epochs v ON v.calendar_id = a.calendar_id AND v.user_id = a.user_id WHERE c.id = ? AND a.user_id = ?")
+        .bind(calendar.calendar_id).bind(user_id).fetch_one(accounts.pool()).await.map_err(|_| CaldavAuthError::Persistence)?;
+    Ok(format!(
+        "{}:{user_id}:{}:{}:{}:{}",
+        calendar.calendar_id, calendar.role, row.0, row.1, row.2
+    ))
+}
+
+fn object_metadata(
+    accounts: &CaldavAccountService,
+    calendar: &CaldavCalendar,
+    principal_id: &str,
+) -> Vec<DavProp> {
+    let mut props = vec![
+        current_principal_prop(accounts, principal_id),
+        DavProp::new(
+            "DAV:current-user-privilege-set",
+            privilege_set_xml(&privileges_for_role(&calendar.role)),
+        ),
+    ];
+    if let Some(owner) = &calendar.owner_principal_id {
+        props.push(DavProp::new(
+            "DAV:owner",
+            format!(
+                "<D:owner><D:href>{}</D:href></D:owner>",
+                xml_escape(&accounts.principal_url(owner))
+            ),
+        ));
+    }
+    props
+}
+
+fn current_principal_prop(accounts: &CaldavAccountService, principal_id: &str) -> DavProp {
+    DavProp::new(
+        "DAV:current-user-principal",
+        format!(
+            "<D:current-user-principal><D:href>{}</D:href></D:current-user-principal>",
+            xml_escape(&accounts.principal_url(principal_id))
+        ),
+    )
+}
+
 fn render_propfind(
     accounts: &CaldavAccountService,
     session: &DavSession,
     mode: &PropfindMode,
 ) -> Response {
-    let principal_url = accounts.principal_url(&session.principal_id);
-    let props = vec![DavProp::new(
-        "DAV:current-user-principal",
-        format!(
-            "        <D:current-user-principal>\n          <D:href>{principal_url}</D:href>\n        </D:current-user-principal>"
+    let principal_url = xml_escape(&accounts.principal_url(&session.principal_id));
+    let props = vec![
+        DavProp::new(
+            "DAV:resourcetype",
+            "<D:resourcetype><D:collection/></D:resourcetype>".into(),
         ),
-    )];
+        DavProp::new(
+            "DAV:current-user-principal",
+            format!(
+                "        <D:current-user-principal>\n          <D:href>{principal_url}</D:href>\n        </D:current-user-principal>"
+            ),
+        ),
+    ];
     render_propfind_response(&[("/dav/".to_owned(), props)], mode)
 }
 
@@ -2269,10 +2447,11 @@ fn render_principal(
     mode: &PropfindMode,
     _depth: DavDepth,
 ) -> Response {
-    let principal_url = accounts.principal_url(principal_id);
-    let calendar_home = accounts.calendar_home_url(principal_id);
+    let principal_url = xml_escape(&accounts.principal_url(principal_id));
+    let calendar_home = xml_escape(&accounts.calendar_home_url(principal_id));
     let display_name = xml_escape(&principal.display_name);
     let props = vec![
+        current_principal_prop(accounts, principal_id),
         DavProp::new(
             "DAV:resourcetype",
             "        <D:resourcetype>\n          <D:principal/>\n        </D:resourcetype>"
@@ -2323,18 +2502,11 @@ fn privileges_for_role(role: &str) -> Vec<&'static str> {
     if writable {
         privileges.push("DAV:write-content");
     }
-    if allows(CalendarAction::ManageSettings) {
-        privileges.push("DAV:write-properties");
+    if allows(CalendarAction::CreateEvent) {
+        privileges.push("DAV:bind");
     }
-    if allows(CalendarAction::ManageAcl) {
-        privileges.push("DAV:read-acl");
-        privileges.push("DAV:write-acl");
-    }
-    if writable && allows(CalendarAction::ManageSettings) {
-        privileges.push("DAV:write");
-    }
-    if allows(CalendarAction::DeleteCalendar) {
-        privileges.push("DAV:all");
+    if allows(CalendarAction::EditAnyEvent) {
+        privileges.push("DAV:unbind");
     }
     privileges
 }
@@ -2346,9 +2518,9 @@ fn privilege_set_xml(privileges: &[&str]) -> String {
     let entries = privileges
         .iter()
         .map(|privilege| {
-            let (ns, local) = split_expanded(privilege);
-            let prefix = prefix_for_ns(ns);
-            format!("        <D:privilege>\n          <{prefix}:{local}/>\n        </D:privilege>")
+            let name = DavName::from(*privilege);
+            let prefix = prefix_for_ns(&name.namespace);
+            format!("<D:privilege><{prefix}:{}/></D:privilege>", name.local)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -2359,6 +2531,31 @@ fn privilege_set_xml(privileges: &[&str]) -> String {
 
 /// The supported properties of a calendar collection, in RFC 4791 / Apple
 /// namespaces.
+async fn live_calendar_props(
+    accounts: &CaldavAccountService,
+    calendar: &CaldavCalendar,
+    principal_id: &str,
+) -> Result<Vec<DavProp>, CaldavAuthError> {
+    let principal = accounts
+        .resolve_principal(principal_id)
+        .await?
+        .ok_or(CaldavAuthError::Persistence)?;
+    let context = sync_context(accounts, calendar, principal.user_id).await?;
+    let revision = CaldavRepository::new(accounts.pool().clone())
+        .latest_revision(calendar.calendar_id)
+        .await?;
+    let mut props = calendar_props(accounts, calendar);
+    props.push(current_principal_prop(accounts, principal_id));
+    props.push(DavProp::new(
+        "DAV:sync-token",
+        format!(
+            "<D:sync-token>{}</D:sync-token>",
+            xml_escape(&accounts.collection_sync_token(&context, revision))
+        ),
+    ));
+    Ok(props)
+}
+
 fn calendar_props(accounts: &CaldavAccountService, calendar: &CaldavCalendar) -> Vec<DavProp> {
     let displayname = xml_escape(&calendar.name);
     let color = xml_escape(&calendar.color);
@@ -2370,6 +2567,7 @@ fn calendar_props(accounts: &CaldavAccountService, calendar: &CaldavCalendar) ->
     let privileges = privileges_for_role(&calendar.role);
     let privilege_set = privilege_set_xml(&privileges);
     let mut props = vec![
+        DavProp::new("urn:ietf:params:xml:ns:caldav:supported-calendar-data", "<C:supported-calendar-data><C:calendar-data content-type=\"text/calendar\" version=\"2.0\"/></C:supported-calendar-data>".into()),
         DavProp::new(
             "DAV:resourcetype",
             "        <D:resourcetype>\n          <D:collection/>\n          <C:calendar/>\n        </D:resourcetype>"
@@ -2406,14 +2604,14 @@ fn calendar_props(accounts: &CaldavAccountService, calendar: &CaldavCalendar) ->
             "DAV:owner",
             format!(
                 "        <D:owner>\n          <D:href>{}</D:href>\n        </D:owner>",
-                accounts.principal_url(owner_principal_id)
+                xml_escape(&accounts.principal_url(owner_principal_id))
             ),
         ));
     }
     props
 }
 
-fn render_calendar_home(
+async fn render_calendar_home(
     accounts: &CaldavAccountService,
     principal_id: &str,
     principal: &PrincipalInfo,
@@ -2426,6 +2624,7 @@ fn render_calendar_home(
     let home_privileges = vec!["DAV:read", "DAV:read-current-user-privilege-set"];
     let home_privilege_set = privilege_set_xml(&home_privileges);
     let home_props = vec![
+        current_principal_prop(accounts, principal_id),
         DavProp::new(
             "DAV:resourcetype",
             "        <D:resourcetype>\n          <D:collection/>\n        </D:resourcetype>"
@@ -2439,7 +2638,7 @@ fn render_calendar_home(
             "DAV:principal-URL",
             format!(
                 "        <D:principal-URL>\n          <D:href>{}</D:href>\n        </D:principal-URL>",
-                accounts.principal_url(principal_id)
+                xml_escape(&accounts.principal_url(principal_id))
             ),
         ),
         DavProp::new("DAV:current-user-privilege-set", home_privilege_set),
@@ -2448,7 +2647,10 @@ fn render_calendar_home(
     if depth == DavDepth::One {
         for calendar in calendars {
             let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
-            let cal_props = calendar_props(accounts, calendar);
+            let cal_props = match live_calendar_props(accounts, calendar, principal_id).await {
+                Ok(props) => props,
+                Err(_) => return dav_server_error(accounts.metrics()),
+            };
             resources.push((cal_href, cal_props));
         }
     }
@@ -2498,22 +2700,19 @@ async fn ical_and_etag(
     let client_properties = repository
         .load_client_properties(event.id)
         .await
-        .ok()
-        .flatten()
+        .ok()?
         .unwrap_or_default();
 
     let recurrence_rule: Option<String> =
         sqlx::query_scalar("SELECT recurrence_rule FROM events WHERE id = ? AND calendar_id = ?")
             .bind(event.id)
             .bind(calendar_id)
-            .fetch_optional(pool)
+            .fetch_one(pool)
             .await
-            .ok()
-            .flatten()
-            .filter(|r: &String| !r.is_empty());
+            .ok()?;
 
     let ical = if let Some(rrule) = recurrence_rule {
-        let exceptions = fetch_recurring_exceptions(pool, event.id, &timing).await;
+        let exceptions = fetch_recurring_exceptions(pool, event.id, &timing).await?;
         let master = CaldavIcalEvent {
             uid: resource.uid.clone(),
             summary: event.title.clone(),
@@ -2620,7 +2819,7 @@ async fn fetch_recurring_exceptions(
     pool: &SqlitePool,
     series_id: i64,
     _master_timing: &CaldavIcalTiming,
-) -> Vec<RecurringException> {
+) -> Option<Vec<RecurringException>> {
     let rows: Vec<RecurringExceptionRow> = sqlx::query_as(
         "SELECT is_deleted, recurrence_id, recurrence_date, title, description,
                 location, status, timed_start_utc, timed_end_utc, event_timezone,
@@ -2631,10 +2830,10 @@ async fn fetch_recurring_exceptions(
     .bind(series_id)
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .ok()?;
 
     rows.into_iter()
-        .filter_map(|row| {
+        .map(|row| {
             let RecurringExceptionRow {
                 is_deleted,
                 recurrence_id,
@@ -2681,7 +2880,7 @@ async fn fetch_recurring_exceptions(
                 timing,
             })
         })
-        .collect()
+        .collect::<Option<Vec<_>>>()
 }
 
 /// The supported properties of a calendar-object (`.ics`) resource.
@@ -2693,7 +2892,7 @@ fn resource_props(etag: &str) -> Vec<DavProp> {
         DavProp::new("DAV:resourcetype", "        <D:resourcetype/>".to_owned()),
         DavProp::new(
             "DAV:getetag",
-            format!("        <D:getetag>{etag}</D:getetag>"),
+            format!("        <D:getetag>{}</D:getetag>", xml_escape(etag)),
         ),
         DavProp::new(
             "DAV:getcontenttype",
@@ -2702,24 +2901,31 @@ fn resource_props(etag: &str) -> Vec<DavProp> {
     ]
 }
 
-fn render_calendar(
+async fn render_calendar(
     accounts: &CaldavAccountService,
     principal_id: &str,
     calendar: &CaldavCalendar,
     mode: &PropfindMode,
     depth: DavDepth,
     resources: &[(CaldavEventResource, String)],
+    authenticated_principal_id: &str,
 ) -> Response {
     let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
-    let cal_props = calendar_props(accounts, calendar);
+    let cal_props = match live_calendar_props(accounts, calendar, authenticated_principal_id).await
+    {
+        Ok(props) => props,
+        Err(_) => return dav_server_error(accounts.metrics()),
+    };
     let mut all = vec![(cal_href, cal_props)];
     if depth == DavDepth::One {
         for (resource, etag) in resources {
-            let res_href = format!(
-                "/dav/calendars/{principal_id}/{}/{}.ics",
-                calendar.calendar_id, resource.resource_name
-            );
-            let res_props = resource_props(etag);
+            let res_href = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+            let mut res_props = resource_props(etag);
+            res_props.extend(object_metadata(
+                accounts,
+                calendar,
+                authenticated_principal_id,
+            ));
             all.push((res_href, res_props));
         }
     }
@@ -2739,39 +2945,16 @@ fn xml_escape(value: &str) -> String {
 
 /// A supported property: its expanded name and the XML element to render.
 struct DavProp {
-    name: String,
+    name: DavName,
     xml: String,
 }
 
 impl DavProp {
     fn new(name: &str, xml: String) -> Self {
         Self {
-            name: name.to_owned(),
+            name: name.into(),
             xml,
         }
-    }
-}
-
-/// Split an expanded property name into (namespace, local name).
-///
-/// Each known namespace is matched with its trailing separator included so
-/// the local name is returned cleanly (no leading `:` or `/`).
-fn split_expanded(name: &str) -> (&str, &str) {
-    for (ns, full) in [
-        (
-            "urn:ietf:params:xml:ns:caldav",
-            "urn:ietf:params:xml:ns:caldav:",
-        ),
-        ("http://apple.com/ns/ical/", "http://apple.com/ns/ical/"),
-        ("DAV:", "DAV:"),
-    ] {
-        if let Some(local) = name.strip_prefix(full) {
-            return (ns, local);
-        }
-    }
-    match name.rsplit_once(':') {
-        Some((ns, local)) => (ns, local),
-        None => ("", name),
     }
 }
 
@@ -2787,64 +2970,91 @@ fn prefix_for_ns(ns: &str) -> &'static str {
 
 /// Render an empty property element for a requested-but-unsupported property,
 /// preserving its exact QName.
-fn prop_element(expanded_name: &str) -> String {
-    let (ns, local) = split_expanded(expanded_name);
-    let prefix = prefix_for_ns(ns);
-    format!("{prefix}:{local}")
+fn prop_element(name: &DavName) -> String {
+    use quick_xml::{
+        Writer,
+        events::{BytesStart, Event},
+    };
+    let prefix = prefix_for_ns(&name.namespace);
+    let qualified = if name.namespace.is_empty() {
+        name.local.clone()
+    } else {
+        format!("{prefix}:{}", name.local)
+    };
+    let mut element = BytesStart::new(qualified);
+    let declaration = format!("xmlns:{prefix}");
+    if !name.namespace.is_empty() {
+        // BytesStart attribute tuples escape XML attribute values.
+        element.push_attribute((declaration.as_str(), name.namespace.as_str()));
+    }
+    let mut writer = Writer::new(Vec::new());
+    writer
+        .write_event(Event::Empty(element))
+        .expect("Vec writer cannot fail");
+    String::from_utf8(writer.into_inner()).expect("UTF-8 names")
 }
 
-/// Render the propstat block(s) for a resource given its supported properties
-/// and the requested PROPFIND mode.
-///
-/// `Prop` returns the requested supported properties in a 200 propstat and each
-/// requested unsupported property (preserving its exact QName) in a separate
-/// 404 propstat. `AllProp` returns every supported property in a 200 propstat.
-/// `PropName` returns the names of the supported properties in a 200 propstat.
+fn property_group(xml: &str, status: &str) -> String {
+    format!(
+        "    <D:propstat><D:prop>{xml}</D:prop><D:status>HTTP/1.1 {status}</D:status></D:propstat>"
+    )
+}
 fn propstat_xml(supported: &[DavProp], mode: &PropfindMode) -> String {
-    match mode {
-        PropfindMode::Prop(requested) => {
-            let ok: Vec<&DavProp> = supported
+    let names: Vec<DavName>;
+    let requested = match mode {
+        PropfindMode::Prop(names) => names,
+        PropfindMode::AllPropInclude(include) => {
+            names = supported
                 .iter()
-                .filter(|p| requested.iter().any(|r| r == &p.name))
+                .map(|p| p.name.clone())
+                .chain(include.iter().cloned())
                 .collect();
-            let missing: Vec<&String> = requested
-                .iter()
-                .filter(|r| !supported.iter().any(|p| p.name == **r))
-                .collect();
-            let ok_xml = ok
-                .iter()
-                .map(|p| p.xml.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let missing_xml = missing
-                .iter()
-                .map(|name| prop_element(name))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "    <D:propstat>\n      <D:prop>\n{ok_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>\n    <D:propstat>\n      <D:prop>\n{missing_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 404 Not Found</D:status>\n    </D:propstat>"
-            )
+            &names
         }
-        PropfindMode::AllProp => {
-            let ok_xml = supported
+        PropfindMode::AllProp | PropfindMode::PropName => {
+            let xml = supported
                 .iter()
-                .map(|p| p.xml.as_str())
+                .map(|p| {
+                    if matches!(mode, PropfindMode::PropName) {
+                        prop_element(&p.name)
+                    } else {
+                        p.xml.clone()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!(
-                "    <D:propstat>\n      <D:prop>\n{ok_xml}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>"
-            )
+            return if xml.is_empty() {
+                "<D:status>HTTP/1.1 200 OK</D:status>".into()
+            } else {
+                property_group(&xml, "200 OK")
+            };
         }
-        PropfindMode::PropName => {
-            let names = supported
-                .iter()
-                .map(|p| prop_element(&p.name))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "    <D:propstat>\n      <D:prop>\n{names}\n      </D:prop>\n      <D:status>HTTP/1.1 200 OK</D:status>\n    </D:propstat>"
-            )
+    };
+    let mut ok = Vec::new();
+    let mut missing = Vec::new();
+    let mut seen = Vec::new();
+    for name in requested {
+        if seen.contains(name) {
+            continue;
         }
+        seen.push(name.clone());
+        if let Some(property) = supported.iter().find(|p| &p.name == name) {
+            ok.push(property.xml.clone());
+        } else {
+            missing.push(prop_element(name));
+        }
+    }
+    let mut groups = Vec::new();
+    if !ok.is_empty() {
+        groups.push(property_group(&ok.join("\n"), "200 OK"));
+    }
+    if !missing.is_empty() {
+        groups.push(property_group(&missing.join("\n"), "404 Not Found"));
+    }
+    if groups.is_empty() {
+        "<D:status>HTTP/1.1 200 OK</D:status>".into()
+    } else {
+        groups.join("\n")
     }
 }
 
@@ -2854,6 +3064,7 @@ fn render_propfind_response(resources: &[(String, Vec<DavProp>)], mode: &Propfin
         .iter()
         .map(|(href, supported)| {
             let propstat = propstat_xml(supported, mode);
+            let href = xml_escape(href);
             format!("  <D:response>\n    <D:href>{href}</D:href>\n{propstat}\n  </D:response>")
         })
         .collect::<Vec<_>>()
@@ -2949,7 +3160,7 @@ fn map_caldav_error(error: CaldavAuthError) -> ApiError {
         CaldavAuthError::InvalidCredentials | CaldavAuthError::Revoked => ApiError::bad_request(),
         CaldavAuthError::RateLimited => ApiError::rate_limited(),
         CaldavAuthError::ResourceExists | CaldavAuthError::UidConflict => ApiError::internal(),
-        CaldavAuthError::Persistence => ApiError::internal(),
+        CaldavAuthError::Persistence | CaldavAuthError::QueryLimit => ApiError::internal(),
     }
 }
 
@@ -2965,6 +3176,43 @@ mod tests {
     use tempfile::NamedTempFile;
     use tower::ServiceExt;
 
+    #[test]
+    fn missing_properties_are_elements_and_groups_nonempty() {
+        let properties = vec![DavProp::new(
+            "DAV:getetag",
+            "<D:getetag>&quot;tag&quot;</D:getetag>".into(),
+        )];
+        let xml = propstat_xml(&properties, &PropfindMode::Prop(vec!["DAV:getetag".into()]));
+        assert!(!xml.contains("404"));
+        let xml = propstat_xml(
+            &properties,
+            &PropfindMode::Prop(vec!["{urn:extension/}missing".into()]),
+        );
+        assert!(!xml.contains("200 OK"));
+        let document = format!(r#"<D:response xmlns:D="DAV:">{xml}</D:response>"#);
+        let mut reader = quick_xml::NsReader::from_str(&document);
+        let mut found = false;
+        loop {
+            let (namespace, event) = reader.read_resolved_event().unwrap();
+            match event {
+                quick_xml::events::Event::Empty(element)
+                    if element.local_name().as_ref() == b"missing" =>
+                {
+                    assert_eq!(
+                        namespace,
+                        quick_xml::name::ResolveResult::Bound(quick_xml::name::Namespace(
+                            b"urn:extension/"
+                        ))
+                    );
+                    found = true;
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        assert!(found);
+    }
+
     struct TestDb {
         _file: NamedTempFile,
         pool: SqlitePool,
@@ -2975,147 +3223,7 @@ mod tests {
             let file = NamedTempFile::new().unwrap();
             let conn_str = format!("sqlite:{}", file.path().to_str().unwrap());
             let pool = SqlitePool::connect(&conn_str).await.unwrap();
-            sqlx::query(
-                "CREATE TABLE users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    normalized_email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                    display_name TEXT,
-                    status TEXT NOT NULL CHECK (status IN ('invited', 'active', 'suspended', 'deleted')),
-                    created_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE caldav_accounts (
-                    user_id INTEGER PRIMARY KEY REFERENCES users(id),
-                    principal_id TEXT NOT NULL UNIQUE CHECK (length(principal_id) > 0),
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE caldav_credentials (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id),
-                    label TEXT NOT NULL CHECK (length(trim(label)) > 0),
-                    token_prefix TEXT NOT NULL CHECK (length(token_prefix) = 8),
-                    token_hash BLOB NOT NULL CHECK (length(token_hash) = 32),
-                    created_at INTEGER NOT NULL,
-                    last_used_at INTEGER,
-                    revoked_at INTEGER
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE audit_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    actor_user_id INTEGER REFERENCES users(id),
-                    action TEXT NOT NULL,
-                    target_type TEXT NOT NULL,
-                    target_id TEXT,
-                    metadata_json TEXT,
-                    created_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE calendars (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    owner_user_id INTEGER NOT NULL REFERENCES users(id),
-                    name TEXT NOT NULL CHECK (length(trim(name)) > 0),
-                    description TEXT,
-                    color TEXT NOT NULL CHECK (length(trim(color)) > 0),
-                    default_timezone TEXT NOT NULL CHECK (length(trim(default_timezone)) > 0),
-                    default_event_visibility TEXT NOT NULL
-                        CHECK (default_event_visibility IN ('default', 'public', 'private')),
-                    default_notification_rules_json TEXT,
-                    archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
-                    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE calendar_acl (
-                    calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
-                    user_id INTEGER NOT NULL REFERENCES users(id),
-                    role TEXT NOT NULL CHECK (
-                        role IN ('owner', 'manager', 'editor', 'viewer', 'free_busy_viewer')
-                    ),
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    PRIMARY KEY (calendar_id, user_id)
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
-                    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
-                    description TEXT,
-                    location TEXT,
-                    status TEXT NOT NULL CHECK (status IN ('tentative', 'confirmed', 'cancelled')),
-                    event_kind TEXT NOT NULL CHECK (event_kind IN ('timed', 'all_day')),
-                    timed_start_utc INTEGER,
-                    timed_end_utc INTEGER,
-                    event_timezone TEXT,
-                    all_day_start_date TEXT,
-                    all_day_end_date TEXT,
-                    created_by_user_id INTEGER NOT NULL REFERENCES users(id),
-                    last_edited_by_user_id INTEGER NOT NULL REFERENCES users(id),
-                    version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    recurrence_rule TEXT
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE TABLE caldav_event_resources (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_id INTEGER UNIQUE REFERENCES events(id),
-                    calendar_id INTEGER NOT NULL REFERENCES calendars(id),
-                    uid TEXT NOT NULL CHECK (length(trim(uid)) > 0),
-                    resource_name TEXT NOT NULL CHECK (length(trim(resource_name)) > 0),
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL,
-                    deleted_at INTEGER
-                )",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE UNIQUE INDEX idx_caldav_resources_calendar_uid_live
-                 ON caldav_event_resources(calendar_id, uid) WHERE deleted_at IS NULL",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "CREATE UNIQUE INDEX idx_caldav_resources_calendar_name_live
-                 ON caldav_event_resources(calendar_id, resource_name) WHERE deleted_at IS NULL",
-            )
-            .execute(&pool)
-            .await
-            .unwrap();
+            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
             Self { _file: file, pool }
         }
 
@@ -3222,6 +3330,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header(
                 header::AUTHORIZATION,
                 basic_header("frank@example.test", issued.password.expose()),
@@ -3262,6 +3371,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -3285,6 +3395,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::GET)
             .uri("/dav/")
+            .header("depth", "0")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -3508,7 +3619,7 @@ mod tests {
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     async fn propfind(
@@ -3653,12 +3764,13 @@ mod tests {
         assert!(body.contains("calendar-multiget"));
         assert!(body.contains("sync-collection"));
         // Owner gets the full privilege set as QName elements.
-        assert!(body.contains("<D:all/>"));
-        assert!(body.contains("<D:read/>"));
-        assert!(body.contains("<D:write/>"));
-        assert!(body.contains("<D:write-properties/>"));
         assert!(body.contains("<D:write-content/>"));
-        assert!(body.contains("<D:write-acl/>"));
+        assert!(!body.contains("<D:all/>"));
+        assert!(body.contains("<D:read/>"));
+        assert!(!body.contains("<D:write/>"));
+        assert!(!body.contains("<D:write-properties/>"));
+        assert!(body.contains("<D:write-content/>"));
+        assert!(!body.contains("<D:write-acl/>"));
     }
 
     #[tokio::test]
@@ -3998,6 +4110,14 @@ mod tests {
             .uri(uri)
             .header(header::AUTHORIZATION, basic_header(username, password))
             .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+            .header(
+                "depth",
+                if body.contains("calendar-query") {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
             .body(Body::from(body.to_owned()))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -4015,9 +4135,9 @@ mod tests {
     <D:getcontenttype/>
     <C:calendar-data/>
   </D:prop>
-  <C:filter>
+  <C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">
     <C:time-range start="{start}" end="{end}"/>
-  </C:filter>
+  </C:comp-filter></C:comp-filter></C:filter>
 </C:calendar-query>"#
         )
     }
@@ -4187,7 +4307,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -4250,7 +4370,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::MULTI_STATUS);
     }
 
     #[tokio::test]
@@ -4553,6 +4673,7 @@ mod tests {
             let request = Request::builder()
                 .method(Method::from_bytes(b"PROPFIND").unwrap())
                 .uri("/dav/")
+                .header("depth", "0")
                 .header(
                     header::AUTHORIZATION,
                     basic_header("ratelimit@example.test", "wrong-password"),
@@ -4575,6 +4696,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header(
                 header::AUTHORIZATION,
                 basic_header("ratelimit@example.test", &correct_password),
@@ -4611,6 +4733,7 @@ mod tests {
             let request = Request::builder()
                 .method(Method::from_bytes(b"PROPFIND").unwrap())
                 .uri("/dav/")
+                .header("depth", "0")
                 .header("x-forwarded-for", "1.1.1.1")
                 .header(
                     header::AUTHORIZATION,
@@ -4627,6 +4750,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header("x-forwarded-for", "2.2.2.2")
             .header(
                 header::AUTHORIZATION,
@@ -4659,6 +4783,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header(
                 header::AUTHORIZATION,
                 basic_header("metrics@example.test", "wrong-password"),
@@ -4695,6 +4820,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header(
                 header::AUTHORIZATION,
                 basic_header("success@example.test", &password),
@@ -4731,6 +4857,7 @@ mod tests {
             let request = Request::builder()
                 .method(Method::from_bytes(b"PROPFIND").unwrap())
                 .uri("/dav/")
+                .header("depth", "0")
                 .header(
                     header::AUTHORIZATION,
                     basic_header("rl@example.test", "wrong"),
@@ -4745,6 +4872,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::from_bytes(b"PROPFIND").unwrap())
             .uri("/dav/")
+            .header("depth", "0")
             .header(
                 header::AUTHORIZATION,
                 basic_header("rl@example.test", "wrong"),
@@ -4786,7 +4914,7 @@ mod tests {
 
         // Build an oversized REPORT body.
         let huge_body = format!(
-            r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:filter><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:filter><!-- {} --></C:calendar-query>"#,
+            r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:comp-filter></C:comp-filter></C:filter><!-- {} --></C:calendar-query>"#,
             "x".repeat(crate::caldav::query::MAX_BODY_BYTES)
         );
 
@@ -4802,7 +4930,7 @@ mod tests {
             .body(Body::from(huge_body))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 
         // No event should have been created.
         let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events")

@@ -283,10 +283,26 @@ fn unfold(input: &str) -> Result<Vec<String>, IcsParseError> {
     Ok(lines)
 }
 fn property(line: &str) -> Result<Property, IcsParseError> {
-    let (left, value) = line
-        .split_once(':')
+    // Delimiters inside quoted parameter values are data (RFC 5545 §3.1).
+    let mut quoted = false;
+    let separator = line
+        .char_indices()
+        .find_map(|(index, character)| {
+            if character == '"' {
+                quoted = !quoted;
+            }
+            (character == ':' && !quoted).then_some(index)
+        })
         .ok_or(IcsParseError::new(IcsParseErrorCode::Malformed))?;
-    let mut parts = left.split(';');
+    let (left, remainder) = line.split_at(separator);
+    let value = &remainder[1..];
+    quoted = false;
+    let mut parts = left.split(|character| {
+        if character == '"' {
+            quoted = !quoted;
+        }
+        character == ';' && !quoted
+    });
     let name = parts.next().unwrap().to_ascii_uppercase();
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(IcsParseError::new(IcsParseErrorCode::Malformed));
@@ -412,19 +428,46 @@ fn normalize_event(
     {
         return Err(IcsParseError::new(IcsParseErrorCode::InvalidEvent));
     }
-    let categories = one("CATEGORIES")
+    let categories = fields
+        .get("CATEGORIES")
+        .into_iter()
+        .flatten()
         .map(|p| {
-            text(p, limits).map(|value| {
-                value
-                    .split(',')
-                    .map(|c| c.trim().to_owned())
-                    .filter(|c| !c.is_empty())
-                    .collect::<Vec<_>>()
-            })
+            // Split raw TEXT before unescaping so escaped commas stay in one value.
+            let mut escaped = false;
+            p.value
+                .split(|character| {
+                    if escaped {
+                        escaped = false;
+                        return false;
+                    }
+                    if character == '\\' {
+                        escaped = true;
+                        return false;
+                    }
+                    character == ','
+                })
+                .map(|value| {
+                    let mut category = p.clone();
+                    category.value = value.to_owned();
+                    text(&category, limits)
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
-        .transpose()?
-        .unwrap_or_default();
-    let url = one("URL").map(|p| text(p, limits)).transpose()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.is_empty())
+        .collect();
+    // URI-valued properties do not use TEXT backslash escaping.
+    let url = one("URL")
+        .map(|p| {
+            if p.value.len() > limits.max_text_bytes {
+                return Err(IcsParseError::new(IcsParseErrorCode::LimitExceeded));
+            }
+            Ok(p.value.clone())
+        })
+        .transpose()?;
     let normalized_alarms = normalize_alarms(alarms, limits)?;
     Ok(NormalizedEvent {
         uid,

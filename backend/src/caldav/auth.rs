@@ -544,6 +544,55 @@ impl CaldavAccountService {
         }))
     }
 
+    /// URI token signed over collection, visibility epoch, revision and expiry.
+    pub fn collection_sync_token(&self, context: &str, revision: i64) -> String {
+        self.encode_collection_state(context, revision, None)
+    }
+    pub fn collection_snapshot_token(&self, context: &str, revision: i64, cursor: i64) -> String {
+        self.encode_collection_state(context, revision, Some(cursor))
+    }
+    fn encode_collection_state(&self, context: &str, revision: i64, cursor: Option<i64>) -> String {
+        let payload = format!(
+            "{context}\n{revision}\n{}\n{}",
+            self.now() + 30 * 86400,
+            cursor.map(|cursor| cursor.to_string()).unwrap_or_default()
+        );
+        let tag = self.key.sign_sync_payload(payload.as_bytes());
+        format!(
+            "urn:happening:sync:v1:{}.{}",
+            URL_SAFE_NO_PAD.encode(payload),
+            URL_SAFE_NO_PAD.encode(tag)
+        )
+    }
+    pub fn collection_sync_state(&self, token: &str, context: &str) -> Option<(i64, Option<i64>)> {
+        let encoded = token.strip_prefix("urn:happening:sync:v1:")?;
+        let (payload, tag) = encoded.split_once('.')?;
+        let payload = URL_SAFE_NO_PAD.decode(payload).ok()?;
+        let tag = URL_SAFE_NO_PAD.decode(tag).ok()?;
+        if !self.key.verify_sync_revision(&payload, &tag) {
+            return None;
+        }
+        let payload = std::str::from_utf8(&payload).ok()?;
+        let mut parts = payload.split('\n');
+        if parts.next()? != context {
+            return None;
+        }
+        let revision: i64 = parts.next()?.parse().ok()?;
+        let expiry: i64 = parts.next()?.parse().ok()?;
+        let cursor = match parts.next()? {
+            "" => None,
+            value => Some(value.parse::<i64>().ok().filter(|cursor| *cursor > 0)?),
+        };
+        if parts.next().is_some() || revision < 0 || expiry <= self.now() {
+            return None;
+        }
+        Some((revision, cursor))
+    }
+    pub fn collection_sync_revision(&self, token: &str, context: &str) -> Option<i64> {
+        let (revision, cursor) = self.collection_sync_state(token, context)?;
+        cursor.is_none().then_some(revision)
+    }
+
     /// Encode a change-log revision into an opaque, tamper-evident sync token.
     ///
     /// The token is `base64url(revision) . base64url(hmac)`. Clients treat it

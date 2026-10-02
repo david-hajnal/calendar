@@ -37,7 +37,7 @@ interface IssuedPassword {
 }
 
 test.describe("caldav account tracer", () => {
-  test("issues a connection password and authenticates a PROPFIND /dav/ returning the principal link", async ({ request }) => {
+  test("issues a connection password and authenticates a PROPFIND /dav/ returning the principal link", async ({ request, page }) => {
     const auth = await login(request);
 
     const issued = await post<IssuedPassword>(auth, "/api/v1/calendar-connections/apple/passwords", { label: "E2E DAV tracer" });
@@ -88,7 +88,7 @@ test.describe("caldav account tracer", () => {
     // Discovery step 2: PROPFIND /dav/ returns the current user principal.
     const response = await request.fetch(`${baseURL}/dav/`, {
       method: "PROPFIND",
-      headers: { ...davHeaders, "content-type": "application/xml; charset=utf-8" },
+      headers: { ...davHeaders, depth: "0", "content-type": "application/xml; charset=utf-8" },
       data: `<?xml version="1.0" encoding="utf-8" ?>
 <D:propfind xmlns:D="DAV:">
   <D:prop>
@@ -98,26 +98,47 @@ test.describe("caldav account tracer", () => {
     });
     expect(response.status()).toBe(207);
     const body = await response.text();
-    expect(body).toContain("<D:current-user-principal>");
-    expect(body).toContain(`/dav/principals/`);
-    expect(body).toContain("HTTP/1.1 200 OK");
-
-    const principalHref = /<D:current-user-principal>\s*<D:href>([^<]+)<\/D:href>/.exec(body)?.[1];
+    const principalHref = await page.evaluate((xml) => {
+      const document = new DOMParser().parseFromString(xml, "application/xml");
+      if (document.getElementsByTagName("parsererror").length) throw new Error("Malformed DAV XML");
+      const groups = [...document.getElementsByTagNameNS("DAV:", "propstat")];
+      if (groups.length !== 1 || !groups[0].getElementsByTagNameNS("DAV:", "status")[0]?.textContent?.includes("200")) throw new Error("Discovery property must succeed without empty 404 group");
+      return document.getElementsByTagNameNS("DAV:", "current-user-principal")[0]?.getElementsByTagNameNS("DAV:", "href")[0]?.textContent;
+    }, body);
     expect(principalHref, "current-user-principal href should be present").toBeTruthy();
 
     // Discovery step 3: PROPFIND the principal to find the calendar home.
     const principal = await request.fetch(principalHref as string, {
       method: "PROPFIND",
-      headers: davHeaders,
+      headers: { ...davHeaders, depth: "0" },
     });
     expect(principal.status()).toBe(207);
     const principalBody = await principal.text();
-    expect(principalBody).toContain("<D:principal-URL>");
-    expect(principalBody).toContain("<D:calendar-home-set>");
-    expect(principalBody).toContain("/dav/calendars/");
-    expect(principalBody).toContain("calendar-query");
-    expect(principalBody).toContain("calendar-multiget");
-    expect(principalBody).toContain("sync-collection");
+    const homeHref = await page.evaluate((xml) => {
+      const document = new DOMParser().parseFromString(xml, "application/xml");
+      if (document.getElementsByTagName("parsererror").length) throw new Error("Malformed principal XML");
+      if (!document.getElementsByTagNameNS("DAV:", "resourcetype")[0]?.getElementsByTagNameNS("DAV:", "principal").length) throw new Error("Missing principal resource type");
+      return document.getElementsByTagNameNS("urn:ietf:params:xml:ns:caldav", "calendar-home-set")[0]?.getElementsByTagNameNS("DAV:", "href")[0]?.textContent;
+    }, principalBody);
+    expect(homeHref).toBeTruthy();
+    const home = await request.fetch(homeHref as string, { method: "PROPFIND", headers: { ...davHeaders, depth: "1" } });
+    expect(home.status()).toBe(207);
+    const calendarHrefs = await page.evaluate((xml) => {
+      const document = new DOMParser().parseFromString(xml, "application/xml");
+      if (document.getElementsByTagName("parsererror").length) throw new Error("Malformed calendar home XML");
+      return [...document.getElementsByTagNameNS("DAV:", "response")].filter(response => response.getElementsByTagNameNS("urn:ietf:params:xml:ns:caldav", "calendar").length > 0).map(response => response.getElementsByTagNameNS("DAV:", "href")[0].textContent!);
+    }, await home.text());
+    for (const href of calendarHrefs) {
+      const sync = await request.fetch(href, { method: "REPORT", headers: { ...davHeaders, depth: "0" }, data: '<D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>' });
+      expect(sync.status()).toBe(207);
+      const valid = await page.evaluate((xml) => {
+        const document = new DOMParser().parseFromString(xml, "application/xml");
+        if (document.getElementsByTagName("parsererror").length) return false;
+        const tokens = [...document.documentElement.children].filter(element => element.namespaceURI === "DAV:" && element.localName === "sync-token");
+        return tokens.length === 1 && !!tokens[0].textContent;
+      }, await sync.text());
+      expect(valid, "sync token must be direct multistatus child").toBe(true);
+    }
 
     const unauthenticated = await request.fetch(`${baseURL}/dav/`, { method: "PROPFIND" });
     expect(unauthenticated.status()).toBe(401);

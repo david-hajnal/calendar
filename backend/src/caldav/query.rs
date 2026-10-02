@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
-use quick_xml::Reader;
+use chrono::{NaiveDateTime, TimeZone, Utc};
+use quick_xml::NsReader;
 use quick_xml::events::Event;
-use quick_xml::name::{PrefixDeclaration, QName};
+use quick_xml::name::ResolveResult;
 
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_RESULTS: usize = 1000;
@@ -31,7 +31,7 @@ pub const DAV_SYNC_TOKEN: &str = "DAV:sync-token";
 pub const DAV_SYNC_LEVEL: &str = "DAV:sync-level";
 pub const CALDAV_CALENDAR_QUERY: &str = "urn:ietf:params:xml:ns:caldav:calendar-query";
 pub const CALDAV_CALENDAR_MULTIGET: &str = "urn:ietf:params:xml:ns:caldav:calendar-multiget";
-pub const CALDAV_SYNC_COLLECTION: &str = "urn:ietf:params:xml:ns:caldav:sync-collection";
+pub const CALDAV_SYNC_COLLECTION: &str = "DAV:sync-collection";
 pub const CALDAV_FILTER: &str = "urn:ietf:params:xml:ns:caldav:filter";
 pub const CALDAV_COMP_FILTER: &str = "urn:ietf:params:xml:ns:caldav:comp-filter";
 pub const CALDAV_TIME_RANGE: &str = "urn:ietf:params:xml:ns:caldav:time-range";
@@ -48,6 +48,7 @@ pub enum QueryError {
     MissingHref,
     TooManyHrefs,
     BadSyncLevel,
+    UnsupportedCalendarData,
 }
 
 impl Display for QueryError {
@@ -62,6 +63,7 @@ impl Display for QueryError {
             Self::RangeTooLarge => write!(f, "time range too large"),
             Self::MissingHref => write!(f, "missing href"),
             Self::TooManyHrefs => write!(f, "too many hrefs"),
+            Self::UnsupportedCalendarData => write!(f, "unsupported calendar-data transformation"),
             Self::BadSyncLevel => write!(f, "sync-level must be 1"),
         }
     }
@@ -74,7 +76,8 @@ impl Display for QueryError {
 /// `D:allprop`). `PropName` requests the names of the supported properties.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropfindMode {
-    Prop(Vec<String>),
+    Prop(Vec<DavName>),
+    AllPropInclude(Vec<DavName>),
     AllProp,
     PropName,
 }
@@ -83,15 +86,16 @@ pub enum PropfindMode {
 pub struct CalendarQuery {
     pub start_utc: i64,
     pub end_utc: i64,
+    pub has_time_range: bool,
     /// Expanded names of the requested `D:prop` set. Empty means "all
     /// supported properties" (no `D:prop` element was present).
-    pub props: Vec<String>,
+    pub props: Option<PropfindMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarMultiget {
     pub hrefs: Vec<String>,
-    pub props: Vec<String>,
+    pub props: Option<PropfindMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +105,8 @@ pub struct SyncCollection {
     pub sync_token: Option<String>,
     /// `sync-level` must be 1 for calendar sync; other values are rejected.
     pub sync_level: u32,
-    pub props: Vec<String>,
+    pub limit: Option<usize>,
+    pub props: Option<PropfindMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,628 +116,553 @@ pub enum CalendarReport {
     SyncCollection(SyncCollection),
 }
 
-fn name_to_str(name: &[u8]) -> &str {
-    std::str::from_utf8(name).unwrap_or("")
+/// XML expanded name. Namespace identity never depends on delimiter splitting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DavName {
+    pub namespace: String,
+    pub local: String,
 }
 
-/// Tracks in-scope `xmlns` declarations so element names can be resolved to
-/// their expanded (namespace:local) form.
-#[derive(Default)]
-struct Ns {
-    map: HashMap<String, String>,
+impl DavName {
+    pub fn new(namespace: &str, local: &str) -> Self {
+        Self {
+            namespace: namespace.into(),
+            local: local.into(),
+        }
+    }
 }
 
-impl Ns {
-    fn update(
-        &mut self,
-        attrs: quick_xml::events::attributes::Attributes,
-    ) -> Result<(), QueryError> {
-        for attr_result in attrs {
-            let Ok(attr) = attr_result else {
-                return Err(QueryError::MalformedXml);
-            };
-            if let Some(binding) = attr.key.as_namespace_binding() {
-                let value = attr
-                    .unescape_value()
-                    .map(|v| v.into_owned())
-                    .unwrap_or_default();
-                let prefix = match binding {
-                    PrefixDeclaration::Default => String::new(),
-                    PrefixDeclaration::Named(name) => name_to_str(name).to_owned(),
+fn internal_name_parts(value: &str) -> (&str, &str) {
+    for (namespace, prefix) in [
+        (NS_DAV, NS_DAV),
+        (NS_CALDAV, "urn:ietf:params:xml:ns:caldav:"),
+        (NS_APPLE, NS_APPLE),
+    ] {
+        if let Some(local) = value.strip_prefix(prefix) {
+            return (namespace, local);
+        }
+    }
+    if let Some(rest) = value.strip_prefix('{')
+        && let Some((namespace, local)) = rest.split_once('}')
+    {
+        return (namespace, local);
+    }
+    ("", value)
+}
+impl From<&str> for DavName {
+    fn from(value: &str) -> Self {
+        let (namespace, local) = internal_name_parts(value);
+        Self::new(namespace, local)
+    }
+}
+impl From<String> for DavName {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+impl PartialEq<String> for DavName {
+    fn eq(&self, value: &String) -> bool {
+        <Self as PartialEq<&str>>::eq(self, &value.as_str())
+    }
+}
+impl PartialEq<&str> for DavName {
+    fn eq(&self, value: &&str) -> bool {
+        let (namespace, local) = internal_name_parts(value);
+        self.namespace == namespace && self.local == local
+    }
+}
+
+#[derive(Debug)]
+struct Element {
+    name: DavName,
+    attrs: HashMap<String, String>,
+    children: Vec<Element>,
+    text: String,
+}
+impl Element {
+    fn is(&self, name: &str) -> bool {
+        self.name == name
+    }
+    fn children_named(&self, name: &str) -> Vec<&Element> {
+        self.children
+            .iter()
+            .filter(|child| child.is(name))
+            .collect()
+    }
+    fn only_child(&self, name: &str) -> Result<&Element, QueryError> {
+        let children = self.children_named(name);
+        if children.len() != 1 {
+            return Err(QueryError::MalformedXml);
+        }
+        Ok(children[0])
+    }
+    fn empty(&self) -> bool {
+        self.children.is_empty() && self.text.trim().is_empty()
+    }
+}
+
+fn xml_character(character: char) -> bool {
+    matches!(character as u32, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+}
+fn ncname(value: &str) -> bool {
+    let start = |c: char| matches!(c as u32, 0x41..=0x5A | 0x5F | 0x61..=0x7A | 0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x2FF | 0x370..=0x37D | 0x37F..=0x1FFF | 0x200C..=0x200D | 0x2070..=0x218F | 0x2C00..=0x2FEF | 0x3001..=0xD7FF | 0xF900..=0xFDCF | 0xFDF0..=0xFFFD | 0x10000..=0xEFFFF);
+    let mut chars = value.chars();
+    chars.next().is_some_and(start) && chars.all(|c| start(c) || matches!(c as u32, 0x2D | 0x2E | 0x30..=0x39 | 0xB7 | 0x300..=0x36F | 0x203F..=0x2040))
+}
+fn qualified_name(value: &[u8]) -> Result<(), QueryError> {
+    let value = std::str::from_utf8(value).map_err(|_| QueryError::MalformedXml)?;
+    let parts: Vec<_> = value.split(':').collect();
+    if parts.len() > 2 || parts.iter().any(|part| !ncname(part)) {
+        return Err(QueryError::MalformedXml);
+    }
+    Ok(())
+}
+fn namespace_value(value: &[u8]) -> Result<String, QueryError> {
+    let value = std::str::from_utf8(value).map_err(|_| QueryError::MalformedXml)?;
+    let value = quick_xml::escape::unescape(value).map_err(|_| QueryError::MalformedXml)?;
+    if !value.chars().all(xml_character) {
+        return Err(QueryError::MalformedXml);
+    }
+    Ok(value.into_owned())
+}
+
+/// Parse once with scoped namespaces, bounded nesting, and a single document root.
+fn document(body: &[u8]) -> Result<Element, QueryError> {
+    if body.len() > MAX_BODY_BYTES {
+        return Err(QueryError::MalformedXml);
+    }
+    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
+    if !text.chars().all(xml_character) {
+        return Err(QueryError::MalformedXml);
+    }
+    let mut reader = NsReader::from_str(text);
+    let mut stack: Vec<Element> = Vec::new();
+    let mut root = None;
+    let mut declaration = false;
+    loop {
+        let (resolved, event) = reader
+            .read_resolved_event()
+            .map_err(|_| QueryError::MalformedXml)?;
+        match event {
+            Event::Start(ref start) | Event::Empty(ref start) => {
+                if stack.len() >= 64 || (stack.is_empty() && root.is_some()) {
+                    return Err(QueryError::MalformedXml);
+                }
+                let namespace = match resolved {
+                    ResolveResult::Bound(ns) => namespace_value(ns.as_ref())?,
+                    ResolveResult::Unbound => String::new(),
+                    ResolveResult::Unknown(_) => return Err(QueryError::MalformedXml),
                 };
-                self.map.insert(prefix, value);
+                let local = std::str::from_utf8(start.local_name().as_ref())
+                    .map_err(|_| QueryError::MalformedXml)?
+                    .to_owned();
+                qualified_name(start.name().as_ref())?;
+                if !ncname(&local) {
+                    return Err(QueryError::MalformedXml);
+                }
+                let mut attrs = HashMap::new();
+                for attr in start.attributes() {
+                    let attr = attr.map_err(|_| QueryError::MalformedXml)?;
+                    qualified_name(attr.key.as_ref())?;
+                    let value = attr
+                        .unescape_value()
+                        .map_err(|_| QueryError::MalformedXml)?
+                        .into_owned();
+                    if !value.chars().all(xml_character) {
+                        return Err(QueryError::MalformedXml);
+                    }
+                    if attr.key.as_namespace_binding().is_some() {
+                        continue;
+                    }
+                    let (namespace, name) = reader.resolve_attribute(attr.key);
+                    if matches!(namespace, ResolveResult::Unknown(_)) {
+                        return Err(QueryError::MalformedXml);
+                    }
+                    let local =
+                        std::str::from_utf8(name.as_ref()).map_err(|_| QueryError::MalformedXml)?;
+                    let key = match namespace {
+                        ResolveResult::Bound(ns) => {
+                            format!("{{{}}}{local}", namespace_value(ns.as_ref())?)
+                        }
+                        _ => local.into(),
+                    };
+                    if attrs.insert(key, value).is_some() {
+                        return Err(QueryError::MalformedXml);
+                    }
+                }
+                let element = Element {
+                    name: DavName { namespace, local },
+                    attrs,
+                    children: Vec::new(),
+                    text: String::new(),
+                };
+                if matches!(event, Event::Empty(_)) {
+                    if let Some(parent) = stack.last_mut() {
+                        parent.children.push(element);
+                    } else {
+                        root = Some(element);
+                    }
+                } else {
+                    stack.push(element);
+                }
             }
+            Event::End(_) => {
+                let element = stack.pop().ok_or(QueryError::MalformedXml)?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(element);
+                } else {
+                    root = Some(element);
+                }
+            }
+            Event::Text(text) => {
+                let value = text.unescape().map_err(|_| QueryError::MalformedXml)?;
+                if !value.chars().all(xml_character) {
+                    return Err(QueryError::MalformedXml);
+                }
+                if let Some(parent) = stack.last_mut() {
+                    parent.text.push_str(&value);
+                } else if !value.trim().is_empty() {
+                    return Err(QueryError::MalformedXml);
+                }
+            }
+            Event::CData(text) => {
+                let parent = stack.last_mut().ok_or(QueryError::MalformedXml)?;
+                parent.text.push_str(
+                    std::str::from_utf8(text.as_ref()).map_err(|_| QueryError::MalformedXml)?,
+                );
+            }
+            Event::Decl(_) => {
+                if declaration || root.is_some() || !stack.is_empty() {
+                    return Err(QueryError::MalformedXml);
+                }
+                declaration = true;
+            }
+            Event::DocType(_) => return Err(QueryError::MalformedXml),
+            Event::Eof => break,
+            Event::Comment(_) | Event::PI(_) => {}
         }
-        Ok(())
     }
-
-    fn expanded(&self, name: QName) -> String {
-        let prefix_str = name
-            .prefix()
-            .map(|p| name_to_str(p.as_ref()).to_owned())
-            .unwrap_or_default();
-        let local = name.local_name();
-        let local_str = name_to_str(local.as_ref());
-        let uri = self.map.get(&prefix_str).cloned().unwrap_or_default();
-        // The DAV namespace URI is literally `DAV:` and the Apple namespace is
-        // `http://apple.com/ns/ical/` — both already carry a trailing separator,
-        // so do not add another. The CalDAV namespace does not, so it needs one.
-        if uri.ends_with(':') || uri.ends_with('/') {
-            format!("{uri}{local_str}")
-        } else {
-            format!("{uri}:{local_str}")
-        }
+    if !stack.is_empty() {
+        return Err(QueryError::MalformedXml);
     }
+    root.ok_or(QueryError::MalformedXml)
 }
 
 fn parse_ical_datetime(value: &str) -> Result<i64, QueryError> {
-    let value = value.trim();
-    if value.is_empty() {
+    if value.len() != 16 || !value.ends_with('Z') {
         return Err(QueryError::InvalidDateTime);
     }
-    if value.ends_with('Z') || value.ends_with('z') {
-        let naive = parse_ical_naive(&value[..value.len() - 1])?;
-        Ok(Utc.from_utc_datetime(&naive).timestamp())
-    } else if value.len() == 8 {
-        let date =
-            NaiveDate::parse_from_str(value, "%Y%m%d").map_err(|_| QueryError::InvalidDateTime)?;
-        Ok(Utc
-            .from_utc_datetime(
-                &date
-                    .and_hms_opt(0, 0, 0)
-                    .ok_or(QueryError::InvalidDateTime)?,
-            )
-            .timestamp())
-    } else {
-        Err(QueryError::InvalidDateTime)
-    }
-}
-
-fn parse_ical_naive(value: &str) -> Result<NaiveDateTime, QueryError> {
-    if value.len() != 15 {
-        return Err(QueryError::InvalidDateTime);
-    }
-    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S")
+    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%SZ")
         .map_err(|_| QueryError::InvalidDateTime)?;
-    Ok(naive)
+    Ok(Utc.from_utc_datetime(&naive).timestamp())
 }
 
-/// Parse a PROPFIND body into its requested property mode.
-///
-/// An empty body is the RFC 4918 default and means `AllProp`. The root must be
-/// `DAV:propfind`; its first child selects the mode (`D:prop`, `D:allprop`, or
-/// `D:propname`). For `D:prop`, the expanded names of the requested properties
-/// are captured in request order.
+fn property_names(prop: &Element, report: bool) -> Result<Vec<DavName>, QueryError> {
+    if !prop.text.trim().is_empty() {
+        return Err(QueryError::MalformedXml);
+    }
+    for child in &prop.children {
+        if report
+            && child.is("urn:ietf:params:xml:ns:caldav:calendar-data")
+            && (!child.empty() || !child.attrs.is_empty())
+        {
+            // Only full text/calendar version 2.0 is implemented.
+            if !child.empty()
+                || child.attrs.iter().any(|(name, value)| {
+                    !matches!(
+                        (name.as_str(), value.as_str()),
+                        ("content-type", "text/calendar") | ("version", "2.0")
+                    )
+                })
+            {
+                return Err(QueryError::UnsupportedCalendarData);
+            }
+        }
+    }
+    Ok(prop
+        .children
+        .iter()
+        .map(|child| child.name.clone())
+        .collect())
+}
+
 pub fn parse_propfind(body: &[u8]) -> Result<PropfindMode, QueryError> {
     if body.is_empty() {
         return Ok(PropfindMode::AllProp);
     }
-    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    let mut root_seen = false;
-    let mut mode: Option<PropfindMode> = None;
-    let mut in_prop = false;
-    let mut prop_names: Vec<String> = Vec::new();
-    let mut depth: u32 = 0;
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                ns.update(start.attributes())?;
-                let expanded = ns.expanded(start.name());
-                if !root_seen {
-                    if expanded != DAV_PROP_FIND {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    depth = 1;
-                    continue;
-                }
-                depth += 1;
-                if mode.is_none() {
-                    match expanded.as_str() {
-                        DAV_PROP => {
-                            mode = Some(PropfindMode::Prop(Vec::new()));
-                            in_prop = true;
-                        }
-                        DAV_ALLPROP => mode = Some(PropfindMode::AllProp),
-                        DAV_PROPNAME => mode = Some(PropfindMode::PropName),
-                        _ => return Err(QueryError::MalformedXml),
-                    }
-                } else if in_prop && depth == 2 {
-                    prop_names.push(expanded);
-                }
-            }
-            Ok(Event::Empty(ref empty)) => {
-                ns.update(empty.attributes())?;
-                let expanded = ns.expanded(empty.name());
-                if !root_seen {
-                    if expanded != DAV_PROP_FIND {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    continue;
-                }
-                if mode.is_none() {
-                    match expanded.as_str() {
-                        DAV_PROP => mode = Some(PropfindMode::Prop(Vec::new())),
-                        DAV_ALLPROP => mode = Some(PropfindMode::AllProp),
-                        DAV_PROPNAME => mode = Some(PropfindMode::PropName),
-                        _ => return Err(QueryError::MalformedXml),
-                    }
-                } else if in_prop && depth == 2 {
-                    prop_names.push(expanded);
-                }
-            }
-            Ok(Event::End(_)) => {
-                depth = depth.saturating_sub(1);
-            }
-            Ok(Event::Eof) => {
-                if depth > 0 {
-                    return Err(QueryError::MalformedXml);
-                }
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => return Err(QueryError::MalformedXml),
-        }
-        buf.clear();
-    }
-
-    match mode {
-        Some(PropfindMode::Prop(_)) => Ok(PropfindMode::Prop(prop_names)),
-        other => other.ok_or(QueryError::MalformedXml),
-    }
-}
-
-/// Extract the requested `D:prop` expanded names from a report body.
-///
-/// Returns an empty `Vec` when no `D:prop` element is present, which the
-/// caller treats as "all supported properties".
-fn parse_prop_set(body: &[u8]) -> Vec<String> {
-    let Ok(text) = std::str::from_utf8(body) else {
-        return Vec::new();
-    };
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    let mut prop_depth: Option<u32> = None;
-    let mut depth: u32 = 0;
-    let mut props: Vec<String> = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                let _ = ns.update(start.attributes());
-                let expanded = ns.expanded(start.name());
-                depth += 1;
-                if expanded == DAV_PROP {
-                    prop_depth = Some(depth);
-                } else if prop_depth == Some(depth - 1) {
-                    // Direct child of D:prop.
-                    props.push(expanded);
-                }
-            }
-            Ok(Event::Empty(ref empty)) => {
-                let _ = ns.update(empty.attributes());
-                let expanded = ns.expanded(empty.name());
-                if expanded == DAV_PROP {
-                    // Self-closing D:prop requests no properties.
-                } else if prop_depth == Some(depth) {
-                    // Direct child of D:prop (Empty elements do not change depth).
-                    props.push(expanded);
-                }
-            }
-            Ok(Event::End(_)) => {
-                depth = depth.saturating_sub(1);
-                if prop_depth.is_some_and(|pd| depth < pd) {
-                    prop_depth = None;
-                }
-            }
-            Ok(Event::Eof) => break,
-            Ok(_) => {}
-            Err(_) => break,
-        }
-        buf.clear();
-    }
-    props
-}
-
-pub fn parse_calendar_query(body: &[u8]) -> Result<CalendarQuery, QueryError> {
-    if body.len() > MAX_BODY_BYTES {
-        return Err(QueryError::MalformedXml);
-    }
-    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    let mut root_seen = false;
-    let mut in_filter = false;
-    let mut filter_depth: u32 = 0;
-    let mut found_time_range = false;
-    let mut start_utc: Option<i64> = None;
-    let mut end_utc: Option<i64> = None;
-    let mut unsupported_in_filter = false;
-    let mut depth: u32 = 0;
-
-    fn extract_time_range(
-        attrs: quick_xml::events::attributes::Attributes,
-    ) -> Result<(Option<i64>, Option<i64>), QueryError> {
-        let mut s: Option<i64> = None;
-        let mut e: Option<i64> = None;
-        for attr_result in attrs {
-            let Ok(attr) = attr_result else {
-                return Err(QueryError::MalformedXml);
-            };
-            let local = attr.key.local_name();
-            let k = name_to_str(local.as_ref());
-            let val = attr
-                .unescape_value()
-                .map(|v| v.into_owned())
-                .unwrap_or_default();
-            if k == "start" {
-                s = Some(parse_ical_datetime(&val)?);
-            } else if k == "end" {
-                e = Some(parse_ical_datetime(&val)?);
-            }
-        }
-        Ok((s, e))
-    }
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                ns.update(start.attributes())?;
-                let expanded = ns.expanded(start.name());
-                if !root_seen {
-                    if expanded != CALDAV_CALENDAR_QUERY {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    depth = 1;
-                    continue;
-                }
-                depth += 1;
-                if in_filter {
-                    filter_depth += 1;
-                    if expanded == CALDAV_TIME_RANGE {
-                        found_time_range = true;
-                        let (s, e) = extract_time_range(start.attributes())?;
-                        start_utc = start_utc.or(s);
-                        end_utc = end_utc.or(e);
-                    } else if expanded != CALDAV_FILTER && expanded != CALDAV_COMP_FILTER {
-                        unsupported_in_filter = true;
-                    }
-                } else if expanded == CALDAV_FILTER {
-                    in_filter = true;
-                    filter_depth = 1;
-                }
-            }
-            Ok(Event::Empty(ref empty)) => {
-                ns.update(empty.attributes())?;
-                let expanded = ns.expanded(empty.name());
-                if !root_seen {
-                    if expanded != CALDAV_CALENDAR_QUERY {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    continue;
-                }
-                if in_filter {
-                    if expanded == CALDAV_TIME_RANGE {
-                        found_time_range = true;
-                        let (s, e) = extract_time_range(empty.attributes())?;
-                        start_utc = start_utc.or(s);
-                        end_utc = end_utc.or(e);
-                    } else if expanded != CALDAV_FILTER && expanded != CALDAV_COMP_FILTER {
-                        unsupported_in_filter = true;
-                    }
-                }
-            }
-            Ok(Event::End(_)) => {
-                depth = depth.saturating_sub(1);
-                if in_filter {
-                    filter_depth = filter_depth.saturating_sub(1);
-                    if filter_depth == 0 {
-                        in_filter = false;
-                    }
-                }
-            }
-            Ok(Event::Eof) => {
-                if depth > 0 {
-                    return Err(QueryError::MalformedXml);
-                }
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => return Err(QueryError::MalformedXml),
-        }
-        buf.clear();
-    }
-
-    if !root_seen {
+    let root = document(body)?;
+    if !root.is(DAV_PROP_FIND) {
         return Err(QueryError::UnsupportedRoot);
     }
-    if unsupported_in_filter {
-        return Err(QueryError::UnsupportedFilter);
+    if !root.text.trim().is_empty() {
+        return Err(QueryError::MalformedXml);
     }
-    if !found_time_range {
+    let mut selector = None;
+    let mut include = None;
+    for child in &root.children {
+        let selected = if child.is(DAV_PROP) {
+            Some(PropfindMode::Prop(property_names(child, false)?))
+        } else if child.is(DAV_ALLPROP) && child.empty() {
+            Some(PropfindMode::AllProp)
+        } else if child.is(DAV_PROPNAME) && child.empty() {
+            Some(PropfindMode::PropName)
+        } else if child.is("DAV:include") {
+            if include.is_some() {
+                return Err(QueryError::MalformedXml);
+            }
+            include = Some(property_names(child, false)?);
+            None
+        } else if child.name.namespace == NS_DAV {
+            return Err(QueryError::MalformedXml);
+        } else {
+            None
+        }; // RFC 4918 section 17 permits unrecognized extension elements.
+        if let Some(selected) = selected
+            && selector.replace(selected).is_some()
+        {
+            return Err(QueryError::MalformedXml);
+        }
+    }
+    match (selector, include) {
+        (Some(PropfindMode::AllProp), Some(names)) => Ok(PropfindMode::AllPropInclude(names)),
+        (Some(mode), None) => Ok(mode),
+        _ => Err(QueryError::MalformedXml),
+    }
+}
+
+fn report_props(root: &Element) -> Result<Option<PropfindMode>, QueryError> {
+    let mut mode = None;
+    for child in &root.children {
+        let selected = if child.is(DAV_PROP) {
+            Some(PropfindMode::Prop(property_names(child, true)?))
+        } else if !root.is("DAV:sync-collection") && child.is(DAV_ALLPROP) && child.empty() {
+            Some(PropfindMode::AllProp)
+        } else if !root.is("DAV:sync-collection") && child.is(DAV_PROPNAME) && child.empty() {
+            Some(PropfindMode::PropName)
+        } else if child.is(DAV_ALLPROP) || child.is(DAV_PROPNAME) {
+            return Err(QueryError::MalformedXml);
+        } else {
+            None
+        };
+        if let Some(selected) = selected
+            && mode.replace(selected).is_some()
+        {
+            return Err(QueryError::MalformedXml);
+        }
+    }
+    if root.is("DAV:sync-collection") && mode.is_none() {
+        return Err(QueryError::MalformedXml);
+    }
+    Ok(mode)
+}
+fn report_children(root: &Element, allowed: &[&str]) -> Result<(), QueryError> {
+    if !root.text.trim().is_empty() {
+        return Err(QueryError::MalformedXml);
+    }
+    for child in &root.children {
+        if (child.name.namespace == NS_DAV || child.name.namespace == NS_CALDAV)
+            && !allowed.iter().any(|name| child.is(name))
+        {
+            return Err(QueryError::MalformedXml);
+        }
+    }
+    Ok(())
+}
+
+fn query_from(root: &Element) -> Result<CalendarQuery, QueryError> {
+    report_children(root, &[DAV_PROP, DAV_ALLPROP, DAV_PROPNAME, CALDAV_FILTER])?;
+    let filters = root.children_named(CALDAV_FILTER);
+    if filters.is_empty() {
         return Err(QueryError::MissingFilter);
     }
-    let start = start_utc.ok_or(QueryError::InvalidDateTime)?;
-    let end = end_utc.ok_or(QueryError::InvalidDateTime)?;
-    if start >= end {
-        return Err(QueryError::InvalidRange);
+    let filter = root.only_child(CALDAV_FILTER)?;
+    if !filter.text.trim().is_empty() || filter.children.len() != 1 {
+        return Err(QueryError::UnsupportedFilter);
     }
-    if end - start > MAX_RANGE_SECONDS {
-        return Err(QueryError::RangeTooLarge);
+    let calendar = &filter.children[0];
+    if !calendar.is(CALDAV_COMP_FILTER)
+        || calendar.attrs.get("name").map(String::as_str) != Some("VCALENDAR")
+        || !calendar.text.trim().is_empty()
+    {
+        return Err(QueryError::UnsupportedFilter);
+    }
+    let mut range = None;
+    if !calendar.children.is_empty() {
+        if calendar.children.len() != 1 {
+            return Err(QueryError::UnsupportedFilter);
+        }
+        let event = &calendar.children[0];
+        if !event.is(CALDAV_COMP_FILTER)
+            || event.attrs.get("name").map(String::as_str) != Some("VEVENT")
+            || !event.text.trim().is_empty()
+        {
+            return Err(QueryError::UnsupportedFilter);
+        }
+        if !event.children.is_empty() {
+            if event.children.len() != 1
+                || !event.children[0].is(CALDAV_TIME_RANGE)
+                || !event.children[0].empty()
+            {
+                return Err(QueryError::UnsupportedFilter);
+            }
+            range = Some(&event.children[0]);
+        }
+    }
+    let mut start = -62135596800; // RFC 4791's unbounded start.
+    let mut end = 253402300799;
+    if let Some(range) = range {
+        if range.attrs.is_empty()
+            || range
+                .attrs
+                .keys()
+                .any(|name| name != "start" && name != "end")
+        {
+            return Err(QueryError::InvalidRange);
+        }
+        if let Some(value) = range.attrs.get("start") {
+            start = parse_ical_datetime(value)?;
+        }
+        if let Some(value) = range.attrs.get("end") {
+            end = parse_ical_datetime(value)?;
+        }
+        if start >= end {
+            return Err(QueryError::InvalidRange);
+        }
     }
     Ok(CalendarQuery {
         start_utc: start,
         end_utc: end,
-        props: parse_prop_set(body),
+        has_time_range: range.is_some(),
+        props: report_props(root)?,
     })
 }
-
-/// Parse a `calendar-multiget` REPORT body into its requested hrefs.
-///
-/// Only `<D:href>` elements that are direct children of the root are
-/// captured. The list is bounded by `MAX_MULTIGET_HREFS`.
-pub fn parse_calendar_multiget(body: &[u8]) -> Result<CalendarMultiget, QueryError> {
-    if body.len() > MAX_BODY_BYTES {
-        return Err(QueryError::MalformedXml);
-    }
-    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    let mut root_seen = false;
-    let mut depth: u32 = 0;
-    let mut hrefs: Vec<String> = Vec::new();
-    let mut capturing_href = false;
-    let mut current_href = String::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                ns.update(start.attributes())?;
-                let expanded = ns.expanded(start.name());
-                if !root_seen {
-                    if expanded != CALDAV_CALENDAR_MULTIGET {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    depth = 1;
-                    continue;
-                }
-                depth += 1;
-                if depth == 2 && expanded == DAV_HREF {
-                    capturing_href = true;
-                    current_href.clear();
-                }
-            }
-            Ok(Event::Empty(ref empty)) => {
-                ns.update(empty.attributes())?;
-                let expanded = ns.expanded(empty.name());
-                if !root_seen {
-                    if expanded != CALDAV_CALENDAR_MULTIGET {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    continue;
-                }
-                depth += 1;
-                if depth == 2 && expanded == DAV_HREF {
-                    // Self-closing href carries no text; record it as empty.
-                    if hrefs.len() >= MAX_MULTIGET_HREFS {
-                        return Err(QueryError::TooManyHrefs);
-                    }
-                    hrefs.push(String::new());
-                }
-                depth = depth.saturating_sub(1);
-            }
-            Ok(Event::Text(ref text_event)) => {
-                if capturing_href {
-                    current_href.push_str(text_event.unescape().unwrap_or_default().as_ref());
-                }
-            }
-            Ok(Event::End(_)) => {
-                if capturing_href {
-                    capturing_href = false;
-                    if hrefs.len() >= MAX_MULTIGET_HREFS {
-                        return Err(QueryError::TooManyHrefs);
-                    }
-                    hrefs.push(current_href.trim().to_owned());
-                }
-                depth = depth.saturating_sub(1);
-            }
-            Ok(Event::Eof) => {
-                if depth > 0 {
-                    return Err(QueryError::MalformedXml);
-                }
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => return Err(QueryError::MalformedXml),
+fn multiget_from(root: &Element) -> Result<CalendarMultiget, QueryError> {
+    report_children(root, &[DAV_PROP, DAV_ALLPROP, DAV_PROPNAME, DAV_HREF])?;
+    let mut hrefs = Vec::new();
+    for href in root.children_named(DAV_HREF) {
+        if !href.children.is_empty() || href.text.trim().is_empty() {
+            return Err(QueryError::MissingHref);
         }
-        buf.clear();
-    }
-
-    if !root_seen {
-        return Err(QueryError::UnsupportedRoot);
+        hrefs.push(href.text.trim().to_owned());
     }
     if hrefs.is_empty() {
         return Err(QueryError::MissingHref);
     }
+    if hrefs.len() > MAX_MULTIGET_HREFS {
+        return Err(QueryError::TooManyHrefs);
+    }
     Ok(CalendarMultiget {
         hrefs,
-        props: parse_prop_set(body),
+        props: report_props(root)?,
     })
 }
-
-/// Parse a `sync-collection` REPORT body into its sync token and level.
-///
-/// The `sync-token` element is optional: an absent or empty token requests an
-/// initial snapshot. The `sync-level` element must be present and equal to 1
-/// for calendar sync; any other value is rejected.
-pub fn parse_sync_collection(body: &[u8]) -> Result<SyncCollection, QueryError> {
-    if body.len() > MAX_BODY_BYTES {
+fn sync_from(root: &Element) -> Result<SyncCollection, QueryError> {
+    report_children(
+        root,
+        &[DAV_PROP, DAV_SYNC_TOKEN, DAV_SYNC_LEVEL, "DAV:limit"],
+    )?;
+    let token = root.only_child(DAV_SYNC_TOKEN)?;
+    let level = root.only_child(DAV_SYNC_LEVEL)?;
+    if !token.children.is_empty() || !level.children.is_empty() {
         return Err(QueryError::MalformedXml);
     }
-    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    let mut root_seen = false;
-    let mut depth: u32 = 0;
-    let mut sync_token: Option<String> = None;
-    let mut sync_level: Option<u32> = None;
-    let mut capturing: Option<&'static str> = None;
-    let mut current = String::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                ns.update(start.attributes())?;
-                let expanded = ns.expanded(start.name());
-                if !root_seen {
-                    if expanded != CALDAV_SYNC_COLLECTION {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    depth = 1;
-                    continue;
-                }
-                depth += 1;
-                if depth == 2 {
-                    if expanded == DAV_SYNC_TOKEN {
-                        capturing = Some("token");
-                        current.clear();
-                    } else if expanded == DAV_SYNC_LEVEL {
-                        capturing = Some("level");
-                        current.clear();
-                    }
-                }
-            }
-            Ok(Event::Empty(ref empty)) => {
-                ns.update(empty.attributes())?;
-                let expanded = ns.expanded(empty.name());
-                if !root_seen {
-                    if expanded != CALDAV_SYNC_COLLECTION {
-                        return Err(QueryError::UnsupportedRoot);
-                    }
-                    root_seen = true;
-                    continue;
-                }
-                depth += 1;
-                if depth == 2 && expanded == DAV_SYNC_TOKEN {
-                    // Self-closing sync-token carries no text: initial snapshot.
-                    sync_token = Some(String::new());
-                }
-                depth = depth.saturating_sub(1);
-            }
-            Ok(Event::Text(ref text_event)) => {
-                if capturing.is_some() {
-                    current.push_str(text_event.unescape().unwrap_or_default().as_ref());
-                }
-            }
-            Ok(Event::End(_)) => {
-                if let Some(kind) = capturing {
-                    capturing = None;
-                    let value = current.trim().to_owned();
-                    match kind {
-                        "token" => {
-                            sync_token = Some(value);
-                        }
-                        "level" => {
-                            sync_level = value.parse::<u32>().ok();
-                        }
-                        _ => {}
-                    }
-                }
-                depth = depth.saturating_sub(1);
-            }
-            Ok(Event::Eof) => {
-                if depth > 0 {
-                    return Err(QueryError::MalformedXml);
-                }
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => return Err(QueryError::MalformedXml),
-        }
-        buf.clear();
-    }
-
-    if !root_seen {
-        return Err(QueryError::UnsupportedRoot);
-    }
-    let level = sync_level.ok_or(QueryError::BadSyncLevel)?;
-    if level != 1 {
+    if level.text.trim() != "1" {
         return Err(QueryError::BadSyncLevel);
     }
-    let token = sync_token.unwrap_or_default();
+    let limits = root.children_named("DAV:limit");
+    let limit = match limits.as_slice() {
+        [] => None,
+        [limit] => {
+            let number = limit.only_child("DAV:nresults")?;
+            if limit.children.len() != 1
+                || !limit.text.trim().is_empty()
+                || !number.children.is_empty()
+            {
+                return Err(QueryError::MalformedXml);
+            }
+            Some(
+                number
+                    .text
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or(QueryError::MalformedXml)?,
+            )
+        }
+        _ => return Err(QueryError::MalformedXml),
+    };
+    let text = token.text.trim();
     Ok(SyncCollection {
-        sync_token: if token.is_empty() { None } else { Some(token) },
-        sync_level: level,
-        props: parse_prop_set(body),
+        sync_token: (!text.is_empty()).then(|| text.to_owned()),
+        sync_level: 1,
+        limit,
+        props: report_props(root)?,
     })
 }
 
-/// Determine the report type from the body and parse it accordingly.
 pub fn parse_calendar_report(body: &[u8]) -> Result<CalendarReport, QueryError> {
-    if body.len() > MAX_BODY_BYTES {
-        return Err(QueryError::MalformedXml);
-    }
-    let text = std::str::from_utf8(body).map_err(|_| QueryError::MalformedXml)?;
-    let root = peek_root(text).ok_or(QueryError::UnsupportedRoot)?;
-    match root.as_str() {
-        CALDAV_CALENDAR_QUERY => Ok(CalendarReport::Query(parse_calendar_query(body)?)),
-        CALDAV_CALENDAR_MULTIGET => Ok(CalendarReport::Multiget(parse_calendar_multiget(body)?)),
-        CALDAV_SYNC_COLLECTION => Ok(CalendarReport::SyncCollection(parse_sync_collection(body)?)),
-        _ => Err(QueryError::UnsupportedRoot),
+    let root = document(body)?;
+    if root.is(CALDAV_CALENDAR_QUERY) {
+        Ok(CalendarReport::Query(query_from(&root)?))
+    } else if root.is(CALDAV_CALENDAR_MULTIGET) {
+        Ok(CalendarReport::Multiget(multiget_from(&root)?))
+    } else if root.is("DAV:sync-collection") {
+        Ok(CalendarReport::SyncCollection(sync_from(&root)?))
+    } else {
+        Err(QueryError::UnsupportedRoot)
     }
 }
-
-/// Read the first element's expanded name in an XML document, if any.
-fn peek_root(text: &str) -> Option<String> {
-    let mut reader = Reader::from_str(text);
-    reader.config_mut().trim_text(true);
-    let mut buf = Vec::new();
-    let mut ns = Ns::default();
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref start)) => {
-                let _ = ns.update(start.attributes());
-                return Some(ns.expanded(start.name()));
-            }
-            Ok(Event::Empty(ref empty)) => {
-                let _ = ns.update(empty.attributes());
-                return Some(ns.expanded(empty.name()));
-            }
-            Ok(Event::Eof) => return None,
-            Ok(_) => {}
-            Err(_) => return None,
-        }
-        buf.clear();
+pub fn parse_calendar_query(body: &[u8]) -> Result<CalendarQuery, QueryError> {
+    let root = document(body)?;
+    if !root.is(CALDAV_CALENDAR_QUERY) {
+        return Err(QueryError::UnsupportedRoot);
     }
+    query_from(&root)
+}
+pub fn parse_calendar_multiget(body: &[u8]) -> Result<CalendarMultiget, QueryError> {
+    let root = document(body)?;
+    if !root.is(CALDAV_CALENDAR_MULTIGET) {
+        return Err(QueryError::UnsupportedRoot);
+    }
+    multiget_from(&root)
+}
+pub fn parse_sync_collection(body: &[u8]) -> Result<SyncCollection, QueryError> {
+    let root = document(body)?;
+    if !root.is("DAV:sync-collection") {
+        return Err(QueryError::UnsupportedRoot);
+    }
+    sync_from(&root)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_property_end_tags_and_namespace_scope() {
+        let body = br#"<D:propfind xmlns:D="DAV:" xmlns:X="urn:outer/"><D:prop><D:getetag></D:getetag><X:first xmlns:X="urn:inner/"/><X:second/></D:prop></D:propfind>"#;
+        assert_eq!(
+            parse_propfind(body).unwrap(),
+            PropfindMode::Prop(vec![
+                "DAV:getetag".into(),
+                "{urn:inner/}first".into(),
+                "{urn:outer/}second".into()
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_document_and_selector_grammar() {
+        for body in [
+            r#"<D:propfind xmlns:D="DAV:"><D:prop/><D:allprop/></D:propfind>"#,
+            r#"<D:propfind xmlns:D="DAV:"><D:prop><X:unknown/></D:prop></D:propfind>"#,
+            r#"<D:propfind xmlns:D="DAV:"><D:prop/></D:propfind><extra/>"#,
+            r#"<D:propfind xmlns:D="DAV:"><D:prop/></D:propfind>trailing"#,
+        ] {
+            assert!(parse_propfind(body.as_bytes()).is_err(), "{body}");
+        }
+    }
 
     const CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
 
@@ -745,9 +675,9 @@ mod tests {
     <D:getcontenttype/>
     <C:calendar-data/>
   </D:prop>
-  <C:filter>
+  <C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">
     <C:time-range start="20260101T000000Z" end="20260131T235959Z"/>
-  </C:filter>
+  </C:comp-filter></C:comp-filter></C:filter>
 </C:calendar-query>"#
         )
     }
@@ -806,8 +736,8 @@ mod tests {
         assert_eq!(
             mode,
             PropfindMode::Prop(vec![
-                "DAV:displayname".to_owned(),
-                "http://apple.com/ns/ical/calendar-color".to_owned()
+                "DAV:displayname".into(),
+                "http://apple.com/ns/ical/calendar-color".into()
             ])
         );
     }
@@ -840,18 +770,18 @@ mod tests {
         assert_eq!(q.end_utc, 1769903999);
         assert_eq!(
             q.props,
-            vec![
-                "DAV:getetag".to_owned(),
-                "DAV:getcontenttype".to_owned(),
-                "urn:ietf:params:xml:ns:caldav:calendar-data".to_owned()
-            ]
+            Some(PropfindMode::Prop(vec![
+                "DAV:getetag".into(),
+                "DAV:getcontenttype".into(),
+                "urn:ietf:params:xml:ns:caldav:calendar-data".into()
+            ]))
         );
     }
 
     #[test]
     fn query_rejects_calendarserver_namespace_root() {
         // The legacy calendarserver namespace must NOT be accepted as CalDAV.
-        let body = r#"<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:filter></C:calendar-query>"#;
+        let body = r#"<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#;
         assert_eq!(
             parse_calendar_query(body.as_bytes()).unwrap_err(),
             QueryError::UnsupportedRoot
@@ -891,7 +821,7 @@ mod tests {
     fn rejects_empty_body() {
         assert_eq!(
             parse_calendar_query(b"").unwrap_err(),
-            QueryError::UnsupportedRoot
+            QueryError::MalformedXml
         );
     }
 
@@ -899,7 +829,7 @@ mod tests {
     fn rejects_non_xml() {
         assert_eq!(
             parse_calendar_query(b"not xml at all").unwrap_err(),
-            QueryError::UnsupportedRoot
+            QueryError::MalformedXml
         );
     }
 
@@ -939,7 +869,7 @@ mod tests {
     #[test]
     fn rejects_invalid_start_before_end() {
         let body = format!(
-            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:time-range start="20260131T000000Z" end="20260101T000000Z"/></C:filter></C:calendar-query>"#
+            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260131T000000Z" end="20260101T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
         );
         assert_eq!(
             parse_calendar_query(body.as_bytes()).unwrap_err(),
@@ -950,7 +880,7 @@ mod tests {
     #[test]
     fn rejects_equal_start_and_end() {
         let body = format!(
-            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:time-range start="20260101T000000Z" end="20260101T000000Z"/></C:filter></C:calendar-query>"#
+            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z" end="20260101T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
         );
         assert_eq!(
             parse_calendar_query(body.as_bytes()).unwrap_err(),
@@ -959,20 +889,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_range_too_large() {
+    fn accepts_large_finite_range() {
         let body = format!(
-            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:time-range start="20200101T000000Z" end="20260101T000000Z"/></C:filter></C:calendar-query>"#
+            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20200101T000000Z" end="20260101T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
         );
-        assert_eq!(
-            parse_calendar_query(body.as_bytes()).unwrap_err(),
-            QueryError::RangeTooLarge
-        );
+        assert!(parse_calendar_query(body.as_bytes()).is_ok());
     }
 
     #[test]
     fn rejects_invalid_date_format() {
         let body = format!(
-            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:time-range start="notadate" end="20260101T000000Z"/></C:filter></C:calendar-query>"#
+            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="notadate" end="20260101T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
         );
         assert_eq!(
             parse_calendar_query(body.as_bytes()).unwrap_err(),
@@ -991,12 +918,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_date_only_start() {
+    fn rejects_date_only_time_range_start() {
         let body = format!(
-            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:time-range start="20260101" end="20260131T235959Z"/></C:filter></C:calendar-query>"#
+            r#"<C:calendar-query xmlns:C="{CALDAV}"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260101" end="20260131T235959Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
         );
-        let q = parse_calendar_query(body.as_bytes()).unwrap();
-        assert_eq!(q.start_utc, 1767225600);
+        assert_eq!(
+            parse_calendar_query(body.as_bytes()).unwrap_err(),
+            QueryError::InvalidDateTime
+        );
     }
 
     #[test]
@@ -1120,7 +1049,7 @@ mod tests {
 
     #[test]
     fn report_rejects_calendarserver_namespace_root() {
-        let body = r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:filter></C:calendar-query>"#;
+        let body = r#"<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:calendarserver/"><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20260101T000000Z" end="20260131T235959Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#;
         assert_eq!(
             parse_calendar_report(body.as_bytes()).unwrap_err(),
             QueryError::UnsupportedRoot
@@ -1130,7 +1059,7 @@ mod tests {
     #[test]
     fn report_dispatches_sync_collection() {
         let body = format!(
-            r#"<C:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></C:sync-collection>"#
+            r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>"#
         );
         let report = parse_calendar_report(body.as_bytes()).unwrap();
         match report {
@@ -1147,7 +1076,7 @@ mod tests {
     #[test]
     fn sync_collection_parses_token_and_level() {
         let body = format!(
-            r#"<C:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token>opaque-token-123</D:sync-token><D:sync-level>1</D:sync-level></C:sync-collection>"#
+            r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token>opaque-token-123</D:sync-token><D:sync-level>1</D:sync-level><D:prop/></D:sync-collection>"#
         );
         let sync = parse_sync_collection(body.as_bytes()).unwrap();
         assert_eq!(sync.sync_token.as_deref(), Some("opaque-token-123"));
@@ -1157,7 +1086,7 @@ mod tests {
     #[test]
     fn sync_collection_rejects_bad_level() {
         let body = format!(
-            r#"<C:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token><D:sync-level>2</D:sync-level></C:sync-collection>"#
+            r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token><D:sync-level>2</D:sync-level></D:sync-collection>"#
         );
         assert_eq!(
             parse_sync_collection(body.as_bytes()).unwrap_err(),
@@ -1168,11 +1097,11 @@ mod tests {
     #[test]
     fn sync_collection_rejects_missing_level() {
         let body = format!(
-            r#"<C:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token></C:sync-collection>"#
+            r#"<D:sync-collection xmlns:D="DAV:" xmlns:C="{CALDAV}"><D:sync-token></D:sync-token></D:sync-collection>"#
         );
         assert_eq!(
             parse_sync_collection(body.as_bytes()).unwrap_err(),
-            QueryError::BadSyncLevel
+            QueryError::MalformedXml
         );
     }
 

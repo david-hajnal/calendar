@@ -191,10 +191,8 @@ fn client_properties_fixture_preserves_allowlisted_metadata() {
     assert_eq!(parsed.events.len(), 1);
     let event = &parsed.events[0];
     assert_eq!(event.uid, "props-0001@example.test");
-    assert_eq!(
-        event.categories,
-        vec!["Work".to_owned(), "Personal".to_owned()]
-    );
+    // RFC5545: escaped comma belongs to one TEXT category; only unescaped commas separate values.
+    assert_eq!(event.categories, vec!["Work,Personal".to_owned()]);
     assert_eq!(event.url.as_deref(), Some("https://example.test/event"));
     assert_eq!(event.transp.as_deref(), Some("OPAQUE"));
     // Only allowlisted X-properties survive.

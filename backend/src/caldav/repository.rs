@@ -6,13 +6,6 @@ use crate::caldav::types::{
 
 type ChangeRow = (i64, i64, Option<i64>, String, i64, Option<String>);
 
-/// Render a UTC instant as an ISO calendar date (`YYYY-MM-DD`) in the UTC zone.
-fn utc_date(utc: i64) -> String {
-    chrono::DateTime::from_timestamp(utc, 0)
-        .map(|dt| dt.format("%Y-%m-%d").to_string())
-        .unwrap_or_default()
-}
-
 #[derive(Clone)]
 pub struct CaldavRepository {
     pool: SqlitePool,
@@ -38,7 +31,7 @@ impl CaldavRepository {
         sqlx::query(
             "INSERT INTO caldav_event_resources (
                 event_id, calendar_id, uid, resource_name, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
         )
         .bind(event_id)
         .bind(calendar_id)
@@ -248,14 +241,8 @@ impl CaldavRepository {
         Ok(ids)
     }
 
-    /// Event IDs that overlap the given UTC time range, bounded by `limit`.
-    ///
-    /// Timed events are matched against their UTC instants; all-day events are
-    /// matched against their calendar dates (the range endpoints are converted
-    /// to UTC dates), so a query window that touches a day includes the
-    /// all-day events spanning that day. Recurring events are included when
-    /// their series start is before the range end (a safe superset: the
-    /// caller serializes the full series and the client filters occurrences).
+    /// Evaluate recurrence-aware overlap before applying the resource limit.
+    /// A limit+1 result lets the handler report overflow instead of truncating.
     pub async fn list_events_in_range(
         &self,
         calendar_id: i64,
@@ -263,53 +250,155 @@ impl CaldavRepository {
         end_utc: i64,
         limit: usize,
     ) -> Result<Vec<i64>, CaldavAuthError> {
-        let start_date = utc_date(start_utc);
-        let end_date = utc_date(end_utc);
-        let ids: Vec<i64> = sqlx::query_scalar(
-            "SELECT id FROM events
-              WHERE calendar_id = ?
-                AND (
-                     (
-                         recurrence_rule IS NULL
-                         AND (
-                              (
-                                  event_kind = 'timed'
-                                  AND timed_start_utc < ?
-                                  AND timed_end_utc > ?
-                              )
-                              OR
-                              (
-                                  event_kind = 'all_day'
-                                  AND all_day_start_date < ?
-                                  AND all_day_end_date > ?
-                              )
-                         )
-                     )
-                     OR
-                     (
-                         recurrence_rule IS NOT NULL
-                         AND (
-                              (event_kind = 'timed' AND timed_start_utc < ?)
-                              OR
-                              (event_kind = 'all_day' AND all_day_start_date < ?)
-                         )
-                     )
-                 )
-              ORDER BY id
-              LIMIT ?",
-        )
-        .bind(calendar_id)
-        .bind(end_utc)
-        .bind(start_utc)
-        .bind(&end_date)
-        .bind(&start_date)
-        .bind(end_utc)
-        .bind(&end_date)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|_| CaldavAuthError::Persistence)?;
-        Ok(ids)
+        use crate::{
+            event::{EventRepository, EventTiming},
+            recurrence::{
+                ExpansionLimits, ModifiedOccurrence, RecurrenceRule, RecurringEvent, TimeInterval,
+                occurrence_overlaps,
+            },
+        };
+        use chrono::{Duration, TimeZone, Utc};
+        let requested = TimeInterval {
+            start: Utc
+                .timestamp_opt(start_utc, 0)
+                .single()
+                .ok_or(CaldavAuthError::Persistence)?,
+            end: Utc
+                .timestamp_opt(end_utc, 0)
+                .single()
+                .ok_or(CaldavAuthError::Persistence)?,
+        };
+        let ids = self.list_exposed_event_ids(calendar_id).await?;
+        let mut matches = Vec::new();
+        for id in ids {
+            let event = EventRepository::new(self.pool.clone())
+                .event(calendar_id, id)
+                .await
+                .map_err(|_| CaldavAuthError::Persistence)?
+                .ok_or(CaldavAuthError::Persistence)?;
+            let rule: Option<String> =
+                sqlx::query_scalar("SELECT recurrence_rule FROM events WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|_| CaldavAuthError::Persistence)?;
+            let date = |value: &str| -> Result<chrono::DateTime<Utc>, CaldavAuthError> {
+                Ok(chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                    .map_err(|_| CaldavAuthError::Persistence)?
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or(CaldavAuthError::Persistence)?
+                    .and_utc())
+            };
+            let (start, end, timezone, all_day) = match event.timing {
+                EventTiming::Timed {
+                    start_utc,
+                    end_utc,
+                    timezone,
+                } => (
+                    Utc.timestamp_opt(start_utc, 0)
+                        .single()
+                        .ok_or(CaldavAuthError::Persistence)?,
+                    Utc.timestamp_opt(end_utc, 0)
+                        .single()
+                        .ok_or(CaldavAuthError::Persistence)?,
+                    timezone
+                        .parse::<chrono_tz::Tz>()
+                        .map_err(|_| CaldavAuthError::Persistence)?,
+                    false,
+                ),
+                EventTiming::AllDay {
+                    start_date,
+                    end_date,
+                } => (date(&start_date)?, date(&end_date)?, chrono_tz::UTC, true),
+            };
+            let overlaps = if let Some(rule) = rule {
+                type ExceptionRow = (
+                    bool,
+                    Option<i64>,
+                    Option<String>,
+                    Option<i64>,
+                    Option<i64>,
+                    Option<String>,
+                    Option<String>,
+                );
+                let rows: Vec<ExceptionRow> = sqlx::query_as("SELECT is_deleted, recurrence_id, recurrence_date, timed_start_utc, timed_end_utc, all_day_start_date, all_day_end_date FROM event_recurrence_exceptions WHERE series_id = ?").bind(id).fetch_all(&self.pool).await.map_err(|_| CaldavAuthError::Persistence)?;
+                let mut excluded = std::collections::HashSet::new();
+                let mut modified = std::collections::HashMap::new();
+                for (
+                    deleted,
+                    recurrence_id,
+                    recurrence_date,
+                    start_utc,
+                    end_utc,
+                    start_date,
+                    end_date,
+                ) in rows
+                {
+                    let recurrence_id = if all_day {
+                        date(
+                            recurrence_date
+                                .as_deref()
+                                .ok_or(CaldavAuthError::Persistence)?,
+                        )?
+                    } else {
+                        Utc.timestamp_opt(recurrence_id.ok_or(CaldavAuthError::Persistence)?, 0)
+                            .single()
+                            .ok_or(CaldavAuthError::Persistence)?
+                    };
+                    if deleted {
+                        excluded.insert(recurrence_id);
+                    } else {
+                        let (start, end) = if all_day {
+                            (
+                                date(start_date.as_deref().ok_or(CaldavAuthError::Persistence)?)?,
+                                date(end_date.as_deref().ok_or(CaldavAuthError::Persistence)?)?,
+                            )
+                        } else {
+                            (
+                                Utc.timestamp_opt(
+                                    start_utc.ok_or(CaldavAuthError::Persistence)?,
+                                    0,
+                                )
+                                .single()
+                                .ok_or(CaldavAuthError::Persistence)?,
+                                Utc.timestamp_opt(end_utc.ok_or(CaldavAuthError::Persistence)?, 0)
+                                    .single()
+                                    .ok_or(CaldavAuthError::Persistence)?,
+                            )
+                        };
+                        modified.insert(recurrence_id, ModifiedOccurrence { start, end });
+                    }
+                }
+                occurrence_overlaps(
+                    &RecurringEvent {
+                        starts_at: start.with_timezone(&timezone),
+                        duration: Duration::seconds((end - start).num_seconds()),
+                        rule: RecurrenceRule::parse(&rule)
+                            .map_err(|_| CaldavAuthError::Persistence)?,
+                    },
+                    requested,
+                    &excluded,
+                    &modified,
+                    ExpansionLimits::default(),
+                )
+                .map_err(|error| match error {
+                    crate::recurrence::RecurrenceError::ComplexityLimitExceeded
+                    | crate::recurrence::RecurrenceError::OccurrenceLimitExceeded => {
+                        CaldavAuthError::QueryLimit
+                    }
+                    _ => CaldavAuthError::Persistence,
+                })?
+            } else {
+                start < requested.end && end > requested.start
+            };
+            if overlaps {
+                matches.push(id);
+            }
+            if matches.len() > limit {
+                break;
+            }
+        }
+        Ok(matches)
     }
 
     /// Read the ordered change log for one calendar, starting after the given
@@ -335,6 +424,41 @@ impl CaldavRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(|_| CaldavAuthError::Persistence)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, calendar_id, event_id, change_type, created_at, resource_name)| {
+                    CaldavEventChange {
+                        id,
+                        calendar_id,
+                        event_id,
+                        change_type,
+                        created_at,
+                        resource_name,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// Last change per logical href in a fixed revision window. Deleted names
+    /// also associate older unnamed changes with that href, including recreation.
+    pub async fn coalesced_changes(
+        &self,
+        calendar_id: i64,
+        after: i64,
+        through: i64,
+        limit: usize,
+    ) -> Result<Vec<CaldavEventChange>, CaldavAuthError> {
+        let rows: Vec<ChangeRow> = sqlx::query_as(
+            "WITH named AS (
+                SELECT ch.*, COALESCE(ch.resource_name,
+                    (SELECT r.resource_name FROM caldav_event_resources r WHERE r.calendar_id = ch.calendar_id AND r.event_id = ch.event_id AND r.deleted_at IS NULL),
+                    (SELECT d.resource_name FROM caldav_event_changes d WHERE d.calendar_id = ch.calendar_id AND d.event_id = ch.event_id AND d.resource_name IS NOT NULL ORDER BY d.id DESC LIMIT 1)) AS name
+                FROM caldav_event_changes ch WHERE ch.calendar_id = ? AND ch.id > ? AND ch.id <= ?
+             ), final AS (SELECT MAX(id) AS id FROM named GROUP BY COALESCE(name, 'event:' || event_id))
+             SELECT n.id, n.calendar_id, n.event_id, n.change_type, n.created_at, n.name FROM named n JOIN final f ON n.id = f.id ORDER BY n.id LIMIT ?"
+        ).bind(calendar_id).bind(after).bind(through).bind(limit as i64).fetch_all(&self.pool).await.map_err(|_| CaldavAuthError::Persistence)?;
         Ok(rows
             .into_iter()
             .map(

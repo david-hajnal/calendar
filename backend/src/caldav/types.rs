@@ -277,6 +277,7 @@ pub enum CaldavAuthError {
     Persistence,
     ResourceExists,
     UidConflict,
+    QueryLimit,
 }
 
 impl Display for CaldavAuthError {
@@ -287,6 +288,7 @@ impl Display for CaldavAuthError {
             Self::RateLimited => formatter.write_str("too many requests"),
             Self::Persistence => formatter.write_str("caldav account operation failed"),
             Self::ResourceExists => formatter.write_str("resource already exists"),
+            Self::QueryLimit => formatter.write_str("calendar query exceeds expansion limits"),
             Self::UidConflict => formatter.write_str("uid already exists in calendar"),
         }
     }

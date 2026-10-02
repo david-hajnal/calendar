@@ -482,7 +482,12 @@ async fn propfind_depth_one_lists_event_resource_with_matching_etag() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let etag = headers.get(header::ETAG).unwrap().to_str().unwrap();
-    assert!(text.contains(&format!("<D:getetag>{etag}</D:getetag>")));
+    assert!(
+        xml_tree(&text)
+            .descendants("DAV:", "getetag")
+            .iter()
+            .any(|node| node.text == etag)
+    );
 }
 
 #[tokio::test]
@@ -760,7 +765,7 @@ async fn put_creates_event_visible_in_both_systems() {
 
     assert_eq!(status, StatusCode::CREATED);
     assert!(headers.get(header::LOCATION).is_some());
-    assert!(headers.get(header::ETAG).is_some());
+    assert!(headers.get(header::ETAG).is_none());
     assert!(response_body.contains("BEGIN:VCALENDAR"));
     assert!(response_body.contains("SUMMARY:New Event"));
 
@@ -853,7 +858,7 @@ async fn put_missing_if_none_match_fails_428() {
 }
 
 #[tokio::test]
-async fn put_uid_conflict_fails_409() {
+async fn put_uid_conflict_fails_403() {
     let (temp_dir, _pool, accounts, _user_id, password, principal_id, calendar_id) =
         setup_create().await;
 
@@ -871,9 +876,9 @@ async fn put_uid_conflict_fails_409() {
     .await;
     assert_eq!(first_status, StatusCode::CREATED);
 
-    // Second create with the same UID at a different URL fails with 409.
+    // Second create with the same UID at a different URL fails with the no-uid-conflict precondition.
     let second_uri = format!("/dav/calendars/{principal_id}/{calendar_id}/second.ics");
-    let (second_status, _, _) = put_request(
+    let (second_status, _, error_body) = put_request(
         build_caldav_router(accounts),
         &second_uri,
         Some(("owner@example.test", &password)),
@@ -881,7 +886,13 @@ async fn put_uid_conflict_fails_409() {
         Some("*"),
     )
     .await;
-    assert_eq!(second_status, StatusCode::CONFLICT);
+    assert_eq!(second_status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&error_body)
+            .descendants("urn:ietf:params:xml:ns:caldav", "no-uid-conflict")
+            .len(),
+        1
+    );
     let _ = temp_dir;
 }
 
@@ -2040,9 +2051,9 @@ async fn put_uid_conflict_rolls_back_partial_event_write() {
         .unwrap();
     assert_eq!(count_before, 1, "first create must leave exactly one event");
 
-    // Second create with the same UID at a different URL fails with 409.
+    // Second create with the same UID at a different URL fails with the no-uid-conflict precondition.
     let second_uri = format!("/dav/calendars/{principal_id}/{calendar_id}/second.ics");
-    let (second_status, _, _) = put_request(
+    let (second_status, _, error_body) = put_request(
         build_caldav_router(accounts),
         &second_uri,
         Some(("owner@example.test", &password)),
@@ -2050,7 +2061,13 @@ async fn put_uid_conflict_rolls_back_partial_event_write() {
         Some("*"),
     )
     .await;
-    assert_eq!(second_status, StatusCode::CONFLICT);
+    assert_eq!(second_status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&error_body)
+            .descendants("urn:ietf:params:xml:ns:caldav", "no-uid-conflict")
+            .len(),
+        1
+    );
 
     // The partial event from the failed create must be rolled back: the
     // domain store must still contain exactly one event.
@@ -2210,12 +2227,8 @@ async fn put_update_matching_etag_succeeds_and_rotates_etag() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    let etag_after = headers
-        .get(header::ETAG)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
+    assert!(headers.get(header::ETAG).is_none());
+    let etag_after = get_etag(&accounts, &principal_id, calendar_id, &resource_name, auth).await;
     assert_ne!(
         etag_before, etag_after,
         "ETag must rotate on a successful update"
@@ -2294,10 +2307,10 @@ async fn put_update_stale_etag_fails_412_without_mutation() {
     let _ = temp_dir;
 }
 
-/// T08: a missing `If-Match` precondition yields 412 and leaves the event
+/// T08: a missing `If-Match` precondition yields 428 and leaves the event
 /// unmutated.
 #[tokio::test]
-async fn put_update_missing_if_match_fails_412_without_mutation() {
+async fn put_update_missing_if_match_fails_428_without_mutation() {
     let (
         temp_dir,
         pool,
@@ -2321,7 +2334,7 @@ async fn put_update_missing_if_match_fails_412_without_mutation() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(status, StatusCode::PRECONDITION_REQUIRED);
     assert_eq!(
         stored_title(&pool, calendar_id, event_id).await,
         "Planning",
@@ -2503,7 +2516,7 @@ async fn delete_matching_etag_succeeds_and_tombstones() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(body.is_empty(), "DELETE must not return a body");
 
     // The event must be removed from the domain store.
@@ -2606,10 +2619,10 @@ async fn delete_stale_etag_fails_412_without_mutation() {
     let _ = temp_dir;
 }
 
-/// T09: a missing `If-Match` precondition yields 412 and leaves the event
+/// T09: a missing `If-Match` precondition yields 428 and leaves the event
 /// unmutated.
 #[tokio::test]
-async fn delete_missing_if_match_fails_412() {
+async fn delete_missing_if_match_fails_428() {
     let (
         temp_dir,
         pool,
@@ -2631,7 +2644,7 @@ async fn delete_missing_if_match_fails_412() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(status, StatusCode::PRECONDITION_REQUIRED);
     assert_eq!(
         stored_title(&pool, calendar_id, event_id).await,
         "Planning",
@@ -2668,7 +2681,7 @@ async fn delete_repeated_is_deterministic() {
         Some(etag.as_str()),
     )
     .await;
-    assert_eq!(first_status, StatusCode::OK);
+    assert_eq!(first_status, StatusCode::NO_CONTENT);
 
     // A repeated delete is deterministic: the resource is gone, so it is 404.
     let (second_status, _, second_body) = delete_request(
@@ -2879,6 +2892,14 @@ async fn report_request(
     let request = Request::builder()
         .method(Method::from_bytes(b"REPORT").unwrap())
         .uri(uri)
+        .header(
+            "Depth",
+            if body.contains("calendar-query") {
+                "1"
+            } else {
+                "0"
+            },
+        )
         .header(header::AUTHORIZATION, basic_header(username, password))
         .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
         .body(Body::from(body.to_owned()))
@@ -2899,7 +2920,7 @@ fn calendar_query_xml(start: &str, end: &str) -> String {
     <C:calendar-data/>
   </D:prop>
   <C:filter>
-    <C:time-range start="{start}" end="{end}"/>
+    <C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="{start}" end="{end}"/></C:comp-filter></C:comp-filter>
   </C:filter>
 </C:calendar-query>"#
     )
@@ -3635,7 +3656,7 @@ async fn dav_delete_is_not_double_counted() {
         Some(etag.as_str()),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NO_CONTENT);
 
     assert_eq!(
         change_count(&pool, calendar_id, Some("deleted")).await,
@@ -3700,7 +3721,7 @@ async fn change_log_is_ordered_and_pageable() {
 fn sync_collection_xml(sync_token: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:sync-token>{sync_token}</D:sync-token>
   <D:sync-level>1</D:sync-level>
   <D:prop>
@@ -3708,21 +3729,17 @@ fn sync_collection_xml(sync_token: &str) -> String {
     <D:getcontenttype/>
     <C:calendar-data/>
   </D:prop>
-</C:sync-collection>"#
+</D:sync-collection>"#
     )
 }
 
 /// Extract the `<D:sync-token>` value from a sync-collection response body.
 fn extract_sync_token(body: &str) -> Option<String> {
-    for line in body.lines() {
-        if line.contains("<D:sync-token>") {
-            let start = line.find("<D:sync-token>")? + "<D:sync-token>".len();
-            let rest = line[start..].trim_end();
-            let token = rest.strip_suffix("</D:sync-token>")?;
-            return Some(token.to_owned());
-        }
-    }
-    None
+    xml_tree(body)
+        .children
+        .iter()
+        .find(|node| node.namespace == "DAV:" && node.name == "sync-token")
+        .map(|node| node.text.clone())
 }
 
 /// Count the `<D:response>` elements in a multistatus body.
@@ -3760,11 +3777,11 @@ async fn sync_collection_initial_snapshot_returns_all_events_and_token() {
     .await;
 
     assert_eq!(status, StatusCode::MULTI_STATUS);
-    // One response for the collection (carrying the token) plus one per event.
+    // One response per event; the token is a direct multistatus child.
     assert_eq!(
         count_responses(&resp),
-        3,
-        "initial snapshot must list the collection and both events"
+        2,
+        "initial snapshot must list both events"
     );
     let token = extract_sync_token(&resp).expect("initial snapshot must mint a sync token");
     assert!(!token.is_empty(), "the minted sync token must be non-empty");
@@ -3828,10 +3845,10 @@ async fn sync_collection_later_call_returns_only_newer_changes() {
     )
     .await;
     assert_eq!(status, StatusCode::MULTI_STATUS);
-    // Collection response + exactly the one new event.
+    // Exactly one response for the new event.
     assert_eq!(
         count_responses(&resp),
-        2,
+        1,
         "incremental sync must return only the new change"
     );
     assert!(
@@ -3888,7 +3905,7 @@ async fn sync_collection_represents_deletions() {
         Some(etag.as_str()),
     )
     .await;
-    assert_eq!(delete_status, StatusCode::OK);
+    assert_eq!(delete_status, StatusCode::NO_CONTENT);
 
     // Incremental sync must surface the deletion.
     let body = sync_collection_xml(&token);
@@ -3901,10 +3918,10 @@ async fn sync_collection_represents_deletions() {
     )
     .await;
     assert_eq!(status, StatusCode::MULTI_STATUS);
-    // Collection response + the deleted resource.
+    // One response for the deleted resource.
     assert_eq!(
         count_responses(&resp),
-        2,
+        1,
         "incremental sync must include the deletion"
     );
     // The deleted resource is represented by a 207 status as a direct child.
@@ -3921,8 +3938,7 @@ async fn sync_collection_represents_deletions() {
     let _ = (pool, event_id);
 }
 
-/// T11: an invalid (malformed or tampered) sync token fails safely with 400
-/// and does not leak a body.
+/// T11: an invalid (malformed or tampered) sync token fails with the DAV precondition.
 #[tokio::test]
 async fn sync_collection_invalid_token_fails_safely() {
     let (
@@ -3949,7 +3965,7 @@ async fn sync_collection_invalid_token_fails_safely() {
         &body,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // A well-formed but tampered token (valid shape, wrong signature).
     let valid = accounts.encode_sync_token(0);
@@ -3969,7 +3985,7 @@ async fn sync_collection_invalid_token_fails_safely() {
         &body,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 /// T11: pagination cannot skip changes. Repeated incremental calls with the
@@ -4028,7 +4044,7 @@ async fn sync_collection_pagination_does_not_skip_changes() {
         assert_eq!(status, StatusCode::MULTI_STATUS);
         assert_eq!(
             count_responses(&resp),
-            2,
+            1,
             "page {index} must contain exactly the one new change"
         );
         assert!(
@@ -4057,8 +4073,8 @@ async fn sync_collection_pagination_does_not_skip_changes() {
     assert_eq!(status, StatusCode::MULTI_STATUS);
     assert_eq!(
         count_responses(&resp),
-        1,
-        "a call with the latest token must return only the collection"
+        0,
+        "a call with the latest token must return no resource responses"
     );
 }
 
@@ -4078,11 +4094,11 @@ async fn sync_collection_rejects_bad_sync_level() {
     ) = scenario().await;
 
     let body = r#"<?xml version="1.0" encoding="utf-8" ?>
-<C:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:sync-token></D:sync-token>
   <D:sync-level>2</D:sync-level>
   <D:prop><D:getetag/></D:prop>
-</C:sync-collection>"#;
+</D:sync-collection>"#;
     let (status, _) = report_request(
         build_caldav_router(accounts),
         &format!("/dav/calendars/{principal_id}/{calendar_id}/"),
@@ -4850,4 +4866,1497 @@ async fn t16_full_allowlist_survives_unrelated_edit() {
     assert!(get_body.contains("X-APPLE-CEVENT-CATEGORY:TYPE:WORK"));
     assert!(get_body.contains("BEGIN:VALARM"));
     let _ = (temp_dir, pool);
+}
+
+#[derive(Debug)]
+struct XmlNode {
+    namespace: String,
+    name: String,
+    text: String,
+    children: Vec<XmlNode>,
+}
+
+impl XmlNode {
+    fn descendants<'a>(&'a self, namespace: &str, name: &str) -> Vec<&'a Self> {
+        let mut found = Vec::new();
+        if self.namespace == namespace && self.name == name {
+            found.push(self);
+        }
+        for child in &self.children {
+            found.extend(child.descendants(namespace, name));
+        }
+        found
+    }
+}
+
+fn xml_tree(xml: &str) -> XmlNode {
+    use quick_xml::{NsReader, events::Event, name::ResolveResult};
+    let mut reader = NsReader::from_str(xml);
+    let mut stack: Vec<XmlNode> = Vec::new();
+    let mut root = None;
+    loop {
+        let (namespace, event) = reader.read_resolved_event().expect("well-formed XML");
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element) => {
+                let namespace = match namespace {
+                    ResolveResult::Bound(ns) => {
+                        quick_xml::escape::unescape(std::str::from_utf8(ns.as_ref()).unwrap())
+                            .unwrap()
+                            .into_owned()
+                    }
+                    ResolveResult::Unbound => String::new(),
+                    ResolveResult::Unknown(prefix) => panic!("unbound XML prefix: {prefix:?}"),
+                };
+                let node = XmlNode {
+                    namespace,
+                    name: String::from_utf8(element.local_name().as_ref().to_vec()).unwrap(),
+                    text: String::new(),
+                    children: Vec::new(),
+                };
+                if matches!(event, Event::Start(_)) {
+                    stack.push(node);
+                } else if let Some(parent) = stack.last_mut() {
+                    parent.children.push(node);
+                } else {
+                    assert!(root.replace(node).is_none());
+                }
+            }
+            Event::Text(text) => {
+                if let Some(node) = stack.last_mut() {
+                    node.text.push_str(&text.unescape().unwrap());
+                }
+            }
+            Event::CData(text) => {
+                if let Some(node) = stack.last_mut() {
+                    node.text
+                        .push_str(std::str::from_utf8(text.as_ref()).unwrap());
+                }
+            }
+            Event::End(_) => {
+                let node = stack.pop().expect("balanced XML");
+                if let Some(parent) = stack.last_mut() {
+                    parent.children.push(node);
+                } else {
+                    assert!(root.replace(node).is_none(), "one root");
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert!(stack.is_empty());
+    root.expect("XML document root")
+}
+
+async fn semantic_propfind(
+    accounts: &CaldavAccountService,
+    uri: &str,
+    password: &str,
+    depth: &str,
+    body: &str,
+) -> (StatusCode, XmlNode) {
+    let response = build_caldav_router(accounts.clone())
+        .oneshot(
+            Request::builder()
+                .method("PROPFIND")
+                .uri(uri)
+                .header("Depth", depth)
+                .header("x-forwarded-for", "127.0.0.2")
+                .header(
+                    header::AUTHORIZATION,
+                    basic_header("owner@example.test", password),
+                )
+                .body(Body::from(body.to_owned()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, xml_tree(std::str::from_utf8(&bytes).unwrap()))
+}
+
+#[tokio::test]
+async fn xml_properties_preserve_namespaces_and_nonempty_status_groups() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, resource) =
+        scenario().await;
+    let uris = [
+        "/dav/".to_owned(),
+        format!("/dav/principals/{principal}/"),
+        format!("/dav/calendars/{principal}/"),
+        format!("/dav/calendars/{principal}/{calendar}/"),
+        format!("/dav/calendars/{principal}/{calendar}/{resource}.ics"),
+    ];
+    for uri in uris {
+        let body = r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:A="http://apple.com/ns/ical/" xmlns:X="urn:client:&amp;extension"><D:prop><D:current-user-principal></D:current-user-principal><D:unsupported/><C:unsupported/><A:unsupported/><X:unsupported/></D:prop></D:propfind>"#;
+        let (status, root) = semantic_propfind(&accounts, &uri, &password, "0", body).await;
+        assert_eq!(status, StatusCode::MULTI_STATUS, "{uri}");
+        assert_eq!((&*root.namespace, &*root.name), ("DAV:", "multistatus"));
+        let groups = root.descendants("DAV:", "propstat");
+        assert_eq!(groups.len(), 2, "{uri}: {root:?}");
+        for group in groups {
+            let prop = group
+                .children
+                .iter()
+                .find(|n| n.name == "prop" && n.namespace == "DAV:")
+                .unwrap();
+            assert!(!prop.children.is_empty());
+            assert!(
+                prop.text.trim().is_empty(),
+                "property names cannot be bare text"
+            );
+            let status = &group
+                .children
+                .iter()
+                .find(|n| n.name == "status")
+                .unwrap()
+                .text;
+            if status.contains("200") {
+                assert_eq!(prop.children.len(), 1);
+                assert_eq!(prop.children[0].name, "current-user-principal");
+                assert_eq!(
+                    url::Url::parse("http://127.0.0.1:3000")
+                        .unwrap()
+                        .join(&prop.children[0].descendants("DAV:", "href")[0].text)
+                        .unwrap()
+                        .path(),
+                    format!("/dav/principals/{principal}/")
+                );
+            } else {
+                assert!(status.contains("404"));
+                assert_eq!(prop.children.len(), 4);
+                for ns in [
+                    "DAV:",
+                    "urn:ietf:params:xml:ns:caldav",
+                    "http://apple.com/ns/ical/",
+                    "urn:client:&extension",
+                ] {
+                    let property = prop
+                        .children
+                        .iter()
+                        .find(|n| n.namespace == ns)
+                        .unwrap_or_else(|| panic!("missing namespace {ns}: {root:?}"));
+                    assert_eq!(property.name, "unsupported");
+                    assert!(property.children.is_empty() && property.text.is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn supported_and_empty_property_selection_have_no_404_group() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/{resource}.ics");
+    for selection in ["<D:getetag/><D:resourcetype/>", ""] {
+        let body =
+            format!("<D:propfind xmlns:D=\"DAV:\"><D:prop>{selection}</D:prop></D:propfind>");
+        let (status, root) = semantic_propfind(&accounts, &uri, &password, "0", &body).await;
+        assert_eq!(status, StatusCode::MULTI_STATUS);
+        let groups = root.descendants("DAV:", "propstat");
+        assert_eq!(groups.len(), usize::from(!selection.is_empty()));
+        if !selection.is_empty() {
+            assert!(
+                groups[0].descendants("DAV:", "status")[0]
+                    .text
+                    .contains("200")
+            );
+            assert_eq!(root.descendants("DAV:", "getetag").len(), 1);
+            assert!(
+                root.descendants("DAV:", "resourcetype")[0]
+                    .children
+                    .is_empty()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn semantic_discovery_crud_and_incremental_sync_sequence() {
+    let (_temp, pool, accounts, user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let root_props =
+        r#"<D:propfind xmlns:D="DAV:"><D:prop><D:current-user-principal/></D:prop></D:propfind>"#;
+    let (status, root) = semantic_propfind(&accounts, "/dav/", &password, "0", root_props).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let principal_uri = url::Url::parse("http://127.0.0.1:3000")
+        .unwrap()
+        .join(
+            &root.descendants("DAV:", "current-user-principal")[0].descendants("DAV:", "href")[0]
+                .text,
+        )
+        .unwrap();
+    let (_, root) = semantic_propfind(&accounts, principal_uri.path(), &password, "0", r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><C:calendar-home-set/></D:prop></D:propfind>"#).await;
+    let home_uri = principal_uri
+        .join(
+            &root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-home-set")[0]
+                .descendants("DAV:", "href")[0]
+                .text,
+        )
+        .unwrap();
+    let (status, root) = semantic_propfind(&accounts, home_uri.path(), &password, "1", "").await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    assert_eq!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar")
+            .len(),
+        1
+    );
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    let (status, initial) = report_request(
+        build_caldav_router(accounts.clone()),
+        &collection,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let token = extract_sync_token(&initial).unwrap();
+    assert!(
+        url::Url::parse(&token).is_ok(),
+        "opaque token is absolute URI"
+    );
+    let uri = format!("{collection}protocol-sequence.ics");
+    let auth = ("owner@example.test", password.as_str());
+    let (status, headers, _) = put_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        Some(auth),
+        &vcalendar_body("protocol-uid", "Created"),
+        Some("*"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(headers.get(header::ETAG).is_none());
+    let (status, headers, content) = request(
+        build_caldav_router(accounts.clone()),
+        Method::GET,
+        &uri,
+        Some(auth),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content.contains("SUMMARY:Created"));
+    let etag = headers.get(header::ETAG).unwrap().to_str().unwrap();
+    let (_, root) = semantic_propfind(
+        &accounts,
+        &uri,
+        &password,
+        "0",
+        r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>"#,
+    )
+    .await;
+    assert_eq!(root.descendants("DAV:", "getetag")[0].text, etag);
+    let (status, headers, _) = put_update_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        Some(auth),
+        &vcalendar_body("protocol-uid", "Updated"),
+        Some(etag),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get(header::ETAG).is_none());
+    let (status, delta) = report_request(
+        build_caldav_router(accounts.clone()),
+        &collection,
+        auth.0,
+        auth.1,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&delta);
+    assert_eq!(
+        root.descendants("DAV:", "response").len(),
+        1,
+        "create/update coalesced"
+    );
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+            .text
+            .contains("SUMMARY:Updated")
+    );
+    let token = extract_sync_token(&delta).unwrap();
+    let etag = get_etag(&accounts, &principal, calendar, "protocol-sequence", auth).await;
+    assert_eq!(
+        delete_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            Some(&etag)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (status, delta) = report_request(
+        build_caldav_router(accounts.clone()),
+        &collection,
+        auth.0,
+        auth.1,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&delta);
+    let responses = root.descendants("DAV:", "response");
+    assert_eq!(responses.len(), 1);
+    assert!(
+        responses[0]
+            .children
+            .iter()
+            .any(|n| n.namespace == "DAV:" && n.name == "status" && n.text.contains("404"))
+    );
+    assert!(responses[0].descendants("DAV:", "propstat").is_empty());
+    let other = create_calendar(&pool, user).await;
+    let (status, error) = report_request(
+        build_caldav_router(accounts),
+        &format!("/dav/calendars/{principal}/{other}/"),
+        auth.0,
+        auth.1,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&error)
+            .descendants("DAV:", "valid-sync-token")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn initial_sync_pages_preserve_concurrent_changes_after_snapshot() {
+    let (_temp, pool, accounts, user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    create_event(&pool, user, calendar).await;
+    create_event(&pool, user, calendar).await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    let limited = |token: &str| {
+        sync_collection_xml(token).replace(
+            "</D:sync-collection>",
+            "<D:limit><D:nresults>1</D:nresults></D:limit></D:sync-collection>",
+        )
+    };
+    let mut token = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for page in 0..3 {
+        let (status, body) = report_request(
+            build_caldav_router(accounts.clone()),
+            &collection,
+            "owner@example.test",
+            &password,
+            &limited(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::MULTI_STATUS);
+        let root = xml_tree(&body);
+        let responses = root.descendants("DAV:", "response");
+        let resources: Vec<_> = responses
+            .iter()
+            .filter(|node| !node.descendants("DAV:", "propstat").is_empty())
+            .collect();
+        assert_eq!(resources.len(), 1, "one resource per requested page");
+        let href = &resources[0].descendants("DAV:", "href")[0].text;
+        assert!(
+            seen.insert(href.clone()),
+            "snapshot pages cannot repeat href"
+        );
+        if page < 2 {
+            assert_eq!(
+                root.descendants("DAV:", "number-of-matches-within-limits")
+                    .len(),
+                1
+            );
+        }
+        token = extract_sync_token(&body).unwrap();
+        if page == 0 {
+            let mut mutation = timed_mutation();
+            mutation.title = "Concurrent".to_owned();
+            EventService::new_at(pool.clone(), 600)
+                .create(user, false, calendar, mutation)
+                .await
+                .unwrap();
+        }
+    }
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &collection,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+            .iter()
+            .any(|n| n.text.contains("SUMMARY:Concurrent")),
+        "writes during paginated initial snapshot must reach incremental sync"
+    );
+}
+
+#[tokio::test]
+async fn multiget_absolute_href_respects_property_subset_and_namespace_status() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, resource) =
+        scenario().await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    let href = format!("http://127.0.0.1:3000{collection}{resource}.ics");
+    let body = format!(
+        r#"<C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:D="DAV:" xmlns:X="urn:client"><D:prop><D:getetag></D:getetag><X:unknown/></D:prop><D:href>{href}</D:href></C:calendar-multiget>"#
+    );
+    let (status, response) = report_request(
+        build_caldav_router(accounts.clone()),
+        &collection,
+        "owner@example.test",
+        &password,
+        &body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&response);
+    assert_eq!(root.descendants("DAV:", "response").len(), 1);
+    assert_eq!(root.descendants("DAV:", "getetag").len(), 1);
+    assert_eq!(root.descendants("urn:client", "unknown").len(), 1);
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+            .is_empty()
+    );
+    assert!(root.descendants("DAV:", "getcontenttype").is_empty());
+    let (status, response) = report_request(
+        build_caldav_router(accounts),
+        &collection,
+        "owner@example.test",
+        &password,
+        &body.replace("http://127.0.0.1:3000", "https://foreign.example"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&response);
+    assert!(
+        root.descendants("DAV:", "getetag").is_empty(),
+        "foreign href cannot return authorized local content"
+    );
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn depth_and_permission_metadata_match_implemented_methods() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    for uri in ["/dav/".to_owned(), collection.clone()] {
+        let response = build_caldav_router(accounts.clone())
+            .oneshot(
+                Request::builder()
+                    .method("PROPFIND")
+                    .uri(&uri)
+                    .header("Depth", "infinity")
+                    .header("x-forwarded-for", &uri)
+                    .header(
+                        header::AUTHORIZATION,
+                        basic_header("owner@example.test", &password),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            xml_tree(std::str::from_utf8(&body).unwrap())
+                .descendants("DAV:", "propfind-finite-depth")
+                .len(),
+            1
+        );
+    }
+    let props = r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:current-user-privilege-set/><C:supported-calendar-data/><C:supported-calendar-component-set/><D:sync-token/></D:prop></D:propfind>"#;
+    let (status, root) = semantic_propfind(&accounts, &collection, &password, "0", props).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    assert_eq!(root.descendants("DAV:", "propstat").len(), 1);
+    let privileges = root.descendants("DAV:", "current-user-privilege-set")[0];
+    for unimplemented in ["all", "write-acl", "write-properties"] {
+        assert!(privileges.descendants("DAV:", unimplemented).is_empty());
+    }
+    for implemented in ["read", "write-content", "bind", "unbind"] {
+        assert_eq!(privileges.descendants("DAV:", implemented).len(), 1);
+    }
+    assert_eq!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+            .len(),
+        1
+    );
+    assert_eq!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "comp")
+            .len(),
+        1
+    );
+    assert!(url::Url::parse(&root.descendants("DAV:", "sync-token")[0].text).is_ok());
+}
+
+#[tokio::test]
+async fn visibility_changes_and_regrant_invalidate_previous_sync_tokens() {
+    let (_temp, pool, accounts, _user, _password, _principal, calendar, _event, _resource) =
+        scenario().await;
+    let viewer = create_user(&pool, "viewer@example.test").await;
+    sqlx::query("INSERT INTO calendar_acl (calendar_id,user_id,role,created_at,updated_at) VALUES (?,?,'viewer',100,100)").bind(calendar).bind(viewer).execute(&pool).await.unwrap();
+    let password = accounts
+        .issue_credential(viewer, "Viewer".to_owned())
+        .await
+        .unwrap()
+        .password
+        .expose()
+        .to_owned();
+    let principal = accounts.status(viewer).await.unwrap().principal_id.unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (status, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "viewer@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    assert!(
+        xml_tree(&body).descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+            .text
+            .contains("SUMMARY:Planning")
+    );
+    let token = extract_sync_token(&body).unwrap();
+    sqlx::query(
+        "UPDATE calendar_acl SET role='free_busy_viewer' WHERE calendar_id=? AND user_id=?",
+    )
+    .bind(calendar)
+    .bind(viewer)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "viewer@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&body)
+            .descendants("DAV:", "valid-sync-token")
+            .len(),
+        1
+    );
+    let (status, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "viewer@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    assert!(!body.contains("Planning"));
+    let token = extract_sync_token(&body).unwrap();
+    sqlx::query("DELETE FROM calendar_acl WHERE calendar_id=? AND user_id=?")
+        .bind(calendar)
+        .bind(viewer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendar_acl (calendar_id,user_id,role,created_at,updated_at) VALUES (?,?,'free_busy_viewer',100,100)").bind(calendar).bind(viewer).execute(&pool).await.unwrap();
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &uri,
+        "viewer@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&body)
+            .descendants("DAV:", "valid-sync-token")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn deletion_and_recreation_sync_emit_one_final_live_resource() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    let uri = format!("{collection}recreated.ics");
+    let auth = ("owner@example.test", password.as_str());
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            &vcalendar_body("recreated-uid", "Before"),
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (_, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &collection,
+        auth.0,
+        auth.1,
+        &sync_collection_xml(""),
+    )
+    .await;
+    let token = extract_sync_token(&body).unwrap();
+    let etag = get_etag(&accounts, &principal, calendar, "recreated", auth).await;
+    assert_eq!(
+        delete_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            Some(&etag)
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            &vcalendar_body("recreated-uid", "After"),
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &collection,
+        auth.0,
+        auth.1,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    let responses = root.descendants("DAV:", "response");
+    assert_eq!(responses.len(), 1, "same href must coalesce to final state");
+    assert_eq!(responses[0].descendants("DAV:", "href")[0].text, uri);
+    assert!(
+        responses[0].descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+            .text
+            .contains("SUMMARY:After")
+    );
+    assert!(
+        responses[0]
+            .descendants("DAV:", "status")
+            .iter()
+            .all(|n| n.text.contains("200"))
+    );
+}
+
+#[tokio::test]
+async fn entity_namespace_is_resolved_and_invalid_qnames_are_rejected() {
+    let (_temp, _pool, accounts, _user, password, _principal, _calendar, _event, _resource) =
+        scenario().await;
+    let body = r#"<D:propfind xmlns:D="DAV&#58;"><D:prop><D:current-user-principal/></D:prop></D:propfind>"#;
+    let (status, root) = semantic_propfind(&accounts, "/dav/", &password, "0", body).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    assert_eq!(root.descendants("DAV:", "current-user-principal").len(), 1);
+    for body in [
+        r#"<D:propfind xmlns:D="DAV:"><D:prop><D:1etag/></D:prop></D:propfind>"#,
+        r#"<D:propfind xmlns:D="DAV:"><D:prop><D:get:etag/></D:prop></D:propfind>"#,
+    ] {
+        let response = build_caldav_router(accounts.clone())
+            .oneshot(
+                Request::builder()
+                    .method("PROPFIND")
+                    .uri("/dav/")
+                    .header("Depth", "0")
+                    .header(
+                        header::AUTHORIZATION,
+                        basic_header("owner@example.test", &password),
+                    )
+                    .body(Body::from(body.to_owned()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn reports_accept_allprop_propname_and_exclude_calendar_data() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, resource) =
+        scenario().await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    for selector in ["allprop", "propname"] {
+        let body = format!(
+            r#"<C:calendar-multiget xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:D="DAV:"><D:{selector}/><D:href>{collection}{resource}.ics</D:href></C:calendar-multiget>"#
+        );
+        let (status, body) = report_request(
+            build_caldav_router(accounts.clone()),
+            &collection,
+            "owner@example.test",
+            &password,
+            &body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::MULTI_STATUS);
+        let root = xml_tree(&body);
+        assert_eq!(root.descendants("DAV:", "response").len(), 1);
+        assert_eq!(root.descendants("DAV:", "getetag").len(), 1);
+        assert!(
+            root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+                .is_empty()
+        );
+        assert_eq!(root.descendants("DAV:", "propstat").len(), 1);
+        if selector == "propname" {
+            for property in &root.descendants("DAV:", "prop")[0].children {
+                assert!(property.text.is_empty() && property.children.is_empty());
+            }
+        } else {
+            assert!(!root.descendants("DAV:", "getetag")[0].text.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn calendar_query_depth_defaults_to_zero_and_one_searches_members() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let body = calendar_query_xml("20260101T000000Z", "20260201T000000Z");
+    for depth in [None, Some("0"), Some("1")] {
+        let mut request = Request::builder().method("REPORT").uri(&uri).header(
+            header::AUTHORIZATION,
+            basic_header("owner@example.test", &password),
+        );
+        if let Some(depth) = depth {
+            request = request.header("Depth", depth);
+        }
+        let response = build_caldav_router(accounts.clone())
+            .oneshot(request.body(Body::from(body.clone())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::MULTI_STATUS);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            xml_tree(std::str::from_utf8(&bytes).unwrap())
+                .descendants("DAV:", "response")
+                .len(),
+            usize::from(depth == Some("1"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn future_and_tampered_collection_tokens_return_valid_sync_token_error() {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (_, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    let valid = extract_sync_token(&body).unwrap();
+    let encoded = valid.strip_prefix("urn:happening:sync:v1:").unwrap();
+    let (payload, tag) = encoded.split_once('.').unwrap();
+    let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+    let context = payload.lines().next().unwrap();
+    let future = accounts.collection_sync_token(context, i64::MAX);
+    let mut bad_tag = tag.to_owned();
+    let first = bad_tag.remove(0);
+    bad_tag.insert(0, if first == 'A' { 'B' } else { 'A' });
+    let tampered = format!(
+        "urn:happening:sync:v1:{}.{}",
+        URL_SAFE_NO_PAD.encode(payload),
+        bad_tag
+    );
+    for token in [future, tampered] {
+        let (status, error) = report_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            "owner@example.test",
+            &password,
+            &sync_collection_xml(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            xml_tree(&error)
+                .descendants("DAV:", "valid-sync-token")
+                .len(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn signed_collection_tokens_expire_at_boundary() {
+    let (_temp, pool) = setup().await;
+    let key = SecretKey::generate();
+    let origin = url::Url::parse("http://127.0.0.1:3000").unwrap();
+    let context = "calendar:visibility:epoch";
+    let issued = CaldavAccountService::new_at(pool.clone(), key.clone(), origin.clone(), 1000)
+        .collection_sync_token(context, 42);
+    let before = CaldavAccountService::new_at(
+        pool.clone(),
+        key.clone(),
+        origin.clone(),
+        1000 + 30 * 86400 - 1,
+    );
+    assert_eq!(before.collection_sync_revision(&issued, context), Some(42));
+    let expired = CaldavAccountService::new_at(pool, key, origin, 1000 + 30 * 86400);
+    assert_eq!(expired.collection_sync_revision(&issued, context), None);
+}
+
+async fn query_resource_hrefs(
+    accounts: &CaldavAccountService,
+    uri: &str,
+    password: &str,
+    range: &str,
+) -> Vec<String> {
+    let body = format!(
+        r#"<C:calendar-query xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:D="DAV:"><D:prop><D:getetag/></D:prop><C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">{range}</C:comp-filter></C:comp-filter></C:filter></C:calendar-query>"#
+    );
+    let (status, response) = report_request(
+        build_caldav_router(accounts.clone()),
+        uri,
+        "owner@example.test",
+        password,
+        &body,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::MULTI_STATUS,
+        "query: {range}, response: {response}"
+    );
+    xml_tree(&response)
+        .descendants("DAV:", "response")
+        .iter()
+        .map(|n| n.descendants("DAV:", "href")[0].text.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn recurrence_query_membership_accounts_for_exhaustion_deletions_and_moved_instances() {
+    use commoncal_backend::event::OccurrenceChange;
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let service = EventService::new_at(pool.clone(), 2000);
+    let exhausted = service
+        .create_recurring(
+            user,
+            false,
+            calendar,
+            timed_mutation(),
+            "FREQ=DAILY;COUNT=2".to_owned(),
+        )
+        .await
+        .unwrap();
+    let repository = CaldavRepository::new(pool.clone());
+    let resource = repository
+        .ensure_resource(calendar, exhausted.id, 2000)
+        .await
+        .unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let href = format!("{uri}{}.ics", resource.resource_name);
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260201T000000Z" end="20260202T000000Z"/>"#
+        )
+        .await
+        .is_empty(),
+        "exhausted series cannot match future ranges"
+    );
+    assert_eq!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260115T000000Z" end="20260115T010000Z"/>"#
+        )
+        .await,
+        std::slice::from_ref(&href)
+    );
+    service
+        .delete_occurrence(user, false, calendar, exhausted.id, 1_768_435_200, 1)
+        .await
+        .unwrap();
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260115T000000Z" end="20260115T010000Z"/>"#
+        )
+        .await
+        .is_empty(),
+        "deleted occurrence must stop matching"
+    );
+    let mut moved = timed_mutation();
+    moved.timing = EventTiming::Timed {
+        start_utc: 1_769_904_000,
+        end_utc: 1_769_907_600,
+        timezone: "UTC".to_owned(),
+    };
+    service
+        .update_occurrence(
+            user,
+            false,
+            calendar,
+            exhausted.id,
+            OccurrenceChange {
+                recurrence_id: 1_768_521_600,
+                expected_version: 2,
+                event: moved,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260116T000000Z" end="20260116T010000Z"/>"#
+        )
+        .await
+        .is_empty(),
+        "moved original occurrence must not match old range"
+    );
+    assert_eq!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260201T000000Z" end="20260201T010000Z"/>"#
+        )
+        .await,
+        std::slice::from_ref(&href),
+        "moved exception must match destination range outside original series"
+    );
+    assert_eq!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260201T000000Z"/>"#
+        )
+        .await,
+        std::slice::from_ref(&href)
+    );
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range end="20260116T000000Z"/>"#
+        )
+        .await
+        .is_empty()
+    );
+    assert_eq!(
+        query_resource_hrefs(&accounts, &uri, &password, "").await,
+        [href]
+    );
+}
+
+#[tokio::test]
+async fn recurring_all_day_query_matches_subday_overlap_and_exclusive_end() {
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let mut mutation = timed_mutation();
+    mutation.timing = EventTiming::AllDay {
+        start_date: "2026-01-15".to_owned(),
+        end_date: "2026-01-16".to_owned(),
+    };
+    EventService::new_at(pool, 2000)
+        .create_recurring(
+            user,
+            false,
+            calendar,
+            mutation,
+            "FREQ=DAILY;COUNT=2".to_owned(),
+        )
+        .await
+        .unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    assert_eq!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260116T120000Z" end="20260116T130000Z"/>"#
+        )
+        .await
+        .len(),
+        1
+    );
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260117T000000Z" end="20260117T010000Z"/>"#
+        )
+        .await
+        .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn query_overflow_returns_limit_precondition_instead_of_partial_resources() {
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let event = create_event(&pool, user, calendar).await;
+    let mut transaction = pool.begin().await.unwrap();
+    for _ in 0..commoncal_backend::caldav::query::MAX_RESULTS {
+        sqlx::query("INSERT INTO events (calendar_id,title,description,location,status,event_kind,timed_start_utc,timed_end_utc,event_timezone,created_by_user_id,last_edited_by_user_id,version,created_at,updated_at) SELECT calendar_id,title,description,location,status,event_kind,timed_start_utc,timed_end_utc,event_timezone,created_by_user_id,last_edited_by_user_id,version,created_at,updated_at FROM events WHERE id=?").bind(event).execute(&mut *transaction).await.unwrap();
+    }
+    transaction.commit().await.unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &uri,
+        "owner@example.test",
+        &password,
+        &calendar_query_xml("20260115T000000Z", "20260116T000000Z"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+    let root = xml_tree(&body);
+    assert_eq!(
+        root.descendants("DAV:", "number-of-matches-within-limits")
+            .len(),
+        1
+    );
+    assert!(root.descendants("DAV:", "response").is_empty());
+}
+
+#[tokio::test]
+async fn imported_feed_create_update_missing_item_and_feed_delete_produce_sync_changes() {
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let feed = ExternalFeedService::new_at(pool, SecretKey::generate(), 2000);
+    let feed_id = feed
+        .create(
+            user,
+            false,
+            calendar,
+            NewFeed {
+                source_url: "https://feeds.example.test/sync.ics".to_owned(),
+                refresh_interval_seconds: Some(60),
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (_, initial) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    let mut token = extract_sync_token(&initial).unwrap();
+    let mut imported_href = String::new();
+    for summary in ["Imported first", "Imported updated"] {
+        feed.refresh(
+            user,
+            false,
+            feed_id,
+            &FixedFetcher {
+                body: vcalendar_body("feed-sync-uid", summary),
+            },
+        )
+        .await
+        .unwrap();
+        let (status, body) = report_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            "owner@example.test",
+            &password,
+            &sync_collection_xml(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::MULTI_STATUS);
+        let root = xml_tree(&body);
+        let responses = root.descendants("DAV:", "response");
+        assert_eq!(responses.len(), 1);
+        let href = responses[0].descendants("DAV:", "href")[0].text.clone();
+        if imported_href.is_empty() {
+            imported_href = href;
+        } else {
+            assert_eq!(href, imported_href);
+        }
+        assert!(
+            responses[0].descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+                .text
+                .contains(summary)
+        );
+        token = extract_sync_token(&body).unwrap();
+    }
+    // A valid replacement feed omits the original UID and introduces another.
+    feed.refresh(
+        user,
+        false,
+        feed_id,
+        &FixedFetcher {
+            body: vcalendar_body("feed-replacement-uid", "Replacement"),
+        },
+    )
+    .await
+    .unwrap();
+    let (status, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    let responses = root.descendants("DAV:", "response");
+    assert_eq!(
+        responses.len(),
+        2,
+        "replacement emits original tombstone and new event"
+    );
+    let deleted = responses
+        .iter()
+        .find(|n| n.descendants("DAV:", "href")[0].text == imported_href)
+        .unwrap();
+    assert!(
+        deleted
+            .children
+            .iter()
+            .any(|n| n.namespace == "DAV:" && n.name == "status" && n.text.contains("404"))
+    );
+    assert!(deleted.descendants("DAV:", "propstat").is_empty());
+    let replacement = responses
+        .iter()
+        .find(|n| {
+            !n.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+                .is_empty()
+        })
+        .unwrap();
+    assert!(
+        replacement.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+            .text
+            .contains("Replacement")
+    );
+    imported_href = replacement.descendants("DAV:", "href")[0].text.clone();
+    token = extract_sync_token(&body).unwrap();
+    feed.delete(user, false, feed_id).await.unwrap();
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    assert_eq!(root.descendants("DAV:", "response").len(), 1);
+    assert_eq!(root.descendants("DAV:", "href")[0].text, imported_href);
+    assert!(root.descendants("DAV:", "status")[0].text.contains("404"));
+}
+
+#[tokio::test]
+async fn recurrence_query_preserves_local_time_across_dst_transition() {
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let start = chrono::DateTime::parse_from_rfc3339("2026-03-28T09:00:00Z")
+        .unwrap()
+        .timestamp();
+    let mut mutation = timed_mutation();
+    mutation.timing = EventTiming::Timed {
+        start_utc: start,
+        end_utc: start + 3600,
+        timezone: "Europe/Budapest".to_owned(),
+    };
+    EventService::new_at(pool, 2000)
+        .create_recurring(
+            user,
+            false,
+            calendar,
+            mutation,
+            "FREQ=DAILY;COUNT=3".to_owned(),
+        )
+        .await
+        .unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    assert_eq!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260329T083000Z" end="20260329T084500Z"/>"#
+        )
+        .await
+        .len(),
+        1,
+        "10:00 local becomes08:00UTC after DST"
+    );
+    assert!(
+        query_resource_hrefs(
+            &accounts,
+            &uri,
+            &password,
+            r#"<C:time-range start="20260329T093000Z" end="20260329T094500Z"/>"#
+        )
+        .await
+        .is_empty(),
+        "series must not drift one hour in local time"
+    );
+}
+
+#[tokio::test]
+async fn reserved_resource_name_href_round_trips_through_propfind_get_and_multiget() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let collection = format!("/dav/calendars/{principal}/{calendar}/");
+    let uri = format!("{collection}space%20name%26%3F%23%25.ics");
+    let auth = ("owner@example.test", password.as_str());
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            &vcalendar_body("reserved-resource-uid", "Reserved resource"),
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (_, root) = semantic_propfind(
+        &accounts,
+        &collection,
+        &password,
+        "1",
+        r#"<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>"#,
+    )
+    .await;
+    let responses = root.descendants("DAV:", "response");
+    let object = responses
+        .iter()
+        .find(|n| n.descendants("DAV:", "href")[0].text.ends_with(".ics"))
+        .unwrap();
+    let href = &object.descendants("DAV:", "href")[0].text;
+    let parsed = url::Url::parse("http://127.0.0.1:3000")
+        .unwrap()
+        .join(href)
+        .unwrap();
+    assert!(
+        parsed.query().is_none() && parsed.fragment().is_none(),
+        "resource name delimiters must be encoded in href: {href}"
+    );
+    let (status, _, content) = request(
+        build_caldav_router(accounts.clone()),
+        Method::GET,
+        href,
+        Some(auth),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "advertised href must round-trip to original resource"
+    );
+    assert!(content.contains("SUMMARY:Reserved resource"));
+    let (status, body) = report_request(
+        build_caldav_router(accounts),
+        &collection,
+        auth.0,
+        auth.1,
+        &multiget_xml(&quick_xml::escape::escape(href)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    assert_eq!(root.descendants("DAV:", "response").len(), 1);
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0]
+            .text
+            .contains("SUMMARY:Reserved resource")
+    );
+}
+
+#[tokio::test]
+async fn categories_escaped_comma_and_uri_delimiters_survive_put_get() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/metadata-delimiters.ics");
+    let body = vcalendar_with_properties(
+        "metadata-delimiter-uid",
+        "Metadata",
+        Some(r"one\,two,three"),
+    )
+    .replace("END:VEVENT", "URL:https://example.test/a,b;c\r\nEND:VEVENT");
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(("owner@example.test", &password)),
+            &body,
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (status, _, content) = request(
+        build_caldav_router(accounts),
+        Method::GET,
+        &uri,
+        Some(("owner@example.test", &password)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let parsed = parse_calendar(&content, IcsParserLimits::default()).unwrap();
+    assert_eq!(parsed.events[0].categories, ["one,two", "three"]);
+    assert!(
+        content.contains("URL:https://example.test/a,b;c\r\n"),
+        "URI-valued property delimiters must remain unescaped: {content}"
+    );
+}
+
+#[tokio::test]
+async fn quoted_parameter_uri_delimiters_do_not_corrupt_property_value() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/quoted-parameter.ics");
+    let body = vcalendar_body("quoted-parameter-uid", "Example").replace(
+        "SUMMARY:Example",
+        "SUMMARY;ALTREP=\"https://example.test/a;b\":Example",
+    );
+    let (status, _, response) = put_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        Some(("owner@example.test", &password)),
+        &body,
+        Some("*"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "valid quoted ALTREP parameter: {response}"
+    );
+    let (status, _, content) = request(
+        build_caldav_router(accounts),
+        Method::GET,
+        &uri,
+        Some(("owner@example.test", &password)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        parse_calendar(&content, IcsParserLimits::default())
+            .unwrap()
+            .events[0]
+            .summary,
+        "Example"
+    );
+}
+
+#[tokio::test]
+async fn imported_categories_and_uri_delimiters_survive_dav_serialization() {
+    let (_temp, pool, accounts, user, password, principal, calendar) = setup_create().await;
+    let feeds = ExternalFeedService::new_at(pool.clone(), SecretKey::generate(), 2000);
+    let feed = feeds
+        .create(
+            user,
+            false,
+            calendar,
+            NewFeed {
+                source_url: "https://feeds.example.test/metadata.ics".to_owned(),
+                refresh_interval_seconds: Some(60),
+            },
+        )
+        .await
+        .unwrap();
+    let body = vcalendar_with_properties(
+        "imported-metadata-uid",
+        "Imported metadata",
+        Some(r"one\,two,three"),
+    )
+    .replace("END:VEVENT", "URL:https://example.test/a,b;c\r\nEND:VEVENT");
+    feeds
+        .refresh(user, false, feed.id, &FixedFetcher { body })
+        .await
+        .unwrap();
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (status, body) = report_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&body);
+    let content = &root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0].text;
+    let parsed = parse_calendar(content, IcsParserLimits::default()).unwrap();
+    assert_eq!(parsed.events[0].categories, ["one,two", "three"]);
+    assert!(content.contains("URL:https://example.test/a,b;c\r\n"));
+    let token = extract_sync_token(&body).unwrap();
+    sqlx::query("DELETE FROM caldav_event_properties WHERE event_id IN (SELECT event_id FROM external_event_mapping WHERE feed_id=?)").bind(feed.id).execute(&pool).await.unwrap();
+    let unchanged = vcalendar_with_properties(
+        "imported-metadata-uid",
+        "Imported metadata",
+        Some(r"one\,two,three"),
+    )
+    .replace("END:VEVENT", "URL:https://example.test/a,b;c\r\nEND:VEVENT");
+    feeds
+        .refresh(user, false, feed.id, &FixedFetcher { body: unchanged })
+        .await
+        .unwrap();
+    let (status, delta) = report_request(
+        build_caldav_router(accounts),
+        &uri,
+        "owner@example.test",
+        &password,
+        &sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&delta);
+    assert_eq!(
+        root.descendants("DAV:", "response").len(),
+        1,
+        "unchanged imported source must restore missing metadata and emit sync change"
+    );
+    let content = &root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0].text;
+    assert_eq!(
+        parse_calendar(content, IcsParserLimits::default())
+            .unwrap()
+            .events[0]
+            .categories,
+        ["one,two", "three"]
+    );
+    assert!(content.contains("URL:https://example.test/a,b;c\r\n"));
 }

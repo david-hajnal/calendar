@@ -64,8 +64,7 @@ async fn guard_duplicate_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .await?;
 
         if rows > 0 {
-            return Err(sqlx::Error::Configuration(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(sqlx::Error::Configuration(Box::new(std::io::Error::other(
                 format!(
                     "refusing to migrate: table {table} holds {rows} row(s); \
                      reconcile with CommonCal core and remove the data before upgrading"

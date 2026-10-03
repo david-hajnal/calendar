@@ -469,23 +469,6 @@ impl AppState {
         grant_id
     }
 
-    /// Get the active grant for (user_id, oauth_client_id), if any.
-    async fn get_active_grant(&self, user_id: i64, oauth_client_id: &str) -> Option<McpGrant> {
-        let st = self.inner.read().await;
-        st.grants
-            .values()
-            .find(|g| {
-                g.user_id == user_id
-                    && g.oauth_client_id == oauth_client_id
-                    && g.revoked_at.is_none()
-                    && g.scopes.iter().any(|s| {
-                        s == "commoncal.calendar.metadata.read"
-                            || s == "commoncal.availability.read"
-                    })
-            })
-            .cloned()
-    }
-
     /// Get the active grant for (user_id, oauth_client_id) regardless of scope.
     async fn get_grant_by_pair(&self, user_id: i64, oauth_client_id: &str) -> Option<McpGrant> {
         let st = self.inner.read().await;
@@ -665,6 +648,10 @@ impl AppState {
     }
 
     /// Test hook: add an event. Returns the new event id.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Lab helper mirrors the event request fields"
+    )]
     async fn test_add_event(
         &self,
         calendar_id: i64,
@@ -700,6 +687,10 @@ impl AppState {
     // -- Slice 7: mutation methods ------------------------------------------
 
     /// Create an event. Returns (event, was_idempotent_replay).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Lab helper mirrors the event request fields"
+    )]
     async fn create_event(
         &self,
         calendar_id: i64,
@@ -711,12 +702,11 @@ impl AppState {
         idempotency_key: Option<&str>,
     ) -> Result<(Event, bool), String> {
         let mut st = self.inner.write().await;
-        if let Some(key) = idempotency_key {
-            if let Some(&existing_id) = st.idempotency_keys.get(key) {
-                if let Some(ev) = st.events.get(&existing_id) {
-                    return Ok((ev.clone(), true));
-                }
-            }
+        if let Some(key) = idempotency_key
+            && let Some(&existing_id) = st.idempotency_keys.get(key)
+            && let Some(ev) = st.events.get(&existing_id)
+        {
+            return Ok((ev.clone(), true));
         }
         let id = st.next_event_id;
         st.next_event_id += 1;
@@ -740,6 +730,10 @@ impl AppState {
     }
 
     /// Update an event with optimistic concurrency. Returns the updated event.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Lab helper mirrors the event request fields"
+    )]
     async fn update_event(
         &self,
         calendar_id: i64,

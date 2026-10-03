@@ -201,14 +201,14 @@ impl Config {
                 ));
             }
 
-            if raw.mcp_domain.as_ref().map_or(true, |d| d.is_empty()) {
+            if raw.mcp_domain.as_ref().is_none_or(|d| d.is_empty()) {
                 errors.push(ConfigError::new("MCP_DOMAIN is required in production"));
             }
 
             if raw
                 .public_resource_url
                 .as_ref()
-                .map_or(true, |u| u.is_empty())
+                .is_none_or(|u| u.is_empty())
             {
                 errors.push(ConfigError::new(
                     "MCP_PUBLIC_RESOURCE_URL is required in production",
@@ -237,7 +237,7 @@ impl Config {
                     }
                     if parsed
                         .host_str()
-                        .map_or(false, |h| h.contains("commoncal.tld"))
+                        .is_some_and(|h| h.contains("commoncal.tld"))
                     {
                         errors.push(ConfigError::new(
                             "MCP_PUBLIC_RESOURCE_URL must not contain placeholder domain 'commoncal.tld'",

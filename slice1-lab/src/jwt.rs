@@ -124,7 +124,7 @@ fn jwk_to_decoding_key(jwk: &Value) -> Result<DecodingKey, JwtError> {
         .decode(e)
         .map_err(|err| JwtError::Jwks(format!("bad e: {err}")))?;
 
-    let key_size_bytes = ((n_bytes.len() + 127) / 128) * 128;
+    let key_size_bytes = n_bytes.len().div_ceil(128) * 128;
     let n_padded = if n_bytes.len() < key_size_bytes {
         let mut padded = vec![0u8; key_size_bytes - n_bytes.len()];
         padded.extend_from_slice(&n_bytes);

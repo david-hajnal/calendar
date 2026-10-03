@@ -55,7 +55,7 @@ use slice1_lab::jwt::{self, JwtError};
 struct CurrentClaims {
     user_id: i64,
     client_id: String,
-    scopes: Vec<String>,
+    _scopes: Vec<String>,
 }
 
 static CURRENT_CLAIMS: LazyLock<RwLock<Option<CurrentClaims>>> =
@@ -87,14 +87,14 @@ static ECHO_HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
 
 #[derive(Clone)]
 struct CommonCalEcho {
-    tool_router: ToolRouter<CommonCalEcho>,
+    _tool_router: ToolRouter<CommonCalEcho>,
 }
 
 #[tool_router]
 impl CommonCalEcho {
     pub fn new() -> Self {
         Self {
-            tool_router: Self::tool_router(),
+            _tool_router: Self::tool_router(),
         }
     }
 
@@ -158,7 +158,7 @@ impl CommonCalEcho {
         let calendars: Vec<serde_json::Value> = cal_body
             .get("calendars")
             .and_then(|v| v.as_array())
-            .map(|a| a.clone())
+            .cloned()
             .unwrap_or_default();
 
         // 3. Filter by the grant's allowed calendar IDs.
@@ -346,7 +346,7 @@ impl CommonCalEcho {
 
         let output_events: Vec<serde_json::Value> = if let Some(arr) = events.as_array() {
             if has_details {
-                arr.iter().cloned().collect()
+                arr.to_vec()
             } else {
                 arr.iter()
                     .map(|e| {
@@ -779,7 +779,7 @@ async fn auth_middleware(
                     *slot = Some(CurrentClaims {
                         user_id,
                         client_id,
-                        scopes,
+                        _scopes: scopes,
                     });
                 }
                 tracing::debug!(sub = %claims.sub, "mcp request authorized");

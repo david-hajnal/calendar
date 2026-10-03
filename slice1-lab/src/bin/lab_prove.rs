@@ -141,7 +141,7 @@ impl Ctx {
             .env("LAB_ISSUER", &self.cfg.issuer)
             .env("LAB_RESOURCE_URL", &self.cfg.resource_url)
             .env("LAB_MCP_ECHO", &self.cfg.mcp_echo)
-            .env("MCP_ECHO_COMMONCAL", &self.commoncal_base())
+            .env("MCP_ECHO_COMMONCAL", self.commoncal_base())
             .env("MCP_ECHO_BRIDGE_KEY", "slice1-loopback-bridge-key")
             .spawn()
             .map_err(|e| format!("spawn mcp-echo: {e}"))?;
@@ -258,6 +258,10 @@ async fn dcr_register(ctx: &Ctx, redirect: &str) -> Result<(String, Value), Stri
 ///
 /// `decision` is "approve" or "deny". Returns (code, state) on approve;
 /// returns Err on deny (the callback carries an error, not a code).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Lab helper mirrors OAuth authorization request fields"
+)]
 async fn authorize(
     ctx: &Ctx,
     client_id: &str,
@@ -528,13 +532,12 @@ fn parse_mcp_body(content_type: &str, body: &str) -> Value {
             if data.is_empty() {
                 continue;
             }
-            if let Ok(v) = serde_json::from_str::<Value>(data) {
-                if v.get("jsonrpc").is_some()
+            if let Ok(v) = serde_json::from_str::<Value>(data)
+                && (v.get("jsonrpc").is_some()
                     || v.get("result").is_some()
-                    || v.get("error").is_some()
-                {
-                    return v;
-                }
+                    || v.get("error").is_some())
+            {
+                return v;
             }
         }
         Value::Null
@@ -748,7 +751,7 @@ async fn cc_all_grants(ctx: &Ctx, user_id: i64) -> Result<Vec<Value>, String> {
     Ok(body
         .get("grants")
         .and_then(|v| v.as_array())
-        .map(|a| a.clone())
+        .cloned()
         .unwrap_or_default())
 }
 
@@ -1760,7 +1763,7 @@ async fn slice2_approve(ctx: &mut Ctx) {
     }
 
     // S2-4: Scope intersection — the grant's scopes must NOT include the evil scope.
-    if let Some(resp) = ctx
+    if let Ok(resp) = ctx
         .http
         .get(format!(
             "{base}/internal/grant?user_id=1&client_id={}",
@@ -1769,31 +1772,29 @@ async fn slice2_approve(ctx: &mut Ctx) {
         .header("Authorization", "Bearer slice1-loopback-bridge-key")
         .send()
         .await
-        .ok()
+        && resp.status().is_success()
     {
-        if resp.status().is_success() {
-            let grant_body: Value = resp.json().await.unwrap_or(Value::Null);
-            let granted: Vec<String> = grant_body
-                .pointer("/grant/scopes")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let evil_absent = !granted.iter().any(|s| s == EVIL_SCOPE);
-            let catalog_present = granted
-                .iter()
-                .any(|s| s == "commoncal.calendar.metadata.read");
-            if evil_absent && catalog_present {
-                ctx.ok(
-                    "S2-4",
-                    &format!("scope intersection ok: {granted:?} (evil dropped, catalog kept)"),
-                );
-            } else {
-                ctx.bad("S2-4", &format!("scope intersection wrong: evil_absent={evil_absent} catalog_present={catalog_present} granted={granted:?}"));
-            }
+        let grant_body: Value = resp.json().await.unwrap_or(Value::Null);
+        let granted: Vec<String> = grant_body
+            .pointer("/grant/scopes")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let evil_absent = !granted.iter().any(|s| s == EVIL_SCOPE);
+        let catalog_present = granted
+            .iter()
+            .any(|s| s == "commoncal.calendar.metadata.read");
+        if evil_absent && catalog_present {
+            ctx.ok(
+                "S2-4",
+                &format!("scope intersection ok: {granted:?} (evil dropped, catalog kept)"),
+            );
+        } else {
+            ctx.bad("S2-4", &format!("scope intersection wrong: evil_absent={evil_absent} catalog_present={catalog_present} granted={granted:?}"));
         }
     }
 
@@ -4286,7 +4287,7 @@ async fn slice7_prove(ctx: &mut Ctx) {
 
     // S8-1: create delete intent via internal API
     let base = ctx.commoncal_base();
-    let bridge_key = "slice1-loopback-bridge-key";
+    let _bridge_key = "slice1-loopback-bridge-key";
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

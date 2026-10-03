@@ -3,40 +3,17 @@
 // Fixed-window rate limiter for MCP tools.
 // Slice 14 will implement real rate limiting.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-#[derive(Clone)]
-pub struct RateLimiter {
-    inner: Option<Arc<InnerLimiter>>,
-}
-
-struct InnerLimiter {
-    limiter: Mutex<FixedWindowLimiter>,
-}
-
-struct FixedWindowLimiter {
-    windows: HashMap<String, WindowCount>,
-}
-
-struct WindowCount {
-    count: u64,
-    window_start: i64,
-}
+// No state is needed until real rate limiting is implemented.
+#[derive(Clone, Default)]
+pub struct RateLimiter;
 
 impl RateLimiter {
     pub fn new() -> Self {
-        Self {
-            inner: Some(Arc::new(InnerLimiter {
-                limiter: Mutex::new(FixedWindowLimiter {
-                    windows: HashMap::new(),
-                }),
-            })),
-        }
+        Self
     }
 
     pub fn disabled() -> Self {
-        Self { inner: None }
+        Self
     }
 
     /// Check if a request is allowed under the rate limit.

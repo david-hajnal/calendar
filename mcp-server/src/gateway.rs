@@ -48,25 +48,28 @@ impl Gateway {
     /// Extract the OAuth bearer token from the request Authorization header.
     fn extract_bearer_token(
         headers: &axum::http::HeaderMap,
-    ) -> Result<String, axum::http::Response<axum::body::Body>> {
+    ) -> Result<String, Box<axum::http::Response<axum::body::Body>>> {
         let auth_header = headers
             .get(axum::http::header::AUTHORIZATION)
-            .ok_or_else(|| unauthorized_response(None, "missing authorization header"))?;
+            .ok_or_else(|| Box::new(unauthorized_response(None, "missing authorization header")))?;
 
-        let auth_str = auth_header
-            .to_str()
-            .map_err(|_| unauthorized_response(None, "invalid authorization header encoding"))?;
+        let auth_str = auth_header.to_str().map_err(|_| {
+            Box::new(unauthorized_response(
+                None,
+                "invalid authorization header encoding",
+            ))
+        })?;
 
         if !auth_str.starts_with("Bearer ") {
-            return Err(unauthorized_response(
+            return Err(Box::new(unauthorized_response(
                 None,
                 "authorization must use Bearer scheme",
-            ));
+            )));
         }
 
         let token = &auth_str[7..];
         if token.is_empty() {
-            return Err(unauthorized_response(None, "empty bearer token"));
+            return Err(Box::new(unauthorized_response(None, "empty bearer token")));
         }
 
         Ok(token.to_string())
@@ -137,7 +140,7 @@ impl Gateway {
                 tracing::error!(error = %e, "failed to read request body");
                 return axum::http::Response::builder()
                     .status(axum::http::StatusCode::BAD_REQUEST)
-                    .body(axum::body::Body::from(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}"#).into())
+                    .body(axum::body::Body::from(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}"#))
                     .unwrap();
             }
         };
@@ -148,7 +151,7 @@ impl Gateway {
                 tracing::error!(error = %e, "failed to parse MCP message");
                 return axum::http::Response::builder()
                     .status(axum::http::StatusCode::BAD_REQUEST)
-                    .body(axum::body::Body::from(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}"#).into())
+                    .body(axum::body::Body::from(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"parse error"}}"#))
                     .unwrap();
             }
         };
@@ -165,20 +168,17 @@ impl Gateway {
                 tracing::warn!(method = %method, "unknown MCP method");
                 axum::http::Response::builder()
                     .status(axum::http::StatusCode::BAD_REQUEST)
-                    .body(
-                        axum::body::Body::from(
-                            serde_json::to_string(&serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": message.get("id"),
-                                "error": {
-                                    "code": -32601,
-                                    "message": format!("Method not found: {}", method),
-                                },
-                            }))
-                            .unwrap(),
-                        )
-                        .into(),
-                    )
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "error": {
+                                "code": -32601,
+                                "message": format!("Method not found: {}", method),
+                            },
+                        }))
+                        .unwrap(),
+                    ))
                     .unwrap()
             }
         }
@@ -187,7 +187,7 @@ impl Gateway {
     /// Handle tools/list — return the full tool catalog with all nine tools.
     async fn handle_tools_list(
         &self,
-        message: &serde_json::Value,
+        _message: &serde_json::Value,
     ) -> axum::http::Response<axum::body::Body> {
         let tools = tools::list_tools();
         let tools_array: Vec<serde_json::Value> = tools
@@ -240,7 +240,7 @@ impl Gateway {
         // Extract and validate bearer token
         let token = match Self::extract_bearer_token(headers) {
             Ok(t) => t,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
 
         // Validate token
@@ -432,14 +432,6 @@ impl Gateway {
                 "failed to record MCP audit"
             );
         }
-    }
-
-    async fn handle_calendar_list(
-        &self,
-        message: &serde_json::Value,
-    ) -> axum::http::Response<axum::body::Body> {
-        // Delegated to tools/call handler
-        self.handle_tools_list(message).await
     }
 }
 

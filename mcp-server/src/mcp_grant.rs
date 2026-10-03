@@ -59,10 +59,10 @@ pub fn check_calendar_access(grant: &McpGrant, calendar_id: i64) -> bool {
     if grant.revoked_at.is_some() {
         return false;
     }
-    if let Some(expires_at) = grant.expires_at {
-        if current_time_secs() > expires_at {
-            return false;
-        }
+    if let Some(expires_at) = grant.expires_at
+        && current_time_secs() > expires_at
+    {
+        return false;
     }
     grant.allowed_calendar_ids.contains(&calendar_id)
 }
@@ -77,10 +77,10 @@ pub fn check_tool_permission(grant: &McpGrant, tool_name: &str) -> bool {
     if grant.revoked_at.is_some() {
         return false;
     }
-    if let Some(expires_at) = grant.expires_at {
-        if current_time_secs() > expires_at {
-            return false;
-        }
+    if let Some(expires_at) = grant.expires_at
+        && current_time_secs() > expires_at
+    {
+        return false;
     }
     match tool_name {
         "availability_find" | "availability_get" => grant.allow_availability,

@@ -1,15 +1,4 @@
-mod audit;
-mod config;
-mod db;
-mod error;
-mod gateway;
-mod internal_client;
-mod mcp_grant;
-mod oauth;
-mod output_schema;
-mod rate_limiter;
-mod security;
-mod tools;
+use mcp_server::{config, db, gateway};
 
 use axum::{
     Router,

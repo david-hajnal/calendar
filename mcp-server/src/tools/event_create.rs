@@ -45,12 +45,12 @@ pub fn validate_create_input(params: &EventCreateParams) -> Result<(), ToolError
         ));
     }
 
-    if let Some(ref desc) = params.description {
-        if desc.len() > 10000 {
-            return Err(ToolError::BadRequest(
-                "event description exceeds 10000 character limit".to_string(),
-            ));
-        }
+    if let Some(ref desc) = params.description
+        && desc.len() > 10000
+    {
+        return Err(ToolError::BadRequest(
+            "event description exceeds 10000 character limit".to_string(),
+        ));
     }
 
     Ok(())

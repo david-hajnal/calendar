@@ -24,14 +24,19 @@ struct JwtHeader {
 /// Parsed JWT claims from the MCP access token.
 #[derive(Debug, Deserialize)]
 struct TokenClaims {
-    sub: String,
-    iss: String,
-    aud: serde_json::Value,
+    #[serde(rename = "sub")]
+    _sub: String,
+    #[serde(rename = "iss")]
+    _iss: String,
+    #[serde(rename = "aud")]
+    _aud: serde_json::Value,
     exp: usize,
     iat: usize,
-    azp: Option<String>,
+    #[serde(rename = "azp")]
+    _azp: Option<String>,
     auth_time: Option<usize>,
-    auth_method: Option<String>,
+    #[serde(rename = "auth_method")]
+    _auth_method: Option<String>,
     client_id: Option<String>,
     #[serde(rename = "https://commoncal.tld/auth_strength")]
     auth_strength: Option<String>,
@@ -42,7 +47,7 @@ struct TokenClaims {
     #[serde(rename = "https://commoncal.tlp/token_id")]
     token_id: Option<String>,
     #[serde(rename = "https://commoncal.tld/resource")]
-    resource: Option<String>,
+    _resource: Option<String>,
 }
 
 /// Result of OAuth token validation.
@@ -101,7 +106,7 @@ struct Jwk {
     kty: String,
     alg: String,
     #[serde(rename = "use")]
-    key_use: String,
+    _key_use: String,
     n: String,
     e: String,
     kid: String,
@@ -135,10 +140,10 @@ pub async fn validate_access_token(
     let jwk = find_jwk(&jwks, &header.kid)?;
 
     // Convert the JWK to a DecodingKey.
-    let decoding_key = jwk_to_decoding_key(&jwk)?;
+    let decoding_key = jwk_to_decoding_key(jwk)?;
 
     // Build validation rules.
-    let mut validation = Validation::new(alg_from_jwk(&jwk)?);
+    let mut validation = Validation::new(alg_from_jwk(jwk)?);
     validation.set_issuer(&[issuer]);
     let audience = extract_audience(resource);
     validation.set_audience(&[&audience]);
@@ -197,7 +202,7 @@ pub async fn validate_access_token(
 /// 4. Proof payload `jti` has not been seen before
 /// 5. Proof signature verifies against the public key in `dpop_jkt` header
 /// 6. Proof is not expired (nonce is returned in the response)
-pub async fn validate_dpop_proof(token: &str, proof: &str, nonce: &str) -> Result<(), TokenError> {
+pub async fn validate_dpop_proof(_token: &str, proof: &str, nonce: &str) -> Result<(), TokenError> {
     // Validate proof format: must have 3 parts.
     let parts: Vec<&str> = proof.split('.').collect();
     if parts.len() != 3 {
@@ -218,7 +223,8 @@ pub async fn validate_dpop_proof(token: &str, proof: &str, nonce: &str) -> Resul
         jwk: Option<serde_json::Value>,
         #[serde(default)]
         alg: Option<String>,
-        kid: Option<String>,
+        #[serde(rename = "kid")]
+        _kid: Option<String>,
     }
 
     let dpop_header: DpopHeader =
@@ -268,9 +274,12 @@ pub async fn validate_dpop_proof(token: &str, proof: &str, nonce: &str) -> Resul
 
     #[derive(serde::Deserialize)]
     struct DpopClaims {
-        jti: String,
-        htm: String,
-        htu: String,
+        #[serde(rename = "jti")]
+        _jti: String,
+        #[serde(rename = "htm")]
+        _htm: String,
+        #[serde(rename = "htu")]
+        _htu: String,
         exp: usize,
     }
 
@@ -305,7 +314,7 @@ pub async fn validate_dpop_proof(token: &str, proof: &str, nonce: &str) -> Resul
 ///
 /// Fetches `/.well-known/oauth-jwks` from the issuer URL.
 /// Caches the result to avoid repeated network calls.
-pub async fn load_jwks(issuer: &str) -> Result<JwksDocument, TokenError> {
+async fn load_jwks(issuer: &str) -> Result<JwksDocument, TokenError> {
     let jwks_url = format!("{}/.well-known/oauth-jwks", issuer);
 
     // Validate URL to prevent SSRF.
@@ -453,7 +462,7 @@ fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey, TokenError> {
         .map_err(|_| TokenError::InvalidToken("invalid RSA exponent encoding".to_string()))?;
 
     // Pad modulus to next standard RSA key size (multiple of 128 bytes).
-    let key_size_bytes = ((n_bytes.len() + 127) / 128) * 128;
+    let key_size_bytes = n_bytes.len().div_ceil(128) * 128;
     let n_padded = if n_bytes.len() < key_size_bytes {
         let mut padded = vec![0u8; key_size_bytes - n_bytes.len()];
         padded.extend_from_slice(&n_bytes);
@@ -751,9 +760,9 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use rsa::RsaPrivateKey;
         use rsa::pkcs1v15::SigningKey;
-        use rsa::pkcs1v15::VerifyingKey;
+
         use rsa::signature::Signer;
-        use rsa::signature::Verifier;
+
         use rsa::traits::PublicKeyParts;
 
         let rt = tokio::runtime::Runtime::new().unwrap();

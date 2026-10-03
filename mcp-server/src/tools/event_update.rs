@@ -49,24 +49,22 @@ pub fn validate_update_input(params: &EventUpdateParams) -> Result<(), ToolError
         }
     }
 
-    if let Some(ref desc) = params.description {
-        if let Some(ref d) = *desc {
-            if d.len() > 10000 {
-                return Err(ToolError::BadRequest(
-                    "event description exceeds 10000 character limit".to_string(),
-                ));
-            }
-        }
+    if let Some(ref desc) = params.description
+        && let Some(ref d) = *desc
+        && d.len() > 10000
+    {
+        return Err(ToolError::BadRequest(
+            "event description exceeds 10000 character limit".to_string(),
+        ));
     }
 
-    if let Some(ref loc) = params.location {
-        if let Some(ref l) = *loc {
-            if l.len() > 1024 {
-                return Err(ToolError::BadRequest(
-                    "event location exceeds 1024 character limit".to_string(),
-                ));
-            }
-        }
+    if let Some(ref loc) = params.location
+        && let Some(ref l) = *loc
+        && l.len() > 1024
+    {
+        return Err(ToolError::BadRequest(
+            "event location exceeds 1024 character limit".to_string(),
+        ));
     }
 
     Ok(())

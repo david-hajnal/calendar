@@ -2354,7 +2354,9 @@ fn client_key_from_request(request: &Request) -> String {
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(',').next())
-        .map(|v| v.trim().to_string())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned)
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
@@ -2366,21 +2368,22 @@ async fn authenticate_dav_request(
     request: Request,
 ) -> Result<(DavSession, Request), Response> {
     let authorization = request.headers().get(header::AUTHORIZATION).cloned();
-    let Some(authorization) = authorization else {
-        accounts.metrics().record_unauthorized();
-        return Err(dav_unauthorized());
-    };
     let client_key = client_key_from_request(&request);
-    if let Err((retry_after, _)) = accounts.check_auth_rate_limit(&client_key) {
-        return Err(dav_rate_limited(retry_after));
-    }
-    match accounts.authenticate(&authorization).await {
+    match accounts
+        .authenticate_limited(&client_key, authorization.as_ref())
+        .await
+    {
         Ok(session) => {
             accounts.record_auth_success();
             Ok((session, request))
         }
+        Err((retry_after, CaldavAuthError::RateLimited)) => Err(dav_rate_limited(retry_after)),
         Err(_) => {
-            accounts.record_auth_failure();
+            if authorization.is_some() {
+                accounts.record_auth_failure();
+            } else {
+                accounts.metrics().record_unauthorized();
+            }
             Err(dav_unauthorized())
         }
     }
@@ -4661,6 +4664,304 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    fn auth_test_router(accounts: CaldavAccountService) -> Router {
+        crate::http::apply_shared_middleware(
+            build_caldav_router(accounts),
+            crate::http::AccessLogConfig::new(tracing::level_filters::LevelFilter::OFF),
+            crate::http::ResponseSecurityConfig::local_http(),
+        )
+    }
+
+    async fn limited_request(
+        app: Router,
+        authorization: Option<HeaderValue>,
+        client: Option<HeaderValue>,
+        path: &str,
+    ) -> Response {
+        let mut request = Request::builder()
+            .method("PROPFIND")
+            .uri(path)
+            .header("depth", "0");
+        if let Some(authorization) = authorization {
+            request = request.header(header::AUTHORIZATION, authorization);
+        }
+        if let Some(client) = client {
+            request = request.header("x-forwarded-for", client);
+        }
+        let response = app
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert!(response.headers().contains_key("x-request-id"));
+        response
+    }
+
+    #[tokio::test]
+    async fn dav_auth_valid_discovery_and_two_initial_reports_exceed_ten_requests() {
+        let (db, accounts, owner_id, password, principal, first, _, _) =
+            setup_owner_with_calendars().await;
+        let second = db
+            .insert_calendar(owner_id, "Personal", "#ffffff", false)
+            .await;
+        let app = auth_test_router(accounts.clone());
+        let auth = basic_header("owner@example.test", &password);
+        let paths = [
+            "/dav/".to_owned(),
+            format!("/dav/principals/{principal}/"),
+            format!("/dav/calendars/{principal}/"),
+            format!("/dav/calendars/{principal}/{first}/"),
+            format!("/dav/calendars/{principal}/{second}/"),
+        ];
+        // Three discovery passes put both initial REPORTs beyond the old cap.
+        for _ in 0..3 {
+            for path in &paths {
+                assert_eq!(
+                    limited_request(app.clone(), Some(auth.clone()), None, path)
+                        .await
+                        .status(),
+                    StatusCode::MULTI_STATUS,
+                    "PROPFIND {path}",
+                );
+            }
+        }
+        for path in &paths[3..] {
+            let request = Request::builder()
+                .method("REPORT")
+                .uri(path)
+                .header(header::AUTHORIZATION, auth.clone())
+                .header(header::CONTENT_TYPE, "application/xml")
+                .header("depth", "0")
+                .body(Body::from(r#"<D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>"#))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::MULTI_STATUS, "REPORT {path}");
+            assert!(response.headers().contains_key("x-request-id"));
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            assert!(String::from_utf8_lossy(&body).contains("<D:sync-token>"));
+        }
+        assert_eq!(accounts.metrics().rate_limited(), 0);
+        assert_eq!(accounts.metrics().auth_failures(), 0);
+    }
+
+    #[tokio::test]
+    async fn dav_auth_failure_window_expires_on_same_instance_and_success_does_not_reset_it() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicI64, Ordering},
+        };
+        let (_db, accounts, _, password, _, _, _, _) = setup_owner_with_calendars().await;
+        let now = Arc::new(AtomicI64::new(1000));
+        let clock = now.clone();
+        let accounts = accounts.with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
+        let app = auth_test_router(accounts);
+        let good = basic_header("owner@example.test", &password);
+        let bad = basic_header("owner@example.test", "wrong");
+        for index in 0..10 {
+            assert_eq!(
+                limited_request(app.clone(), Some(bad.clone()), None, "/dav/")
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+            // Only interleave success while the key has budget remaining.
+            if index < 9 {
+                assert_eq!(
+                    limited_request(app.clone(), Some(good.clone()), None, "/dav/")
+                        .await
+                        .status(),
+                    StatusCode::MULTI_STATUS
+                );
+            }
+        }
+        for auth in [Some(good.clone()), Some(bad), None] {
+            let response = limited_request(app.clone(), auth, None, "/dav/").await;
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+        }
+        now.store(1059, Ordering::SeqCst);
+        let response = limited_request(app.clone(), Some(good.clone()), None, "/dav/").await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        now.store(1060, Ordering::SeqCst);
+        assert_eq!(
+            limited_request(app.clone(), Some(good.clone()), None, "/dav/")
+                .await
+                .status(),
+            StatusCode::MULTI_STATUS
+        );
+        now.store(1121, Ordering::SeqCst);
+        assert_eq!(
+            limited_request(app, Some(good), None, "/dav/")
+                .await
+                .status(),
+            StatusCode::MULTI_STATUS
+        );
+    }
+
+    #[tokio::test]
+    async fn dav_auth_missing_is_free_malformed_counts_and_unknown_keys_are_shared() {
+        let (_db, accounts, _, password, principal, _, _, _) = setup_owner_with_calendars().await;
+        let app = auth_test_router(accounts);
+        let good = basic_header("owner@example.test", &password);
+        for _ in 0..15 {
+            assert_eq!(
+                limited_request(app.clone(), None, None, "/dav/")
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert_eq!(
+            limited_request(app.clone(), Some(good.clone()), None, "/dav/")
+                .await
+                .status(),
+            StatusCode::MULTI_STATUS
+        );
+        for index in 0..10 {
+            let malformed = ["Bearer abc", "Basic !!!", "Basic bm9jb2xvbg=="][index % 3];
+            let client = match index % 3 {
+                0 => None,
+                1 => Some(HeaderValue::from_static(" , 2.2.2.2")),
+                _ => Some(HeaderValue::from_bytes(&[0xff]).unwrap()),
+            };
+            assert_eq!(
+                limited_request(
+                    app.clone(),
+                    Some(HeaderValue::from_static(malformed)),
+                    client,
+                    "/dav/"
+                )
+                .await
+                .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        // Shared fallback budget also covers other users and paths.
+        assert_eq!(
+            limited_request(
+                app.clone(),
+                Some(basic_header("other@example.test", "wrong")),
+                None,
+                &format!("/dav/principals/{principal}/")
+            )
+            .await
+            .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            limited_request(
+                app.clone(),
+                Some(good.clone()),
+                Some(HeaderValue::from_static("3.3.3.3, 9.9.9.9")),
+                "/dav/"
+            )
+            .await
+            .status(),
+            StatusCode::MULTI_STATUS
+        );
+        for _ in 0..10 {
+            assert_eq!(
+                limited_request(
+                    app.clone(),
+                    Some(HeaderValue::from_static("Basic !!!")),
+                    Some(HeaderValue::from_static("3.3.3.3, 8.8.8.8")),
+                    "/dav/"
+                )
+                .await
+                .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert_eq!(
+            limited_request(
+                app.clone(),
+                Some(good.clone()),
+                Some(HeaderValue::from_static(" 3.3.3.3 ")),
+                "/dav/"
+            )
+            .await
+            .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            limited_request(
+                app,
+                Some(good),
+                Some(HeaderValue::from_static("4.4.4.4")),
+                "/dav/"
+            )
+            .await
+            .status(),
+            StatusCode::MULTI_STATUS
+        );
+    }
+
+    #[tokio::test]
+    async fn dav_auth_concurrent_valid_requests_are_free_and_failures_are_bounded() {
+        let (_db, accounts, _, password, _, _, _, _) = setup_owner_with_calendars().await;
+        let app = auth_test_router(accounts.clone());
+        let good = basic_header("owner@example.test", &password);
+        let responses = futures_util::future::join_all(
+            (0..24).map(|_| limited_request(app.clone(), Some(good.clone()), None, "/dav/")),
+        )
+        .await;
+        assert!(
+            responses
+                .iter()
+                .all(|response| response.status() == StatusCode::MULTI_STATUS)
+        );
+        // A syntactically valid token reaches asynchronous credential lookup,
+        // ensuring concurrent requests contend while verification is in flight.
+        let bad = basic_header("owner@example.test", &"A".repeat(43));
+        let responses = futures_util::future::join_all(
+            (0..24).map(|_| limited_request(app.clone(), Some(bad.clone()), None, "/dav/")),
+        )
+        .await;
+        assert_eq!(
+            responses
+                .iter()
+                .filter(|response| response.status() == StatusCode::UNAUTHORIZED)
+                .count(),
+            10
+        );
+        assert_eq!(
+            responses
+                .iter()
+                .filter(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+                .count(),
+            14
+        );
+        for response in responses
+            .iter()
+            .filter(|response| response.status() == StatusCode::TOO_MANY_REQUESTS)
+        {
+            assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+        }
+        assert_eq!(accounts.metrics().auth_failures(), 10);
+        assert_eq!(
+            limited_request(app, Some(good), None, "/dav/")
+                .await
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn dav_auth_persistence_errors_do_not_consume_credential_failure_budget() {
+        let (db, accounts, _, password, _, _, _, _) = setup_owner_with_calendars().await;
+        let app = auth_test_router(accounts);
+        let good = basic_header("owner@example.test", &password);
+        db.pool.close().await;
+        for _ in 0..12 {
+            assert_eq!(
+                limited_request(app.clone(), Some(good.clone()), None, "/dav/")
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
     }
 
     // ── T18: Production hardening tests ──────────────────────────────────────

@@ -1,5 +1,6 @@
 use std::{
-    sync::Arc,
+    collections::HashMap,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,7 +20,6 @@ use crate::{
             CredentialMetadata, DavSession, IssuedCredential, PrincipalInfo,
         },
     },
-    rate_limiter::FixedWindowRateLimiter,
     security::{SecretKey, SecretToken, TokenDomain},
 };
 
@@ -44,8 +44,16 @@ pub struct CaldavAccountService {
     key: SecretKey,
     public_origin: Url,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
-    auth_rate_limiter: Arc<FixedWindowRateLimiter>,
+    auth_buckets: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<AuthFailureBucket>>>>>,
     metrics: Arc<CaldavMetrics>,
+}
+
+/// Per-client lock serializes admission and credential verification. Successful
+/// requests never reserve budget; concurrent failures cannot overshoot the cap.
+#[derive(Default)]
+struct AuthFailureBucket {
+    window_started_at: i64,
+    failures: u32,
 }
 
 impl CaldavAccountService {
@@ -61,15 +69,53 @@ impl CaldavAccountService {
         &self.metrics
     }
 
-    /// Check the DAV auth rate limit for a client key (typically the IP).
-    /// Returns `Err((retry_after, error))` when the limit is exceeded.
-    pub fn check_auth_rate_limit(&self, client_key: &str) -> Result<(), (i64, CaldavAuthError)> {
-        let (allowed, retry_after) = self.auth_rate_limiter.check_by_key(client_key);
-        if !allowed {
-            self.metrics.record_rate_limited();
-            return Err((retry_after, CaldavAuthError::RateLimited));
+    /// Missing credentials are a free discovery challenge, unless already blocked.
+    /// Success does not clear failures. Infrastructure errors do not spend budget.
+    /// The tenth failure receives 401; subsequent requests receive 429 until expiry.
+    pub async fn authenticate_limited(
+        &self,
+        client_key: &str,
+        authorization: Option<&HeaderValue>,
+    ) -> Result<DavSession, (i64, CaldavAuthError)> {
+        let bucket = {
+            let now = self.now();
+            let mut buckets = self.auth_buckets.lock().unwrap();
+            // Never evict a lock with active or queued requests: doing so would
+            // create a second lock for the same client and bypass serialization.
+            buckets.retain(|_, bucket| {
+                Arc::strong_count(bucket) > 1
+                    || bucket.try_lock().map_or(true, |state| {
+                        state.failures > 0
+                            && now - state.window_started_at < DAV_AUTH_WINDOW_SECONDS
+                    })
+            });
+            buckets.entry(client_key.to_owned()).or_default().clone()
+        };
+        let mut state = bucket.lock().await;
+        let now = self.now();
+        if now - state.window_started_at >= DAV_AUTH_WINDOW_SECONDS {
+            state.failures = 0;
         }
-        Ok(())
+        if state.failures >= DAV_AUTH_MAX_ATTEMPTS {
+            self.metrics.record_rate_limited();
+            return Err((
+                (DAV_AUTH_WINDOW_SECONDS - (now - state.window_started_at)).max(1),
+                CaldavAuthError::RateLimited,
+            ));
+        }
+        let Some(authorization) = authorization else {
+            return Err((0, CaldavAuthError::InvalidCredentials));
+        };
+        let result = self.authenticate(authorization).await;
+        if matches!(result, Err(CaldavAuthError::InvalidCredentials)) {
+            let now = self.now();
+            if state.failures == 0 || now - state.window_started_at >= DAV_AUTH_WINDOW_SECONDS {
+                state.window_started_at = now;
+                state.failures = 0;
+            }
+            state.failures += 1;
+        }
+        result.map_err(|error| (0, error))
     }
 
     /// Record a failed authentication attempt in metrics.
@@ -93,10 +139,7 @@ impl CaldavAccountService {
                     .expect("system clock is before Unix epoch")
                     .as_secs() as i64
             }),
-            auth_rate_limiter: Arc::new(FixedWindowRateLimiter::new(
-                DAV_AUTH_MAX_ATTEMPTS,
-                DAV_AUTH_WINDOW_SECONDS,
-            )),
+            auth_buckets: Arc::new(Mutex::new(HashMap::new())),
             metrics: Arc::new(CaldavMetrics::new()),
         }
     }
@@ -104,12 +147,13 @@ impl CaldavAccountService {
     pub fn new_at(pool: SqlitePool, key: SecretKey, public_origin: Url, now: i64) -> Self {
         let mut service = Self::new(pool, key, public_origin);
         service.clock = Arc::new(move || now);
-        service.auth_rate_limiter = Arc::new(FixedWindowRateLimiter::new_at(
-            DAV_AUTH_MAX_ATTEMPTS,
-            DAV_AUTH_WINDOW_SECONDS,
-            now,
-        ));
         service
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.clock = clock;
+        self
     }
 
     pub async fn status(&self, actor_user_id: i64) -> Result<ConnectionStatus, CaldavAuthError> {

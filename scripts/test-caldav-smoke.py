@@ -35,6 +35,11 @@ class SmokeTest(unittest.TestCase):
                     self.send_header('Location', 'https://elsewhere.invalid/dav/' if mode == 'unsafe' else '/dav/')
                     self.end_headers()
                     return
+                if mode == 'request-limiter' and len([r for r in requests if r[1].startswith('/dav/')]) > 10:
+                    self.send_response(429)
+                    self.send_header('Retry-After', '60')
+                    self.end_headers()
+                    return
                 props = '<D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>/dav/principals/1/</D:href></D:current-user-principal>'
                 if self.path == '/dav/principals/1/':
                     props = '<D:resourcetype><D:principal/></D:resourcetype><C:calendar-home-set><D:href>/dav/calendars/1/</D:href></C:calendar-home-set>'
@@ -49,6 +54,8 @@ class SmokeTest(unittest.TestCase):
                                       '<D:sync-token>urn:fixture:initial</D:sync-token>')
                     responses = ''.join('<D:response><D:href>/dav/calendars/1/' + str(index) + '/</D:href><D:propstat><D:prop>' + calendar_props + '</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>' for index in [1, 2])
                     payload = payload.replace(b'</D:multistatus>', responses.encode() + b'</D:multistatus>')
+                if self.path in ('/dav/calendars/1/1/', '/dav/calendars/1/2/') and self.command == 'PROPFIND':
+                    payload = ('<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:response><D:href>' + self.path + '</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:sync-token>urn:fixture:initial</D:sync-token></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>').encode()
                 if self.command == 'REPORT':
                     payload = b'<D:multistatus xmlns:D="DAV:"><D:sync-token>urn:fixture:complete</D:sync-token></D:multistatus>'
                 if mode == 'invalid':
@@ -78,8 +85,18 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(requests[1][2:], requests[2][2:])
         self.assertEqual(requests[2][3], '0')
         self.assertTrue(requests[2][4].startswith('Basic '))
-        self.assertEqual([r[:2] for r in requests[-2:]], [('REPORT', '/dav/calendars/1/1/'), ('REPORT', '/dav/calendars/1/2/')])
+        self.assertEqual([r[:2] for r in requests if r[0] == 'REPORT'], [('REPORT', '/dav/calendars/1/1/'), ('REPORT', '/dav/calendars/1/2/')])
+        first_report = next(index for index, r in enumerate(requests) if r[0] == 'REPORT')
+        self.assertGreater(len([r for r in requests[:first_report] if r[1].startswith('/dav/')]), 10)
+        for calendar in ('1', '2'):
+            self.assertIn(('PROPFIND', f'/dav/calendars/1/{calendar}/'), [r[:2] for r in requests])
         self.assertIn('(2 calendars)', result.stdout)
+
+    def test_old_request_limiter_is_detected(self):
+        result, requests = self.run_fixture('request-limiter')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('PROPFIND failed with status 429', result.stderr)
+        self.assertFalse(any(r[0] == 'REPORT' for r in requests))
 
     def test_unsafe_redirect_is_rejected_before_following(self):
         result, requests = self.run_fixture('unsafe')

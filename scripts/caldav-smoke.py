@@ -143,6 +143,11 @@ def main():
     home_result = propfind(home, [(DAV, "resourcetype"), (DAV, "current-user-principal"),
                                 (DAV, "supported-report-set"), (CAL, "supported-calendar-component-set"),
                                 (CAL, "supported-calendar-data"), (DAV, "sync-token"), (APPLE, "calendar-color")], 1)
+    # Normal two-calendar discovery used to stay below the ten-request auth
+    # cap. Force twelve authenticated DAV requests before any initial REPORT.
+    print("Checking authenticated discovery burst (12 root PROPFINDs)...", flush=True)
+    for _ in range(12):
+        xml_response(targets[1], "PROPFIND", discovery_body, 0)
     calendars = 0
     for item in home_result.findall(tag(DAV, "response")):
         resource_type = required(item, DAV, "resourcetype")
@@ -161,7 +166,12 @@ def main():
         href = item.findtext(tag(DAV, "href"))
         required(item, CAL, "supported-calendar-component-set")
         required(item, CAL, "supported-calendar-data")
-        token = required(item, DAV, "sync-token").text
+        collection = propfind(href, [(DAV, "resourcetype"), (DAV, "sync-token")])
+        collection_item = collection.find(tag(DAV, "response"))
+        if required(collection_item, DAV, "resourcetype").find(tag(CAL, "calendar")) is None:
+            raise ValueError("advertised calendar URL is not a calendar")
+        required(collection_item, DAV, "sync-token")
+        required(item, DAV, "sync-token")
         sync = ET.Element(tag(DAV, "sync-collection"))
         # Empty first snapshot is paged. Follow continuations until complete.
         ET.SubElement(sync, tag(DAV, "sync-token"))

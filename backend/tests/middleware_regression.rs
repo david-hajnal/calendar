@@ -18,7 +18,6 @@ use commoncal_backend::{
     security::{SecretKey, TokenDomain},
     sessions::{SessionManager, SessionSecurityConfig},
 };
-use http_body_util::BodyExt;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tower::ServiceExt;

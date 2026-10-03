@@ -295,11 +295,10 @@ fi
 echo "==> Ensuring TLS secret '$NAMESPACE/$TLS_SECRET_NAME'..."
 ensure_tls_secret
 
-echo "==> Applying core secret '$NAMESPACE/commoncal-session'..."
-kubectl create secret generic commoncal-session \
-  --from-literal=SESSION_SECRET="$SESSION_SECRET" \
-  --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
-  -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+source "$DEPLOY_DIR/core-secret.sh"
+core_secret_create_args=()
+if ((dry_run)); then core_secret_create_args=(--dry-run=server); fi
+ensure_core_secret
 
 echo "==> Applying MCP secret '$NAMESPACE/commoncal-mcp-secrets'..."
 # MCP_OAUTH_ISSUER_HOLD is optional: when set, the MCP server holds the new

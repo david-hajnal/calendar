@@ -99,7 +99,7 @@ async fn event_is_imported(pool: &SqlitePool, event_id: i64) -> bool {
 
 pub fn build_caldav_router(accounts: CaldavAccountService) -> Router {
     Router::new()
-        .route("/.well-known/caldav", get(well_known_caldav))
+        .route("/.well-known/caldav", any(well_known_caldav))
         .route("/dav/", any(dav_root))
         .route("/dav/principals/:principal_id/", any(dav_principal))
         .route("/dav/calendars/:principal_id/", any(dav_calendar_home))
@@ -138,10 +138,24 @@ pub fn build_connection_management_router(
         .with_state(accounts)
 }
 
-async fn well_known_caldav(State(accounts): State<CaldavAccountService>) -> Response {
+async fn well_known_caldav(
+    State(accounts): State<CaldavAccountService>,
+    request: Request,
+) -> Response {
+    if !matches!(request.method().as_str(), "GET" | "HEAD" | "PROPFIND") {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET, HEAD, PROPFIND")],
+        )
+            .into_response();
+    }
     (
-        StatusCode::MOVED_PERMANENTLY,
-        [(header::LOCATION, accounts.dav_root_url())],
+        // RFC 6764 section 5 permits 307; preserve DAV method and request body.
+        StatusCode::TEMPORARY_REDIRECT,
+        [
+            (header::LOCATION, accounts.dav_root_url()),
+            (header::CACHE_CONTROL, "no-cache".into()),
+        ],
     )
         .into_response()
 }
@@ -3422,7 +3436,7 @@ mod tests {
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(
             response.headers().get(header::LOCATION).unwrap(),
             "http://127.0.0.1:3000/dav/"

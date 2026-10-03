@@ -34,6 +34,13 @@ case "${1:-} ${2:-} ${3:-}" in
   "get namespace "*)
     ;;
   "get secret "*)
+    if [ "$3" = commoncal-session ]; then
+      case "$*" in
+        *'jsonpath={.data.SESSION_SECRET}'*) printf '%s' dGVzdC1zZXNzaW9uLXNlY3JldA== ;;
+        *'jsonpath={.metadata.name}'*) printf '%s' commoncal-session ;;
+      esac
+      exit 0
+    fi
     # Existence precedence:
     #   1. The Secret was created earlier in this run (state file) — models the
     #      absent -> generated -> present transition.
@@ -152,7 +159,7 @@ fi
 case "$cmd" in
   base64)
     # openssl base64 -d -A : base64-decode stdin to stdout.
-    base64 -d
+    case "$*" in *-d*) base64 -d ;; *) base64 | tr -d '\n' ;; esac
     exit 0
     ;;
 
@@ -515,9 +522,9 @@ require_line \
   "$guard_flux_log" \
   "Flux-owned deployment must reconcile the MCP HelmRelease"
 require_text \
-  'create secret generic commoncal-session' \
+  'get secret commoncal-session' \
   "$guard_kubectl_log" \
-  "Flux-owned deployment must apply the core runtime Secret"
+  "Flux-owned deployment must preserve the core runtime Secret"
 require_text \
   'create secret generic commoncal-mcp-secrets' \
   "$guard_kubectl_log" \

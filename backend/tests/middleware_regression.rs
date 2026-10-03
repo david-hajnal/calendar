@@ -454,3 +454,191 @@ async fn apple_connection_response_includes_security_headers() {
         Some("strict-origin-when-cross-origin")
     );
 }
+
+#[tokio::test]
+async fn well_known_propfind_preserves_discovery_through_shared_middleware() {
+    let (_dir, pool) = setup().await;
+    let key = SecretKey::derive(b"discovery-test-secret");
+    let user_id = create_user(&pool, "discovery@example.test").await;
+    for name in ["First", "Second"] {
+        let calendar_id: i64 = sqlx::query_scalar("INSERT INTO calendars (owner_user_id, name, color, default_timezone, default_event_visibility, archived, version, created_at, updated_at) VALUES (?, ?, '#112233', 'UTC', 'default', 0, 1, ?, ?) RETURNING id")
+            .bind(user_id).bind(name).bind(NOW).bind(NOW).fetch_one(&pool).await.unwrap();
+        sqlx::query("INSERT INTO calendar_acl (calendar_id, user_id, role, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?)")
+            .bind(calendar_id).bind(user_id).bind(NOW).bind(NOW).execute(&pool).await.unwrap();
+    }
+    let accounts = CaldavAccountService::new_at(
+        pool.clone(),
+        key.clone(),
+        url::Url::parse("http://127.0.0.1:3000").unwrap(),
+        NOW,
+    );
+    let issued = accounts
+        .issue_credential(user_id, "Discovery".into())
+        .await
+        .unwrap();
+    let auth = basic_header(&issued.username, issued.password.expose());
+    let app = assembled_router(&pool, &key);
+    let body = r#"<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:current-user-principal/><D:resourcetype/><C:calendar-home-set/></D:prop></D:propfind>"#;
+    let discovery = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PROPFIND")
+                .uri("/.well-known/caldav")
+                .header("depth", "0")
+                .header(header::AUTHORIZATION, auth.clone())
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discovery.status(), StatusCode::TEMPORARY_REDIRECT);
+    let target = url::Url::parse(discovery.headers()[header::LOCATION].to_str().unwrap()).unwrap();
+    assert_eq!(
+        target.origin(),
+        url::Url::parse("http://127.0.0.1:3000").unwrap().origin()
+    );
+    assert_eq!(target.path(), "/dav/");
+    assert_eq!(discovery.headers()[header::CACHE_CONTROL], "no-cache");
+    let get = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/.well-known/caldav")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::TEMPORARY_REDIRECT);
+    let unauthenticated = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PROPFIND")
+                .uri(target.path())
+                .header("depth", "0")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    let mut path = target.path().to_owned();
+    for stage in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PROPFIND")
+                    .uri(&path)
+                    .header("depth", if stage == 2 { "1" } else { "0" })
+                    .header(header::AUTHORIZATION, auth.clone())
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::MULTI_STATUS);
+        let bytes = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .unwrap()
+            .to_bytes();
+        let mut reader = quick_xml::NsReader::from_reader(bytes.as_ref());
+        let mut property = String::new();
+        let mut inside_href = false;
+        let mut inside_status = false;
+        let mut group_next = None;
+        let mut group_succeeded = false;
+        let mut next = None;
+        let mut calendars = 0;
+        let mut successful_groups = 0;
+        let mut multistatus = false;
+        loop {
+            let (namespace, event) = reader.read_resolved_event().unwrap();
+            match event {
+                quick_xml::events::Event::Start(ref e) | quick_xml::events::Event::Empty(ref e) => {
+                    let local = String::from_utf8(e.local_name().as_ref().to_vec()).unwrap();
+                    if ["multistatus", "current-user-principal", "href", "status"]
+                        .contains(&local.as_str())
+                    {
+                        assert_eq!(
+                            namespace,
+                            quick_xml::name::ResolveResult::Bound(quick_xml::name::Namespace(
+                                b"DAV:"
+                            ))
+                        );
+                    }
+                    if local == "multistatus" {
+                        multistatus = true;
+                    }
+                    if local == "calendar-home-set" {
+                        assert_eq!(
+                            namespace,
+                            quick_xml::name::ResolveResult::Bound(quick_xml::name::Namespace(
+                                b"urn:ietf:params:xml:ns:caldav"
+                            ))
+                        );
+                    }
+                    if local == "propstat" {
+                        group_succeeded = false;
+                        group_next = None;
+                    }
+                    if ["current-user-principal", "calendar-home-set"].contains(&local.as_str()) {
+                        property = local.clone();
+                    }
+                    inside_href = local == "href";
+                    inside_status = local == "status";
+                    if local == "calendar" {
+                        assert_eq!(
+                            namespace,
+                            quick_xml::name::ResolveResult::Bound(quick_xml::name::Namespace(
+                                b"urn:ietf:params:xml:ns:caldav"
+                            ))
+                        );
+                        calendars += 1;
+                    }
+                }
+                quick_xml::events::Event::Text(e)
+                    if inside_href
+                        && ((stage == 0 && property == "current-user-principal")
+                            || (stage == 1 && property == "calendar-home-set")) =>
+                {
+                    group_next = Some(e.unescape().unwrap().into_owned());
+                }
+                quick_xml::events::Event::Text(e) if inside_status => {
+                    let status = e.unescape().unwrap();
+                    assert!(matches!(
+                        status.as_ref(),
+                        "HTTP/1.1 200 OK" | "HTTP/1.1 404 Not Found"
+                    ));
+                    group_succeeded = status == "HTTP/1.1 200 OK";
+                }
+                quick_xml::events::Event::End(e) => {
+                    if e.local_name().as_ref() == b"propstat" && group_succeeded {
+                        successful_groups += 1;
+                        if group_next.is_some() {
+                            next = group_next.take();
+                        }
+                    }
+                    inside_href = false;
+                    inside_status = false;
+                    if e.local_name().as_ref() == property.as_bytes() {
+                        property.clear();
+                    }
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        assert!(multistatus);
+        assert!(successful_groups > 0);
+        if stage < 2 {
+            let next = url::Url::parse(&next.expect("required discovery property href")).unwrap();
+            assert_eq!(next.origin(), target.origin());
+            path = next.path().to_owned();
+        } else {
+            assert_eq!(calendars, 2);
+        }
+    }
+}

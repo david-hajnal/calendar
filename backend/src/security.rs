@@ -27,10 +27,11 @@ impl SecretKey {
     }
 
     pub fn derive(secret: &[u8]) -> Self {
-        let mut salt = [0u8; 16];
-        getrandom::fill(&mut salt).expect("random source unavailable");
+        // Stable, domain-separated salt: credentials and encrypted feed URLs
+        // must remain usable by later processes with the same SESSION_SECRET.
+        let salt = b"commoncal/session-key/v1";
         let mut output = [0u8; 32];
-        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(secret, &salt, 100_000, &mut output);
+        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(secret, salt, 100_000, &mut output);
         Self(output)
     }
 

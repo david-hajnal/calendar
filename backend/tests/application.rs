@@ -264,3 +264,15 @@ fn production_configuration_rejects_a_missing_session_secret() {
         "SESSION_SECRET is required in production"
     );
 }
+
+#[test]
+fn production_configuration_rejects_an_empty_session_secret() {
+    assert!(
+        AppConfig::new(
+            Environment::Production,
+            "127.0.0.1:3000",
+            Some(String::new())
+        )
+        .is_err()
+    );
+}

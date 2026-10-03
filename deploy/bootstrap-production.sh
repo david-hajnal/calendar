@@ -88,12 +88,9 @@ fi
 echo "==> Ensuring namespace '$NAMESPACE' exists..."
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-echo "==> Creating core secret '$NAMESPACE/commoncal-session'..."
-kubectl create secret generic commoncal-session \
-  --from-literal=SESSION_SECRET="$SESSION_SECRET" \
-  --from-literal=BACKUP_ENCRYPTION_KEY_HEX="$BACKUP_ENCRYPTION_KEY_HEX" \
-  -n "$NAMESPACE" \
-  --dry-run=client -o yaml | kubectl apply -f -
+source "$(dirname "$ENV_FILE")/core-secret.sh"
+core_secret_create_args=()
+ensure_core_secret
 
 echo "==> Creating MCP secret '$NAMESPACE/commoncal-mcp-secrets'..."
 # MCP_OAUTH_ISSUER_HOLD is optional: when set, the MCP server holds the new

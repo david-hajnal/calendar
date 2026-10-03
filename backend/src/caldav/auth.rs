@@ -806,6 +806,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn credential_survives_new_instance_but_not_deliberate_key_rotation() {
+        let db = TestDb::new().await;
+        let user_id = db.insert_user("restart@example.test").await;
+        let first = service(&db, SecretKey::derive(b"stable-session-secret"));
+        let issued = first
+            .issue_credential(user_id, "Restart".into())
+            .await
+            .unwrap();
+        let auth = basic_header(&issued.username, issued.password.expose());
+        let next = service(&db, SecretKey::derive(b"stable-session-secret"));
+        assert!(next.authenticate(&auth).await.is_ok());
+        let rotated = service(&db, SecretKey::derive(b"deliberately-rotated-secret"));
+        assert!(matches!(
+            rotated.authenticate(&auth).await,
+            Err(CaldavAuthError::InvalidCredentials)
+        ));
+        // A failed authentication does not revoke or rewrite the credential.
+        assert!(next.authenticate(&auth).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn authenticate_accepts_email_and_active_connection_password() {
         let db = TestDb::new().await;
         let key = SecretKey::generate();

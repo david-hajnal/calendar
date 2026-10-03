@@ -134,3 +134,19 @@ fn decrypt_with_tampered_ciphertext_returns_none() {
     let decrypted = key.decrypt_secret(&encrypted);
     assert!(decrypted.is_none());
 }
+
+#[test]
+fn independently_derived_keys_decrypt_persisted_secret() {
+    let first = SecretKey::derive(b"persistent-key-test");
+    let ciphertext = first.encrypt_secret(b"feed-url");
+    let next = SecretKey::derive(b"persistent-key-test");
+    assert_eq!(
+        next.decrypt_secret(&ciphertext).as_deref(),
+        Some(b"feed-url".as_slice())
+    );
+    assert!(
+        SecretKey::derive(b"rotated-key-test")
+            .decrypt_secret(&ciphertext)
+            .is_none()
+    );
+}

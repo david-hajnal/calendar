@@ -42,6 +42,9 @@ jobs:
         with:
           context: .
           file: Dockerfile.auth
+          pull: true
+          # Refresh Debian security packages without discarding the dependency build cache.
+          no-cache-filters: runtime
           push: false
           load: true
           tags: ghcr.io/david-hajnal/calendar-auth:${{ env.MAIN_TAG }}

@@ -43,7 +43,7 @@ async fn setup() -> (TempDir, SqlitePool) {
 async fn create_user(pool: &SqlitePool, email: &str) -> i64 {
     sqlx::query_scalar(
         "INSERT INTO users (normalized_email, display_name, status, created_at)
-         VALUES (?, ?, 'active', ?) RETURNING id",
+         VALUES (?, ?, 'registered', ?) RETURNING id",
     )
     .bind(email)
     .bind(email)

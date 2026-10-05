@@ -29,12 +29,15 @@ url = "2.5"
 uuid = { version = "1.20", features = ["v4"] }
 
 bcrypt = "0.17"
+lettre = { version = "=0.11.19", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 
 [[bin]]
 name = "db-tools"
 path = "src/bin/db_tools.rs"
 
 [dev-dependencies]
+quoted_printable = "0.5"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 http-body-util = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

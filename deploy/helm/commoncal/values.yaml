@@ -65,6 +65,21 @@ persistence:
 config:
   appOrigin: "https://example.com"
   caldavPublicOrigin: ""
+  passwordLoginEnabled: true
+
+# Required for production account mail. Credentials are supplied only through
+# a separately managed Secret; the chart never creates or embeds them.
+mail:
+  host: ""
+  port: 587
+  from: ""
+  existingSecret:
+    name: commoncal-mail
+    usernameKey: SMTP_USERNAME
+    passwordKey: SMTP_PASSWORD
+  # Narrow these to the provider's ranges where stable, or a private relay CIDR.
+  egressCIDRs:
+    - 0.0.0.0/0
 
 # This Secret is deliberately not created by the chart. Create it separately,
 # for example: kubectl create secret generic commoncal-session --from-literal=SESSION_SECRET=...

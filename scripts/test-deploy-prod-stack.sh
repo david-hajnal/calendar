@@ -323,6 +323,9 @@ run_stack() {
     BACKUP_ENCRYPTION_KEY_HEX=00000000000000000000000000000000 \
     IMAGE_TAG="${IMAGE_TAG_OVERRIDE-sha-abc123def456789012345678901234567890abcd}" \
     DOMAIN=calendar.example.test \
+    SMTP_HOST="${SMTP_HOST_OVERRIDE-smtp.example.test}" \
+    SMTP_PORT="${SMTP_PORT_OVERRIDE-587}" \
+    SMTP_FROM="${SMTP_FROM_OVERRIDE-no-reply@example.test}" \
     MCP_DOMAIN=mcp.example.test \
     MCP_OAUTH_ISSUER=https://issuer.example.test \
     MCP_INTERNAL_API_BASE=https://calendar.example.test \
@@ -398,6 +401,9 @@ require_line \
   'fullnameOverride=commoncal' \
   "$fixture/helm.log" \
   "core workload names must be pinned to the core release name"
+require_line 'mail.host=smtp.example.test' "$fixture/helm.log" "core must receive the configured SMTP host"
+require_line 'mail.port=587' "$fixture/helm.log" "core must receive the configured SMTP port"
+require_line 'mail.from=no-reply@example.test' "$fixture/helm.log" "core must receive the configured sender"
 require_line \
   'fullnameOverride=commoncal-mcp' \
   "$fixture/helm.log" \
@@ -965,6 +971,34 @@ require_text \
   'rollout status deployment commoncal-mcp --namespace commoncal --timeout=15m' \
   "$rollout_log" \
   "direct deploy must wait for the MCP Deployment rollout"
+
+for setting in host from port; do
+  log="$fixture/invalid-smtp-$setting-kubectl.log"
+  helm_log="$fixture/invalid-smtp-$setting-helm.log"
+  : > "$log"
+  : > "$helm_log"
+  case "$setting" in
+    host) SMTP_HOST_OVERRIDE= ;;
+    from) SMTP_FROM_OVERRIDE= ;;
+    port) SMTP_PORT_OVERRIDE=65536 ;;
+  esac
+  if (
+    FLUX_ACTIVE=0
+    FLUX_ACTIVE_RELEASE_OVERRIDE=
+    KUBECTL_LOG_OVERRIDE="$log"
+    HELM_LOG_OVERRIDE="$helm_log"
+    run_stack > "$fixture/invalid-smtp-$setting.out" 2>&1
+  ); then
+    echo "invalid SMTP $setting must be rejected" >&2
+    cat "$fixture/invalid-smtp-$setting.out" >&2
+    failures=$((failures + 1))
+  fi
+  unset SMTP_HOST_OVERRIDE SMTP_FROM_OVERRIDE SMTP_PORT_OVERRIDE
+  if [ -s "$helm_log" ] || grep -E 'create |apply |rollout ' "$log" >/dev/null; then
+    echo "invalid SMTP $setting must fail before deployment mutations" >&2
+    failures=$((failures + 1))
+  fi
+done
 
 if [ "$failures" -ne 0 ]; then
   echo "production stack contract failed with $failures error(s)" >&2

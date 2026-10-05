@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 export interface MailboxMessage {
   recipient: string;
-  message_type: "invitation" | "login_link" | "notification";
+  message_type: "invitation" | "login_link" | "password_reset" | "email_confirmation" | "email_changed" | "notification";
   authentication_link?: string;
 }
 

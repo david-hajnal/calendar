@@ -338,7 +338,7 @@ impl CalendarService {
                 .bind(target_user_id)
                 .fetch_optional(&mut *transaction)
                 .await?;
-        if target_status.as_deref() != Some("active") {
+        if target_status.as_deref() != Some("registered") {
             transaction.rollback().await?;
             return Err(CalendarServiceError::OperationConflict);
         }
@@ -473,7 +473,7 @@ impl CalendarService {
                 .bind(new_owner_user_id)
                 .fetch_optional(&mut *transaction)
                 .await?;
-        if target_status.as_deref() != Some("active") {
+        if target_status.as_deref() != Some("registered") {
             transaction.rollback().await?;
             return Err(CalendarServiceError::OperationConflict);
         }
@@ -546,8 +546,12 @@ impl CalendarService {
         } else {
             PlatformRole::User
         };
-        match authorize_calendar_action(UserStatus::Active, Some(platform_role), Some(role), action)
-        {
+        match authorize_calendar_action(
+            UserStatus::Registered,
+            Some(platform_role),
+            Some(role),
+            action,
+        ) {
             AuthorizationDecision::Allow => Ok(record),
             AuthorizationDecision::Deny => Err(CalendarServiceError::NotFound),
         }
@@ -589,13 +593,13 @@ impl CalendarService {
             PlatformRole::User
         };
         let can_read_details = authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(platform_role),
             Some(role),
             CalendarAction::ReadDetails,
         ) == AuthorizationDecision::Allow;
         let can_read_free_busy = authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(platform_role),
             Some(role),
             CalendarAction::ReadFreeBusy,
@@ -956,7 +960,7 @@ impl CalendarRepository {
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let target_is_active: bool = sqlx::query_scalar(
             "SELECT EXISTS(
-                SELECT 1 FROM users WHERE id = ? AND status = 'active'
+                SELECT 1 FROM users WHERE id = ? AND status = 'registered'
              )",
         )
         .bind(new_owner_user_id)

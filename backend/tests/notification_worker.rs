@@ -109,7 +109,7 @@ async fn revoked_calendar_access_prevents_private_notification_delivery() {
 async fn suspended_user_receives_no_notification_delivery() {
     let (_dir, pool) = setup().await;
     let (job_id, user, _, _) = deliverable_job(&pool).await;
-    sqlx::query("UPDATE users SET status = 'suspended' WHERE id = ?")
+    sqlx::query("UPDATE users SET status = 'inactive' WHERE id = ?")
         .bind(user)
         .execute(&pool)
         .await
@@ -302,7 +302,7 @@ async fn setup() -> (TempDir, SqlitePool) {
 }
 
 async fn job(pool: &SqlitePool, scheduled_at: i64) -> i64 {
-    let user = sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, ?, 'active', ?)")
+    let user = sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, ?, 'registered', ?)")
         .bind(format!("user-{scheduled_at}@example.com"))
         .bind("User")
         .bind(NOW)
@@ -333,7 +333,7 @@ async fn job(pool: &SqlitePool, scheduled_at: i64) -> i64 {
 }
 
 async fn deliverable_job(pool: &SqlitePool) -> (i64, i64, i64, String) {
-    let user = sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, 'User', 'active', ?)")
+    let user = sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, 'User', 'registered', ?)")
         .bind("deliverable-1@example.com")
         .bind(NOW)
         .execute(pool)

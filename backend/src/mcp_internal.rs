@@ -380,7 +380,11 @@ pub async fn get_user_status(
     match user {
         Some((id, status)) => Ok(Json(UserStatusResponse {
             user_id: id,
-            status,
+            status: match status.as_str() {
+                "registered" => "active".to_owned(),
+                "inactive" => "suspended".to_owned(),
+                _ => status,
+            },
         })),
         None => Err((StatusCode::NOT_FOUND, "user not found".to_string())),
     }
@@ -863,7 +867,7 @@ mod tests {
             .connect_with(options)
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::database::run_migrations(&pool).await.unwrap();
         pool
     }
 

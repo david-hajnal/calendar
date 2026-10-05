@@ -484,7 +484,7 @@ async fn setup() -> (TempDir, sqlx::SqlitePool, i64, i64) {
 async fn insert_user(pool: &sqlx::SqlitePool, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO users (normalized_email, display_name, status, created_at)
-         VALUES (?, ?, 'active', ?)",
+         VALUES (?, ?, 'registered', ?)",
     )
     .bind(email)
     .bind(email)
@@ -594,7 +594,7 @@ impl HttpTestApplication {
         apply_shared_middleware(
             build_router_with_auth_flows_sessions_admin_and_calendars(
                 Readiness::new(),
-                InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
+                InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), NOW),
                 LoginService::new_at(
                     self.pool.clone(),
                     self.key.clone(),

@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # SMTP settings pass through this file in production; development captures
+    # mail locally even when SMTP variables are present.
     env_file: .env.local
     ports:
       - "3000:3000"

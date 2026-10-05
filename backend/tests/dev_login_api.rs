@@ -55,7 +55,6 @@ impl TestApplication {
             commoncal_backend::invitations::InvitationConsumer::new_at(
                 self.pool.clone(),
                 self.key.clone(),
-                300,
                 NOW,
             ),
             LoginService::new_at(
@@ -127,7 +126,7 @@ async fn dev_login_creates_user_and_redirects_when_user_does_not_exist() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert!(set_cookie.contains("__Host-commoncal_session="));
+    assert!(set_cookie.contains("commoncal_session="));
     assert!(set_cookie.contains("HttpOnly"));
     assert!(set_cookie.contains("SameSite=Lax"));
     let user = sqlx::query(
@@ -144,7 +143,7 @@ async fn dev_login_creates_user_and_redirects_when_user_does_not_exist() {
         user.get::<Option<String>, _>("display_name"),
         Some("NewUser".to_owned())
     );
-    assert_eq!(user.get::<String, _>("status"), "active");
+    assert_eq!(user.get::<String, _>("status"), "registered");
 }
 
 #[tokio::test]
@@ -154,7 +153,7 @@ async fn dev_login_redirects_existing_user_without_recreating() {
         .create_user(NewUser {
             normalized_email: "existing@example.com".to_owned(),
             display_name: Some("Existing".to_owned()),
-            status: UserStatus::Active,
+            status: UserStatus::Registered,
             created_at: NOW - 1_000,
         })
         .await

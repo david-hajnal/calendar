@@ -9,17 +9,16 @@ use commoncal_backend::{
     config::{AppConfig, Environment},
     database::connect_and_migrate,
     http::{Readiness, build_router_with_invitation_consumer},
-    identity::{IdentityRepository, NewUser, SessionHash, UserStatus},
+    identity::{IdentityRepository, NewUser, UserStatus},
     invitations::InvitationConsumer,
     security::{SecretKey, TokenDomain},
 };
 use http_body_util::BodyExt;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
 const NOW: i64 = 1_000;
-const SESSION_LIFETIME: i64 = 86_400;
 
 struct TestApplication {
     _temp_dir: TempDir,
@@ -56,12 +55,7 @@ impl TestApplication {
     fn router(&self) -> axum::Router {
         build_router_with_invitation_consumer(
             Readiness::new(),
-            InvitationConsumer::new_at(
-                self.pool.clone(),
-                self.secret_key.clone(),
-                SESSION_LIFETIME,
-                NOW,
-            ),
+            InvitationConsumer::new_at(self.pool.clone(), self.secret_key.clone(), NOW),
             None,
             None,
             None,
@@ -95,7 +89,7 @@ impl TestApplication {
     }
 
     async fn consume(&self, token: &str, cookie: Option<&str>) -> axum::response::Response {
-        let body = format!(r#"{{"token":"{token}"}}"#);
+        let body = serde_json::json!({"token":token,"password":"new-invite-password-123","password_confirmation":"new-invite-password-123"}).to_string();
         let mut request = Request::builder()
             .method("POST")
             .uri("/api/v1/auth/invitations/consume")
@@ -134,19 +128,20 @@ async fn valid_invitation_activates_user() {
     let response = application.consume(&token, None).await;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let cookie = response
-        .headers()
-        .get(SET_COOKIE)
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert!(cookie.starts_with("__Host-commoncal_session="));
-    assert!(cookie.contains("HttpOnly"));
-    assert!(cookie.contains("SameSite=Lax"));
+    assert!(response.headers().get(SET_COOKIE).is_none());
     let body = response_body(response).await;
     assert!(body.contains(r#""email":"invitee@example.com""#));
-    assert!(body.contains(r#""status":"active""#));
-    assert!(body.contains(r#""csrf_token":""#));
+    assert!(body.contains(r#""status":"registered""#));
+    assert!(!body.contains("csrf_token"));
+    let hash: String = sqlx::query_scalar(
+        "SELECT password_hash FROM users WHERE normalized_email = 'invitee@example.com'",
+    )
+    .fetch_one(&application.pool)
+    .await
+    .unwrap();
+    assert!(
+        commoncal_backend::password::verify_password("new-invite-password-123", &hash).unwrap()
+    );
 
     let user_status: String =
         sqlx::query_scalar("SELECT status FROM users WHERE normalized_email = ?")
@@ -154,7 +149,7 @@ async fn valid_invitation_activates_user() {
             .fetch_one(&application.pool)
             .await
             .unwrap();
-    assert_eq!(user_status, "active");
+    assert_eq!(user_status, "registered");
     let consumed_at: Option<i64> =
         sqlx::query_scalar("SELECT consumed_at FROM invitations WHERE id = ?")
             .bind(invitation_id)
@@ -185,7 +180,7 @@ async fn reused_invitation_fails() {
 
     let response = application.consume(&token, None).await;
 
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         response_body(response).await,
         r#"{"error":{"code":"invalid_invitation","message":"Invitation is invalid or expired"}}"#
@@ -194,7 +189,7 @@ async fn reused_invitation_fails() {
         .fetch_one(&application.pool)
         .await
         .unwrap();
-    assert_eq!(session_count, 1);
+    assert_eq!(session_count, 0);
     let failure_reason: String = sqlx::query_scalar(
         "SELECT metadata_json FROM audit_log
          WHERE action = 'auth.invitation.consume.failed'
@@ -215,7 +210,7 @@ async fn expired_invitation_fails() {
 
     let response = application.consume(&token, None).await;
 
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let reason: String = sqlx::query_scalar(
         "SELECT metadata_json FROM audit_log
          WHERE action = 'auth.invitation.consume.failed'",
@@ -235,7 +230,7 @@ async fn revoked_invitation_fails() {
 
     let response = application.consume(&token, None).await;
 
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let reason: String = sqlx::query_scalar(
         "SELECT metadata_json FROM audit_log
          WHERE action = 'auth.invitation.consume.failed'",
@@ -247,13 +242,13 @@ async fn revoked_invitation_fails() {
 }
 
 #[tokio::test]
-async fn email_collision_resolves_without_duplicate_user_creation() {
+async fn invited_email_collision_preserves_identity() {
     let application = TestApplication::new().await;
     let existing = IdentityRepository::new(application.pool.clone())
         .create_user(NewUser {
             normalized_email: "invitee@example.com".to_owned(),
             display_name: Some("Existing Name".to_owned()),
-            status: UserStatus::Active,
+            status: UserStatus::Invited,
             created_at: NOW - 500,
         })
         .await
@@ -270,24 +265,25 @@ async fn email_collision_resolves_without_duplicate_user_creation() {
         .await
         .unwrap();
     assert_eq!(user_count, 1);
-    let session_user_id: i64 = sqlx::query_scalar("SELECT user_id FROM sessions")
-        .fetch_one(&application.pool)
-        .await
-        .unwrap();
-    assert_eq!(session_user_id, existing.id);
+    let registered_user_id: i64 =
+        sqlx::query_scalar("SELECT id FROM users WHERE status = 'registered'")
+            .fetch_one(&application.pool)
+            .await
+            .unwrap();
+    assert_eq!(registered_user_id, existing.id);
 }
 
 #[tokio::test]
-async fn database_rollback_occurs_when_session_creation_fails() {
+async fn database_rollback_occurs_when_registration_fails() {
     let application = TestApplication::new().await;
     let (invitation_id, token) = application
         .invitation("rollback@example.com", NOW + 100, None)
         .await;
     sqlx::query(
-        "CREATE TRIGGER fail_session_creation
-         BEFORE INSERT ON sessions
+        "CREATE TRIGGER fail_registration
+         BEFORE INSERT ON users
          BEGIN
-             SELECT RAISE(ABORT, 'injected session failure');
+             SELECT RAISE(ABORT, 'injected registration failure');
          END",
     )
     .execute(&application.pool)
@@ -328,58 +324,154 @@ async fn response_does_not_expose_token_hashes() {
 }
 
 #[tokio::test]
-async fn session_fixation_is_not_possible() {
+async fn registered_account_cannot_be_overwritten_by_invitation() {
     let application = TestApplication::new().await;
-    let existing_user = IdentityRepository::new(application.pool.clone())
+    let user = IdentityRepository::new(application.pool.clone())
         .create_user(NewUser {
             normalized_email: "invitee@example.com".to_owned(),
             display_name: None,
-            status: UserStatus::Active,
+            status: UserStatus::Registered,
             created_at: NOW - 500,
         })
         .await
         .unwrap();
-    let fixed_token = application.secret_key.generate_token();
-    let fixed_hash = application
-        .secret_key
-        .hash_token(TokenDomain::Session, &fixed_token);
-    sqlx::query(
-        "INSERT INTO sessions (user_id, session_hash, expires_at, revoked_at, created_at)
-         VALUES (?, ?, ?, NULL, ?)",
-    )
-    .bind(existing_user.id)
-    .bind(fixed_hash.as_bytes().as_slice())
-    .bind(NOW + SESSION_LIFETIME)
-    .bind(NOW - 100)
-    .execute(&application.pool)
-    .await
-    .unwrap();
-    let (_invitation_id, invitation_token) = application
+    let (_, token) = application
         .invitation("invitee@example.com", NOW + 100, None)
         .await;
-    let cookie = format!("__Host-commoncal_session={}", fixed_token.expose());
-
-    let response = application.consume(&invitation_token, Some(&cookie)).await;
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let set_cookie = response
-        .headers()
-        .get(SET_COOKIE)
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert!(!set_cookie.contains(fixed_token.expose()));
-    let old_session_revoked_at: Option<i64> =
-        sqlx::query("SELECT revoked_at FROM sessions WHERE session_hash = ?")
-            .bind(SessionHash::new(fixed_hash.as_bytes().to_vec()).as_bytes())
+    let response = application.consume(&token, None).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let password: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(user.id)
             .fetch_one(&application.pool)
             .await
-            .unwrap()
-            .get("revoked_at");
-    assert_eq!(old_session_revoked_at, Some(NOW));
-    let session_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+            .unwrap();
+    assert!(password.is_none());
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
         .fetch_one(&application.pool)
         .await
         .unwrap();
-    assert_eq!(session_count, 2);
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn token_only_acceptance_cannot_bypass_password_creation() {
+    let application = TestApplication::new().await;
+    let (_, token) = application
+        .invitation("password-required@example.com", NOW + 100, None)
+        .await;
+    let response = application
+        .router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/invitations/consume")
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::json!({"token": token}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_client_error());
+    let consumed: Option<i64> = sqlx::query_scalar("SELECT consumed_at FROM invitations WHERE normalized_email = 'password-required@example.com'")
+        .fetch_one(&application.pool).await.unwrap();
+    assert_eq!(consumed, None);
+}
+
+#[tokio::test]
+async fn preview_never_consumes_invitation_or_creates_session() {
+    let application = TestApplication::new().await;
+    let (_, token) = application
+        .invitation("preview@example.com", NOW + 100, None)
+        .await;
+    for _ in 0..2 {
+        let response = application
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/auth/invitations/preview?token={token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        assert!(
+            response_body(response)
+                .await
+                .contains("preview@example.com")
+        );
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+        .fetch_one(&application.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn invalid_password_does_not_consume_and_bootstrap_role_is_preserved() {
+    let application = TestApplication::new().await;
+    let (id, token) = application
+        .invitation("bootstrap@example.com", NOW + 100, None)
+        .await;
+    sqlx::query("UPDATE invitations SET platform_role = 'superadmin' WHERE id = ?")
+        .bind(id)
+        .execute(&application.pool)
+        .await
+        .unwrap();
+    for (password, confirmation) in [
+        ("short", "short"),
+        ("long-enough-password", "mismatched-password"),
+    ] {
+        let response = application.router().oneshot(Request::builder().method("POST")
+            .uri("/api/v1/auth/invitations/consume").header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({"token":token,"password":password,"password_confirmation":confirmation}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(
+        application.consume(&token, None).await.status(),
+        StatusCode::OK
+    );
+    let admin: bool = sqlx::query_scalar(
+        "SELECT is_superadmin FROM users WHERE normalized_email = 'bootstrap@example.com'",
+    )
+    .fetch_one(&application.pool)
+    .await
+    .unwrap();
+    assert!(admin);
+}
+
+#[tokio::test]
+async fn concurrent_acceptance_has_one_winner() {
+    let application = TestApplication::new().await;
+    let (_, token) = application
+        .invitation("race@example.com", NOW + 100, None)
+        .await;
+    let (first, second) = tokio::join!(
+        application.consume(&token, None),
+        application.consume(&token, None)
+    );
+    let statuses = [first.status(), second.status()];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|&&status| status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|&&status| status == StatusCode::BAD_REQUEST)
+            .count(),
+        1
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE normalized_email='race@example.com'")
+            .fetch_one(&application.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
 }

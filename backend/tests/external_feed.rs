@@ -69,7 +69,7 @@ async fn setup() -> (TempDir, SqlitePool, ExternalFeedService, i64, i64) {
     let pool = connect_and_migrate(&config, Readiness::new())
         .await
         .unwrap();
-    let user = sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('manager@example.test', 'active', ?)").bind(NOW).execute(&pool).await.unwrap().last_insert_rowid();
+    let user = sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('manager@example.test', 'registered', ?)").bind(NOW).execute(&pool).await.unwrap().last_insert_rowid();
     let calendar = sqlx::query("INSERT INTO calendars (owner_user_id,name,color,default_timezone,default_event_visibility,created_at,updated_at) VALUES (?, 'Test', '#123', 'UTC', 'default', ?, ?)").bind(user).bind(NOW).bind(NOW).execute(&pool).await.unwrap().last_insert_rowid();
     sqlx::query("INSERT INTO calendar_acl (calendar_id,user_id,role,created_at,updated_at) VALUES (?, ?, 'manager', ?, ?)").bind(calendar).bind(user).bind(NOW).bind(NOW).execute(&pool).await.unwrap();
     (
@@ -188,7 +188,7 @@ async fn sends_validators_for_304_and_never_projects_full_url() {
 #[tokio::test]
 async fn editor_cannot_create_a_feed() {
     let (_dir, pool, service, _user, calendar) = setup().await;
-    let editor = sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('editor@example.test', 'active', ?)").bind(NOW).execute(&pool).await.unwrap().last_insert_rowid();
+    let editor = sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('editor@example.test', 'registered', ?)").bind(NOW).execute(&pool).await.unwrap().last_insert_rowid();
     sqlx::query("INSERT INTO calendar_acl (calendar_id,user_id,role,created_at,updated_at) VALUES (?, ?, 'editor', ?, ?)").bind(calendar).bind(editor).bind(NOW).bind(NOW).execute(&pool).await.unwrap();
     assert!(matches!(
         service

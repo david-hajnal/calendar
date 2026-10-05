@@ -39,12 +39,12 @@ fn user(email: &str, status: UserStatus) -> NewUser {
 async fn duplicate_normalized_emails_fail() {
     let (_temp_dir, _pool, repository) = repository().await;
     repository
-        .create_user(user(" Person@Example.com ", UserStatus::Active))
+        .create_user(user(" Person@Example.com ", UserStatus::Registered))
         .await
         .unwrap();
 
     let result = repository
-        .create_user(user("person@example.com", UserStatus::Active))
+        .create_user(user("person@example.com", UserStatus::Registered))
         .await;
 
     assert!(result.is_err());
@@ -90,7 +90,7 @@ async fn deleted_user_status_is_schema_valid_and_round_trips() {
 async fn expired_and_revoked_records_can_be_queried_correctly() {
     let (_temp_dir, _pool, repository) = repository().await;
     let account = repository
-        .create_user(user("person@example.com", UserStatus::Active))
+        .create_user(user("person@example.com", UserStatus::Registered))
         .await
         .unwrap();
 
@@ -175,7 +175,7 @@ async fn expired_and_revoked_records_can_be_queried_correctly() {
 async fn identity_records_round_trip() {
     let (_temp_dir, pool, repository) = repository().await;
     let account = repository
-        .create_user(user("person@example.com", UserStatus::Suspended))
+        .create_user(user("person@example.com", UserStatus::Inactive))
         .await
         .unwrap();
     assert_eq!(

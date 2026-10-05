@@ -39,6 +39,19 @@ persistence:
 config:
   appOrigin: https://cal.hajnal.space
   caldavPublicOrigin: https://cal.hajnal.space
+  passwordLoginEnabled: true
+
+# Required before rollout: supply the real provider host and verified sender
+# through an operator values file or deploy-prod.sh's SMTP_HOST/SMTP_FROM.
+# Credentials belong only in the externally managed commoncal-mail Secret.
+mail:
+  host: ""
+  port: 587
+  from: ""
+  existingSecret:
+    name: commoncal-mail
+    usernameKey: SMTP_USERNAME
+    passwordKey: SMTP_PASSWORD
 
 # Secret created externally:
 # kubectl create secret generic commoncal-session \

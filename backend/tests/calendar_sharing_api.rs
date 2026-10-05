@@ -53,15 +53,15 @@ impl TestApplication {
         let pool = connect_and_migrate(&config, Readiness::new())
             .await
             .unwrap();
-        let owner = insert_user(&pool, "owner@example.com", "active").await;
-        let manager = insert_user(&pool, "manager@example.com", "active").await;
-        let editor = insert_user(&pool, "editor@example.com", "active").await;
-        let viewer = insert_user(&pool, "viewer@example.com", "active").await;
-        let free_busy = insert_user(&pool, "freebusy@example.com", "active").await;
-        let unrelated = insert_user(&pool, "unrelated@example.com", "active").await;
-        let suspended = insert_user(&pool, "suspended@example.com", "suspended").await;
+        let owner = insert_user(&pool, "owner@example.com", "registered").await;
+        let manager = insert_user(&pool, "manager@example.com", "registered").await;
+        let editor = insert_user(&pool, "editor@example.com", "registered").await;
+        let viewer = insert_user(&pool, "viewer@example.com", "registered").await;
+        let free_busy = insert_user(&pool, "freebusy@example.com", "registered").await;
+        let unrelated = insert_user(&pool, "unrelated@example.com", "registered").await;
+        let suspended = insert_user(&pool, "suspended@example.com", "inactive").await;
         let deleted = insert_user(&pool, "deleted@example.com", "deleted").await;
-        let target = insert_user(&pool, "target@example.com", "active").await;
+        let target = insert_user(&pool, "target@example.com", "registered").await;
         let repository = CalendarRepository::new(pool.clone());
         let calendar = repository
             .create_calendar(

@@ -142,7 +142,7 @@ async fn insert_user(pool: &SqlitePool, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO users (
             normalized_email, display_name, status, is_superadmin, created_at
-         ) VALUES (?, NULL, 'active', 0, ?)",
+         ) VALUES (?, NULL, 'registered', 0, ?)",
     )
     .bind(email)
     .bind(NOW - 100)

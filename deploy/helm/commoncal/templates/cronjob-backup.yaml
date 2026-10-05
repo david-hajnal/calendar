@@ -27,6 +27,10 @@ spec:
                 - /usr/local/bin/commoncal-backend
                 - backup
                 - /backup
+              # Maintenance needs app settings, but never SMTP credentials.
+              envFrom:
+                - configMapRef:
+                    name: {{ include "commoncal.fullname" . }}
               env:
                 - name: SESSION_SECRET
                   valueFrom:

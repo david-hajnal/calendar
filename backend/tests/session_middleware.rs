@@ -46,7 +46,7 @@ impl TestApplication {
         let user_id = sqlx::query(
             "INSERT INTO users (
                 normalized_email, display_name, status, created_at, is_superadmin
-             ) VALUES (?, ?, 'active', ?, 0)",
+             ) VALUES (?, ?, 'registered', ?, 0)",
         )
         .bind("member@example.com")
         .bind("Member")
@@ -393,4 +393,22 @@ async fn all_session_logout_revokes_every_session() {
         .await
         .unwrap();
     assert_eq!(active, 0);
+}
+
+#[tokio::test]
+async fn https_session_does_not_accept_unprefixed_http_cookie() {
+    let app = TestApplication::new().await;
+    let token = app.session(NOW - 10, NOW - 10, NOW + 300, None).await;
+    let response = app
+        .router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/session")
+                .header(COOKIE, format!("commoncal_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

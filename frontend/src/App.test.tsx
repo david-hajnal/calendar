@@ -22,6 +22,13 @@ afterEach(() => {
 });
 
 describe("authentication pages", () => {
+  it("password login exposes the exact password label without its decorative icon", () => {
+    renderAt("/login", vi.fn());
+    fireEvent.click(screen.getByRole("button", { name: "Password" }));
+    const password = screen.getByLabelText("Password", { exact: true });
+    expect(password).toHaveAccessibleName("Password");
+  });
+
   it("exposes stable application and card styling hooks on the login page", async () => {
     const { container } = renderAt("/login", vi.fn());
 
@@ -112,21 +119,17 @@ describe("authentication pages", () => {
     }));
   });
 
-  it("consumes an invitation, establishes the session, and removes its token from the URL", async () => {
-    const replaceState = vi.spyOn(window.history, "replaceState");
-    const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ user, csrf_token: "csrf" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }));
+  it("previews an invitation without accepting it or establishing a session", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ email: "invitee@example.test" }), { status: 200 }));
     renderAt("/invitations/consume?token=secret", fetcher);
-
-    const success = await screen.findByText("Invitation accepted. You are signed in.");
-    expect(success).toHaveClass("app-message", "app-message--success");
-    expect(screen.getByRole("main")).toHaveClass("app-page", "app-page--auth");
-    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/invitations/consume", expect.objectContaining({ body: JSON.stringify({ token: "secret" }) }));
-    expect(replaceState).toHaveBeenLastCalledWith({}, "", "/invitations/consume");
+    expect(await screen.findByText("invitee@example.test")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/invitations/preview?token=secret", expect.anything());
+    expect(window.location.search).toBe("");
+    expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
   });
 
-  it("shows an invitation failure after consuming the token once", async () => {
+  it("shows an invitation preview failure without consuming it", async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 }));
     renderAt("/invitations/consume?token=bad", fetcher);
 
@@ -218,7 +221,7 @@ describe("routing", () => {
     expect(new URLSearchParams(window.location.search).get("redirect")).toBe("/");
   });
 
-  it("settings button opens calendar connections", async () => {
+  it("settings opens Account and retains navigation to calendar connections", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/auth/session") {
@@ -242,7 +245,24 @@ describe("routing", () => {
     await screen.findByText("CommonCal");
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
+    expect(window.location.pathname).toBe("/settings/account");
+    expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Users" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Calendar connections" }));
     expect(window.location.pathname).toBe("/settings/calendar-connections");
     expect(await screen.findByRole("heading", { name: "Apple Calendar" })).toBeInTheDocument();
   });
+});
+
+it("password login links to recovery and reset pages do not load an existing session", async () => {
+  const fetcher = vi.fn(async () => new Response(null, { status: 401 }));
+  renderAt("/login", fetcher);
+  await screen.findByRole("heading", { name: "Sign in" });
+  fireEvent.click(screen.getByRole("button", { name: /^Password$/ }));
+  expect(screen.getByRole("link", { name: "Forgot password?" })).toHaveAttribute("href", "/forgot-password");
+  cleanup(); fetcher.mockClear();
+  renderAt("/password-reset?token=secret", fetcher);
+  expect(await screen.findByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
+  expect(window.location.search).toBe("");
+  expect(fetcher).not.toHaveBeenCalled();
 });

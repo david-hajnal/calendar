@@ -3,6 +3,8 @@
 #
 # Required (loaded from deploy/.env when present):
 #   SESSION_SECRET, BACKUP_ENCRYPTION_KEY_HEX
+#   SMTP_HOST, SMTP_FROM (SMTP_PORT defaults to 587; direct Helm mode)
+#   Pre-created commoncal-mail Secret containing SMTP_USERNAME/SMTP_PASSWORD.
 #   MCP_INTERNAL_API_KEY, MCP_SESSION_SECRET, MCP_DOMAIN, MCP_OAUTH_ISSUER
 # Optional:
 #   IMAGE_TAG (default: main; used only for direct Helm deployment)
@@ -254,6 +256,17 @@ case "$active_flux_releases" in
     ;;
   0)
     deploy_mode=helm
+    # Fail before namespace/Secret writes when the required mail values are
+    # missing. Credentials are managed separately in commoncal-mail.
+    if [[ -z "${SMTP_HOST:-}" || -z "${SMTP_FROM:-}" ]]; then
+      echo "ERROR: SMTP_HOST and SMTP_FROM are required for direct Helm deployment" >&2
+      exit 1
+    fi
+    SMTP_PORT="${SMTP_PORT:-587}"
+    if [[ ! "$SMTP_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$SMTP_PORT < 1 || 10#$SMTP_PORT > 65535)); then
+      echo "ERROR: SMTP_PORT must be between 1 and 65535" >&2
+      exit 1
+    fi
     # Direct Helm mode requires an explicit sha-<40 hex commit> tag.
     # Flux-managed deployment ignores IMAGE_TAG entirely.
     if [[ -z "${IMAGE_TAG:-}" ]]; then
@@ -406,6 +419,9 @@ core_helm_args=(
   --set-string image.tag="$IMAGE_TAG"
   --set-string domain="$DOMAIN"
   --set-string config.appOrigin="https://$DOMAIN"
+  --set-string mail.host="$SMTP_HOST"
+  --set mail.port="$SMTP_PORT"
+  --set-string mail.from="$SMTP_FROM"
   --set-string "ingress.hosts[0].host=$DOMAIN"
   --set-string "ingress.hosts[0].paths[0].path=/"
   --set-string "ingress.tls[0].secretName=$TLS_SECRET_NAME"

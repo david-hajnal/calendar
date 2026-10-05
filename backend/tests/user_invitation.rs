@@ -71,7 +71,7 @@ impl TestApplication {
         let now = NOW;
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO users (normalized_email, display_name, status, is_superadmin, created_at)
-             VALUES (?, ?, 'active', 0, ?)
+             VALUES (?, ?, 'registered', 0, ?)
              RETURNING id",
         )
         .bind(email)
@@ -180,12 +180,7 @@ impl TestApplication {
 
         build_router_with_auth_flows_sessions_admin_calendars_and_views_and_user_invitations(
             Readiness::new(),
-            InvitationConsumer::new_at(
-                self.pool.clone(),
-                self.secret_key.clone(),
-                SESSION_LIFETIME,
-                NOW,
-            ),
+            InvitationConsumer::new_at(self.pool.clone(), self.secret_key.clone(), NOW),
             login_service,
             session_manager,
             commoncal_backend::admin::AdminService::new_for_test(),
@@ -216,7 +211,7 @@ impl TestApplication {
                 id: user_id,
                 email: "test@example.com".into(),
                 display_name: Some("Test User".into()),
-                status: "active",
+                status: "registered",
                 is_superadmin,
             },
             NOW,
@@ -291,7 +286,7 @@ async fn service_rejects_invitation_for_existing_user() {
         .create_user(NewUser {
             normalized_email: "existing@example.com".to_owned(),
             display_name: Some("Existing".to_owned()),
-            status: UserStatus::Active,
+            status: UserStatus::Registered,
             created_at: NOW - 100,
         })
         .await
@@ -661,4 +656,54 @@ async fn http_endpoint_normalizes_email_to_lowercase() {
         .await;
 
     assert_eq!(result, Err(UserInvitationError::Conflict));
+}
+
+#[tokio::test]
+async fn alternate_invitation_routes_enforce_reservations_and_invited_status() {
+    let app = TestApplication::new().await;
+    let actor = app.create_user("actor@example.com", None).await;
+    let service =
+        UserInvitationService::new_at(app.pool.clone(), app.secret_key.clone(), 3600, NOW);
+    sqlx::query("INSERT INTO email_change_requests(user_id, normalized_new_email, token_hash, expires_at, actor_user_id, created_at) VALUES (?, 'reserved@example.com', X'1234', ?, ?, ?)").bind(actor).bind(NOW + 10).bind(actor).bind(NOW).execute(&app.pool).await.unwrap();
+    assert_eq!(
+        service
+            .create_invitation(actor, "reserved@example.com".into(), None)
+            .await
+            .err(),
+        Some(UserInvitationError::Conflict)
+    );
+    sqlx::query("UPDATE email_change_requests SET expires_at = ?")
+        .bind(NOW)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let first = service
+        .create_invitation(actor, "reserved@example.com".into(), None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE invitations SET revoked_at = ?, expires_at = ? WHERE id = ?")
+        .bind(NOW)
+        .bind(NOW - 1)
+        .bind(first.invitation_id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    service
+        .resend_invitation_by_email("reserved@example.com".into())
+        .await
+        .unwrap();
+    for status in ["pending", "inactive", "registered", "deleted"] {
+        sqlx::query("UPDATE users SET status = ? WHERE normalized_email = 'reserved@example.com'")
+            .bind(status)
+            .execute(&app.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .resend_invitation_by_email("reserved@example.com".into())
+                .await
+                .err(),
+            Some(UserInvitationError::NotFound)
+        );
+    }
 }

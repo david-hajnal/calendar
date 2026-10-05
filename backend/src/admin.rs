@@ -117,7 +117,7 @@ impl AdminService {
         per_page: u32,
     ) -> Result<UserPage, AdminError> {
         if let Some(status) = status
-            && !matches!(status, "invited" | "active" | "suspended" | "deleted")
+            && !matches!(status, "invited" | "registered" | "pending" | "inactive")
         {
             return Err(AdminError::InvalidInput);
         }
@@ -125,14 +125,19 @@ impl AdminService {
             return Err(AdminError::InvalidInput);
         }
         let offset = i64::from(page - 1) * i64::from(per_page);
-        let (users, total) = match status {
+        let now = (self.clock)();
+        let (mut users, total) = match status {
             Some(status) => {
                 let users = sqlx::query_as::<_, UserSummary>(
                     "SELECT id, normalized_email AS email, display_name, status, is_superadmin,
-                            created_at
+                            created_at,
+                            (SELECT MAX(i.id) FROM invitations i WHERE i.normalized_email = users.normalized_email AND i.consumed_at IS NULL) AS invitation_id,
+                            (SELECT normalized_new_email FROM email_change_requests r WHERE r.user_id = users.id AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.expires_at > ?) AS pending_email,
+                            (SELECT expires_at FROM email_change_requests r WHERE r.user_id = users.id AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.expires_at > ?) AS pending_email_expires_at
                      FROM users WHERE status = ?
                      ORDER BY id LIMIT ? OFFSET ?",
                 )
+                .bind(now).bind(now)
                 .bind(status)
                 .bind(per_page)
                 .bind(offset)
@@ -147,19 +152,34 @@ impl AdminService {
             None => {
                 let users = sqlx::query_as::<_, UserSummary>(
                     "SELECT id, normalized_email AS email, display_name, status, is_superadmin,
-                            created_at
-                     FROM users ORDER BY id LIMIT ? OFFSET ?",
+                            created_at,
+                            (SELECT MAX(i.id) FROM invitations i WHERE i.normalized_email = users.normalized_email AND i.consumed_at IS NULL) AS invitation_id,
+                            (SELECT normalized_new_email FROM email_change_requests r WHERE r.user_id = users.id AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.expires_at > ?) AS pending_email,
+                            (SELECT expires_at FROM email_change_requests r WHERE r.user_id = users.id AND r.revoked_at IS NULL AND r.consumed_at IS NULL AND r.expires_at > ?) AS pending_email_expires_at
+                     FROM users WHERE status != 'deleted' ORDER BY id LIMIT ? OFFSET ?",
                 )
+                .bind(now).bind(now)
                 .bind(per_page)
                 .bind(offset)
                 .fetch_all(&self.pool)
                 .await?;
-                let total = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-                    .fetch_one(&self.pool)
-                    .await?;
+                let total =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE status != 'deleted'")
+                        .fetch_one(&self.pool)
+                        .await?;
                 (users, total)
             }
         };
+        for user in &mut users {
+            user.pending_email_change = user
+                .pending_email
+                .take()
+                .zip(user.pending_email_expires_at)
+                .map(|(email, expires_at)| crate::account::PendingEmailChange {
+                    email,
+                    expires_at,
+                });
+        }
         Ok(UserPage {
             users,
             page,
@@ -175,14 +195,14 @@ impl AdminService {
     ) -> Result<CreatedInvitation, AdminError> {
         let now = (self.clock)();
         let email = normalize_email(&command.email);
-        if email.is_empty() {
+        if !valid_invitation_email(&email) {
             return Err(AdminError::InvalidInput);
         }
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let existing_user: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE normalized_email = ?")
+        let existing_user: Option<String> =
+            sqlx::query_scalar("SELECT status FROM users WHERE normalized_email = ?")
                 .bind(&email)
-                .fetch_one(&mut *transaction)
+                .fetch_optional(&mut *transaction)
                 .await?;
         let pending: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM invitations
@@ -191,10 +211,16 @@ impl AdminService {
         .bind(&email)
         .fetch_one(&mut *transaction)
         .await?;
-        if existing_user != 0 || pending != 0 {
+        let reserved = invitation_email_reserved(&mut transaction, &email, now).await?;
+        if let Some(status) = existing_user {
+            return Err(AdminError::AccountExists(status));
+        }
+        if pending != 0 || reserved {
             transaction.rollback().await?;
             return Err(AdminError::Conflict);
         }
+        sqlx::query("INSERT INTO users(normalized_email, display_name, status, created_at) VALUES (?, ?, 'invited', ?)")
+            .bind(&email).bind(&command.display_name).bind(now).execute(&mut *transaction).await?;
         let created = self
             .insert_invitation(
                 &mut transaction,
@@ -259,16 +285,21 @@ impl AdminService {
         let now = (self.clock)();
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let invitation = sqlx::query_as::<_, PendingInvitation>(
-            "SELECT normalized_email, display_name FROM invitations
-             WHERE id = ? AND revoked_at IS NULL AND consumed_at IS NULL",
+            "SELECT i.normalized_email, i.display_name FROM invitations i
+             JOIN users u ON u.normalized_email = i.normalized_email
+             WHERE i.id = ? AND i.consumed_at IS NULL AND u.status = 'invited'
+             AND i.id = (SELECT MAX(id) FROM invitations WHERE normalized_email = i.normalized_email)",
         )
         .bind(invitation_id)
         .fetch_optional(&mut *transaction)
         .await?
         .ok_or(AdminError::NotFound)?;
-        sqlx::query("UPDATE invitations SET revoked_at = ? WHERE id = ?")
+        if invitation_email_reserved(&mut transaction, &invitation.normalized_email, now).await? {
+            return Err(AdminError::Conflict);
+        }
+        sqlx::query("UPDATE invitations SET revoked_at = COALESCE(revoked_at, ?) WHERE normalized_email = ? AND consumed_at IS NULL")
             .bind(now)
-            .bind(invitation_id)
+            .bind(&invitation.normalized_email)
             .execute(&mut *transaction)
             .await?;
         let created = self
@@ -295,26 +326,112 @@ impl AdminService {
         Ok(created)
     }
 
+    pub async fn email_change_status(
+        &self,
+        actor_user_id: i64,
+        user_id: i64,
+    ) -> Result<String, AdminError> {
+        let permitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND status = 'registered' AND is_superadmin = 1)").bind(actor_user_id).fetch_one(&self.pool).await?;
+        if !permitted {
+            return Err(AdminError::Forbidden);
+        }
+        sqlx::query_scalar("SELECT status FROM users WHERE id = ? AND status <> 'deleted'")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(AdminError::NotFound)
+    }
+    pub async fn change_invited_email(
+        &self,
+        actor_user_id: i64,
+        user_id: i64,
+        email: String,
+    ) -> Result<(), AdminError> {
+        let email = normalize_email(&email);
+        if !valid_invitation_email(&email) {
+            return Err(AdminError::InvalidInput);
+        }
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let now = (self.clock)();
+        let permitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND status = 'registered' AND is_superadmin = 1)").bind(actor_user_id).fetch_one(&mut *tx).await?;
+        if !permitted {
+            return Err(AdminError::Forbidden);
+        }
+        let record: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT normalized_email, display_name FROM users WHERE id = ? AND status = 'invited'",
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (old_email, display_name) = record.ok_or(AdminError::Ineligible)?;
+        if email == old_email {
+            return Err(AdminError::InvalidInput);
+        }
+        let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE normalized_email = ?) OR EXISTS(SELECT 1 FROM invitations WHERE normalized_email = ? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > ?)").bind(&email).bind(&email).bind(now).fetch_one(&mut *tx).await?;
+        if occupied || invitation_email_reserved(&mut tx, &email, now).await? {
+            return Err(AdminError::Conflict);
+        }
+        let role: Option<String> = sqlx::query_scalar("SELECT platform_role FROM invitations WHERE normalized_email = ? ORDER BY id DESC LIMIT 1").bind(&old_email).fetch_optional(&mut *tx).await?;
+        crate::account_credentials::revoke_account_credentials(
+            &mut tx,
+            user_id,
+            now,
+            crate::account_credentials::RevocationScope::EmailChanged,
+        )
+        .await?;
+        sqlx::query("UPDATE users SET normalized_email = ? WHERE id = ?")
+            .bind(&email)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        let created = self
+            .insert_invitation(&mut tx, &email, display_name, actor_user_id, now)
+            .await?;
+        // Bootstrap invitations retain their platform role when the address changes.
+        sqlx::query("UPDATE invitations SET platform_role = ? WHERE id = ?")
+            .bind(role.unwrap_or_else(|| "user".into()))
+            .bind(created.invitation_id)
+            .execute(&mut *tx)
+            .await?;
+        audit(
+            &mut tx,
+            actor_user_id,
+            "admin.user.email_change",
+            "user",
+            user_id,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        self.deliver_or_revoke(&created, email, actor_user_id, now)
+            .await
+    }
+
     pub async fn suspend_user(&self, actor_user_id: i64, user_id: i64) -> Result<(), AdminError> {
         let now = (self.clock)();
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        // Recheck the actor after taking the write lock: authentication may have
+        // preceded a concurrent disable or demotion.
+        let actor_allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND status = 'registered' AND is_superadmin = 1)")
+            .bind(actor_user_id).fetch_one(&mut *transaction).await?;
+        if !actor_allowed {
+            return Err(AdminError::Forbidden);
+        }
+        if actor_user_id == user_id {
+            return Err(AdminError::SelfDisable);
+        }
         protect_final_active_superadmin(&mut transaction, user_id).await?;
-        let result =
-            sqlx::query("UPDATE users SET status = 'suspended' WHERE id = ? AND status = 'active'")
-                .bind(user_id)
-                .execute(&mut *transaction)
-                .await?;
+        let result = sqlx::query("UPDATE users SET status = 'inactive' WHERE id = ? AND status IN ('registered', 'invited', 'pending')")
+            .bind(user_id).execute(&mut *transaction).await?;
         if result.rows_affected() != 1 {
-            transaction.rollback().await?;
             return Err(AdminError::NotFound);
         }
-        sqlx::query(
-            "UPDATE sessions SET revoked_at = ?
-             WHERE user_id = ? AND revoked_at IS NULL",
+        crate::account_credentials::revoke_account_credentials(
+            &mut transaction,
+            user_id,
+            now,
+            crate::account_credentials::RevocationScope::DisabledAccount,
         )
-        .bind(now)
-        .bind(user_id)
-        .execute(&mut *transaction)
         .await?;
         audit(
             &mut transaction,
@@ -337,7 +454,7 @@ impl AdminService {
         self.update_user(
             actor_user_id,
             user_id,
-            "UPDATE users SET status = 'active' WHERE id = ? AND status = 'suspended'",
+            "UPDATE users SET status = 'registered' WHERE id = ? AND status = 'inactive'",
             "admin.user.reactivate",
         )
         .await
@@ -348,7 +465,7 @@ impl AdminService {
             actor_user_id,
             user_id,
             "UPDATE users SET is_superadmin = 1
-             WHERE id = ? AND status = 'active' AND is_superadmin = 0",
+             WHERE id = ? AND status = 'registered' AND is_superadmin = 0",
             "admin.user.promote",
         )
         .await
@@ -526,9 +643,9 @@ async fn protect_final_active_superadmin(
     let Some((status, is_superadmin)) = target else {
         return Err(AdminError::NotFound);
     };
-    if status == "active" && is_superadmin {
+    if status == "registered" && is_superadmin {
         let active_superadmins: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users WHERE status = 'active' AND is_superadmin = 1",
+            "SELECT COUNT(*) FROM users WHERE status = 'registered' AND is_superadmin = 1",
         )
         .fetch_one(&mut **transaction)
         .await?;
@@ -585,6 +702,13 @@ pub struct UserSummary {
     pub status: String,
     pub is_superadmin: bool,
     pub created_at: i64,
+    pub invitation_id: Option<i64>,
+    #[serde(skip)]
+    pending_email: Option<String>,
+    #[serde(skip)]
+    pending_email_expires_at: Option<i64>,
+    #[sqlx(skip)]
+    pub pending_email_change: Option<crate::account::PendingEmailChange>,
 }
 
 #[derive(Debug, Serialize)]
@@ -604,9 +728,13 @@ struct PendingInvitation {
 #[derive(Debug)]
 pub enum AdminError {
     InvalidInput,
+    Ineligible,
     NotFound,
     Conflict,
+    AccountExists(String),
     FinalActiveSuperadmin,
+    SelfDisable,
+    Forbidden,
     DeliveryFailed,
     Database(sqlx::Error),
 }
@@ -630,4 +758,28 @@ impl From<sqlx::Error> for AdminError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error)
     }
+}
+
+pub(crate) fn valid_invitation_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && email.len() <= 254
+        && !email.chars().any(char::is_whitespace)
+}
+
+/// Must run within the caller's immediate transaction so reservation checks and
+/// invitation creation serialize with future email changes.
+pub(crate) async fn invitation_email_reserved(
+    transaction: &mut Transaction<'_, Sqlite>,
+    email: &str,
+    now: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query("UPDATE email_change_requests SET revoked_at = ? WHERE expires_at <= ? AND revoked_at IS NULL AND consumed_at IS NULL")
+        .bind(now).bind(now).execute(&mut **transaction).await?;
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM email_change_requests WHERE normalized_new_email = ? AND revoked_at IS NULL AND consumed_at IS NULL)")
+        .bind(email).fetch_one(&mut **transaction).await
 }

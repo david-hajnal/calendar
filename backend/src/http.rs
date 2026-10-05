@@ -772,6 +772,7 @@ fn build_application_router(state: ApplicationState) -> Router {
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
         .route("/api/v1/auth/invitations/consume", post(consume_invitation))
+        .route("/api/v1/auth/invitations/preview", get(preview_invitation))
         .route("/api/v1/auth/login-links", post(request_login_link))
         .route("/api/v1/auth/login-links/consume", post(consume_login_link))
         .fallback(not_found);
@@ -1772,6 +1773,10 @@ async fn response_security_headers(
 ) -> Response {
     let is_public = request.uri().path().starts_with("/api/v1/public/");
     let is_authentication = request.uri().path().starts_with("/api/v1/auth/");
+    let is_invitation_page = matches!(
+        request.uri().path(),
+        "/invitations/accept" | "/invitations/consume" | "/password-reset" | "/email/confirm"
+    );
     let is_api = request.uri().path().starts_with("/api/");
     let is_health = request.uri().path().starts_with("/health/");
     let mut response = next.run(request).await;
@@ -1789,7 +1794,11 @@ async fn response_security_headers(
     );
     headers.insert(
         axum::http::header::REFERRER_POLICY,
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
+        HeaderValue::from_static(if is_authentication || is_invitation_page {
+            "no-referrer"
+        } else {
+            "strict-origin-when-cross-origin"
+        }),
     );
     headers.insert(
         HeaderName::from_static("permissions-policy"),
@@ -1799,7 +1808,7 @@ async fn response_security_headers(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static(if is_public {
             "private, no-store"
-        } else if is_authentication || is_api || is_health {
+        } else if is_authentication || is_invitation_page || is_api || is_health {
             "no-store"
         } else {
             "no-cache"
@@ -2363,7 +2372,7 @@ fn require_superadmin(session: &AuthenticatedSession) -> Result<(), ApiError> {
         .is_superadmin
         .then_some(PlatformRole::Superadmin)
         .or(Some(PlatformRole::User));
-    match authorize_platform_action(UserStatus::Active, role, PlatformAction::ManageUsers) {
+    match authorize_platform_action(UserStatus::Registered, role, PlatformAction::ManageUsers) {
         AuthorizationDecision::Allow => Ok(()),
         AuthorizationDecision::Deny => Err(ApiError::forbidden()),
     }
@@ -2439,6 +2448,10 @@ async fn resend_invitation(
     Path(invitation_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     require_superadmin(&session)?;
+    if let Some(ref limiter) = state.admin_rate_limiter {
+        check_admin_invitation_rate_limit(limiter, session.user.id)
+            .map_err(|_| ApiError::rate_limited())?;
+    }
     state
         .admin_service
         .ok_or_else(ApiError::service_unavailable)?
@@ -2476,8 +2489,44 @@ user_mutation_handler!(revoke_user_sessions, revoke_sessions);
 fn map_admin_error(error: AdminError) -> ApiError {
     match error {
         AdminError::InvalidInput => ApiError::bad_request(),
+        AdminError::Ineligible => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ineligible",
+            message: "Only invited or registered accounts can change email.",
+            current_version: None,
+        },
         AdminError::NotFound => ApiError::not_found(),
-        AdminError::Conflict | AdminError::FinalActiveSuperadmin => ApiError::conflict(),
+        AdminError::AccountExists(status) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "account_exists",
+            message: match status.as_str() {
+                "invited" => "This account is invited. Use Resend invitation in Users.",
+                "registered" => "This account is registered.",
+                "pending" => "This account is pending.",
+                "inactive" => "This account is inactive.",
+                _ => "This email belongs to an existing account.",
+            },
+            current_version: None,
+        },
+        AdminError::Conflict => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "conflict",
+            message: "This email is already used or reserved. For an invited account, use Resend invitation.",
+            current_version: None,
+        },
+        AdminError::FinalActiveSuperadmin => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "final_admin",
+            message: "The final active admin cannot be disabled or demoted.",
+            current_version: None,
+        },
+        AdminError::SelfDisable => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "self_disable",
+            message: "You cannot disable your own account.",
+            current_version: None,
+        },
+        AdminError::Forbidden => ApiError::forbidden(),
         AdminError::Database(_) | AdminError::DeliveryFailed => {
             tracing::error!(error_code = "admin_operation_failed");
             ApiError::internal()
@@ -2608,7 +2657,10 @@ pub(crate) async fn authenticated_session(
     next: Next,
 ) -> Result<Response, ApiError> {
     let session = manager
-        .authenticate(session_cookie(request.headers()))
+        .authenticate(session_cookie(
+            request.headers(),
+            manager.uses_secure_cookies(),
+        ))
         .await
         .map_err(map_session_error)?;
     manager
@@ -2635,7 +2687,7 @@ async fn logout_current(
         .logout_current(&session)
         .await
         .map_err(map_session_error)?;
-    Ok(logout_response())
+    Ok(logout_response(manager.uses_secure_cookies()))
 }
 
 async fn logout_all(
@@ -2649,16 +2701,18 @@ async fn logout_all(
         .logout_all(&session)
         .await
         .map_err(map_session_error)?;
-    Ok(logout_response())
+    Ok(logout_response(manager.uses_secure_cookies()))
 }
 
-fn logout_response() -> (StatusCode, HeaderMap) {
+fn logout_response(secure: bool) -> (StatusCode, HeaderMap) {
     let mut headers = HeaderMap::new();
     headers.insert(
         SET_COOKIE,
-        HeaderValue::from_static(
-            "__Host-commoncal_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
-        ),
+        HeaderValue::from_static(if secure {
+            "__Host-commoncal_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax"
+        } else {
+            "commoncal_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+        }),
     );
     (StatusCode::NO_CONTENT, headers)
 }
@@ -2754,7 +2808,7 @@ async fn consume_login_link(
     let consumed = login_flow
         .consume_link(ConsumeLoginLink {
             token: request.token,
-            prior_session_token: session_cookie(&headers).map(str::to_owned),
+            prior_session_token: session_cookie(&headers, state.is_secure).map(str::to_owned),
         })
         .await
         .map_err(|error| match error {
@@ -2782,42 +2836,61 @@ async fn consume_login_link(
     ))
 }
 
+async fn preview_invitation(
+    State(state): State<ApplicationState>,
+    Query(request): Query<InvitationPreviewQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let consumer = state
+        .invitation_consumer
+        .ok_or_else(ApiError::service_unavailable)?;
+    let preview = consumer
+        .preview(request.token)
+        .await
+        .map_err(map_invitation_error)?;
+    Ok((
+        [
+            ("cache-control", "no-store"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        Json(preview),
+    ))
+}
+
+fn map_invitation_error(error: ConsumeInvitationError) -> ApiError {
+    match error {
+        ConsumeInvitationError::Invalid => ApiError::invalid_invitation(),
+        ConsumeInvitationError::Password(crate::password::PasswordError::InvalidPassword) => {
+            ApiError::bad_request()
+        }
+        ConsumeInvitationError::Password(_) | ConsumeInvitationError::Database(_) => {
+            tracing::error!(error_code = "invitation_consumption_failed");
+            ApiError::internal()
+        }
+    }
+}
+
 async fn consume_invitation(
     State(state): State<ApplicationState>,
-    headers: HeaderMap,
     Json(request): Json<ConsumeInvitationRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let consumer = state
         .invitation_consumer
         .ok_or_else(ApiError::service_unavailable)?;
-    let prior_session_token = session_cookie(&headers).map(str::to_owned);
     let consumed = consumer
         .consume(ConsumeInvitation {
             token: request.token,
-            prior_session_token,
+            password: request.password,
+            password_confirmation: request.password_confirmation,
         })
         .await
-        .map_err(|error| match error {
-            ConsumeInvitationError::Invalid => ApiError::invalid_invitation(),
-            ConsumeInvitationError::Database(error) => {
-                tracing::error!(error = %error, "invitation consumption failed");
-                ApiError::internal()
-            }
-        })?;
-
-    let cookie = SessionCookieBuilder::new(&consumed.session_token)
-        .is_secure(state.is_secure)
-        .build();
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        SET_COOKIE,
-        HeaderValue::from_str(&cookie).map_err(|_| ApiError::internal())?,
-    );
+        .map_err(map_invitation_error)?;
     Ok((
-        response_headers,
+        [
+            ("cache-control", "no-store"),
+            ("referrer-policy", "no-referrer"),
+        ],
         Json(ConsumeInvitationResponse {
             user: consumed.user,
-            csrf_token: consumed.csrf_token.expose().to_owned(),
         }),
     ))
 }
@@ -2921,17 +2994,20 @@ struct DevLoginQuery {
     display_name: Option<String>,
 }
 
-fn session_cookie(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .map(str::trim)
-        .find_map(|cookie| {
+fn session_cookie(headers: &HeaderMap, secure: bool) -> Option<&str> {
+    let cookies = headers.get(COOKIE)?.to_str().ok()?;
+    let find = |expected: &str| {
+        cookies.split(';').map(str::trim).find_map(|cookie| {
             let (name, value) = cookie.split_once('=')?;
-            (name == SESSION_COOKIE_NAME).then_some(value)
+            (name == expected).then_some(value)
         })
+    };
+    if secure {
+        // Never accept an unprefixed cookie on HTTPS.
+        find(SESSION_COOKIE_NAME)
+    } else {
+        find("commoncal_session").or_else(|| find(SESSION_COOKIE_NAME))
+    }
 }
 
 async fn not_found() -> ApiError {
@@ -2946,6 +3022,13 @@ struct HealthResponse {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConsumeInvitationRequest {
+    token: String,
+    password: String,
+    password_confirmation: String,
+}
+
+#[derive(Deserialize)]
+struct InvitationPreviewQuery {
     token: String,
 }
 
@@ -2987,7 +3070,6 @@ struct PasswordLoginResponse {
 #[derive(Serialize)]
 struct ConsumeInvitationResponse {
     user: ActiveUser,
-    csrf_token: String,
 }
 
 #[derive(Deserialize)]
@@ -3310,7 +3392,7 @@ impl ApiError {
 
     fn invalid_invitation() -> Self {
         Self {
-            status: StatusCode::UNAUTHORIZED,
+            status: StatusCode::BAD_REQUEST,
             code: "invalid_invitation",
             message: "Invitation is invalid or expired",
             current_version: None,
@@ -3450,7 +3532,7 @@ mod tests {
                 id: user_id,
                 email: "test@example.com".into(),
                 display_name: Some("Test User".into()),
-                status: "active",
+                status: "registered",
                 is_superadmin,
             },
             1000,
@@ -3651,4 +3733,325 @@ mod tests {
         );
         assert!(retry_after.unwrap() > 0, "retry_after should be positive");
     }
+}
+
+#[derive(Clone)]
+struct AccountRecoveryState {
+    service: crate::account::AccountService,
+    origin: Arc<str>,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+}
+
+/// Public account routes have their own origin and admission boundary, applied
+/// in development and production alike. Merge before shared app middleware.
+pub fn build_account_recovery_router(
+    service: crate::account::AccountService,
+    origin: impl Into<Arc<str>>,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+) -> Router {
+    let state = AccountRecoveryState {
+        service,
+        origin: origin.into(),
+        limiter,
+    };
+    Router::new()
+        .route("/api/v1/auth/password-resets", post(request_password_reset))
+        .route(
+            "/api/v1/auth/password-resets/consume",
+            post(consume_password_reset),
+        )
+        .route(
+            "/api/v1/auth/email-changes/consume",
+            post(consume_email_change),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            recovery_boundary,
+        ))
+        .with_state(state)
+}
+
+async fn recovery_boundary(
+    State(state): State<AccountRecoveryState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let allowed_origin = request
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        == Some(state.origin.as_ref());
+    let mut response = if !allowed_origin {
+        ApiError::forbidden().into_response()
+    } else {
+        next.run(request).await
+    };
+    response
+        .headers_mut()
+        .insert("cache-control", HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+    response
+}
+
+#[derive(Deserialize)]
+struct RequestPasswordResetRequest {
+    email: String,
+}
+#[derive(Deserialize)]
+struct ConsumePasswordResetRequest {
+    token: String,
+    password: String,
+    password_confirmation: String,
+}
+
+async fn request_password_reset(
+    State(state): State<AccountRecoveryState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    Json(request): Json<RequestPasswordResetRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    // No trusted proxy configuration exists: untrusted forwarded headers never
+    // control rate-limit identity. All clients behind a proxy share its bucket.
+    let ip = connect_info
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    if !state.limiter.allow_request(&request.email, &ip) {
+        return Err(ApiError::rate_limited());
+    }
+    if state
+        .service
+        .request_password_reset(crate::account::RequestPasswordReset {
+            email: request.email,
+        })
+        .await
+        .is_err()
+    {
+        tracing::error!(error_code = "password_reset_request_failed");
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(RequestLoginLinkResponse {
+            message: "If the account is eligible, a password reset link will be sent.",
+        }),
+    ))
+}
+async fn consume_password_reset(
+    State(state): State<AccountRecoveryState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    Json(request): Json<ConsumePasswordResetRequest>,
+) -> Result<StatusCode, ApiError> {
+    let ip = connect_info
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    if !state.limiter.allow_token(&ip) {
+        return Err(ApiError::rate_limited());
+    }
+    state
+        .service
+        .consume_password_reset(crate::account::ConsumePasswordReset {
+            token: request.token,
+            password: request.password,
+            password_confirmation: request.password_confirmation,
+        })
+        .await
+        .map_err(|error| match error {
+            crate::account::AccountError::InvalidToken => ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_reset",
+                message: "Password reset link is invalid or expired.",
+                current_version: None,
+            },
+            crate::account::AccountError::Password(
+                crate::password::PasswordError::InvalidPassword,
+            ) => ApiError::bad_request(),
+            _ => {
+                tracing::error!(error_code = "password_reset_consumption_failed");
+                ApiError::internal()
+            }
+        })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Account settings uses the same authenticated session and CSRF boundary as other browser writes.
+pub fn build_account_settings_router(
+    service: crate::account::AccountService,
+    manager: SessionManager,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+) -> Router {
+    Router::new()
+        .route("/api/v1/account", get(account_summary))
+        .route("/api/v1/account/email-changes", post(request_email_change))
+        .route_layer(middleware::from_fn_with_state(
+            manager,
+            authenticated_session,
+        ))
+        .with_state(AccountSettingsState { service, limiter })
+}
+#[derive(Clone)]
+struct AccountSettingsState {
+    service: crate::account::AccountService,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+}
+async fn account_summary(
+    State(state): State<AccountSettingsState>,
+    Extension(session): Extension<AuthenticatedSession>,
+) -> Result<impl IntoResponse, ApiError> {
+    let summary = state
+        .service
+        .summary(session.user.id)
+        .await
+        .map_err(map_account_error)?;
+    Ok(([("cache-control", "no-store")], Json(summary)))
+}
+#[derive(Deserialize)]
+struct RequestEmailChangeRequest {
+    email: String,
+    current_password: String,
+}
+async fn request_email_change(
+    State(state): State<AccountSettingsState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Json(request): Json<RequestEmailChangeRequest>,
+) -> Result<StatusCode, ApiError> {
+    if !state.limiter.allow_email_change(session.user.id) {
+        return Err(ApiError::rate_limited());
+    }
+    state
+        .service
+        .request_email_change(
+            session.user.id,
+            crate::account::RequestEmailChange {
+                email: request.email,
+                current_password: request.current_password,
+            },
+        )
+        .await
+        .map_err(map_account_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+#[derive(Deserialize)]
+struct ConsumeEmailChangeRequest {
+    token: String,
+}
+async fn consume_email_change(
+    State(state): State<AccountRecoveryState>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    Json(request): Json<ConsumeEmailChangeRequest>,
+) -> Result<StatusCode, ApiError> {
+    let ip = connect_info
+        .map(|ConnectInfo(address)| address.ip().to_string())
+        .unwrap_or_else(|| "unknown".into());
+    if !state.limiter.allow_token(&ip) {
+        return Err(ApiError::rate_limited());
+    }
+    state
+        .service
+        .confirm_email_change(request.token)
+        .await
+        .map_err(map_account_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+fn map_account_error(error: crate::account::AccountError) -> ApiError {
+    use crate::account::AccountError;
+    let (status, code, message) = match error {
+        AccountError::Forbidden => return ApiError::forbidden(),
+        AccountError::InvalidInput => (
+            StatusCode::BAD_REQUEST,
+            "invalid_email",
+            "Enter a different valid email address.",
+        ),
+        AccountError::InvalidToken => (
+            StatusCode::BAD_REQUEST,
+            "invalid_email_change",
+            "Email confirmation link is invalid or expired.",
+        ),
+        AccountError::WrongPassword => (
+            StatusCode::BAD_REQUEST,
+            "wrong_password",
+            "Current password is incorrect.",
+        ),
+        AccountError::PasswordRequired => (
+            StatusCode::CONFLICT,
+            "password_required",
+            "Set a password through Forgot password before changing email.",
+        ),
+        AccountError::EmailConflict => (
+            StatusCode::CONFLICT,
+            "email_conflict",
+            "This email is already used or reserved.",
+        ),
+        AccountError::Ineligible => (
+            StatusCode::CONFLICT,
+            "ineligible",
+            "This account has changed or is not eligible.",
+        ),
+        AccountError::DeliveryFailed => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "delivery_failed",
+            "Confirmation could not be sent. Please try again.",
+        ),
+        _ => {
+            tracing::error!(error_code = "account_operation_failed");
+            return ApiError::internal();
+        }
+    };
+    ApiError {
+        status,
+        code,
+        message,
+        current_version: None,
+    }
+}
+
+#[derive(Clone)]
+struct AccountAdminState {
+    service: crate::account::AccountService,
+    admin: AdminService,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+}
+pub fn build_account_admin_router(
+    service: crate::account::AccountService,
+    admin: AdminService,
+    manager: SessionManager,
+    limiter: crate::account_rate_limit::AccountRateLimiter,
+) -> Router {
+    Router::new()
+        .route(
+            "/api/v1/admin/users/:id/email-changes",
+            post(admin_email_change),
+        )
+        .route_layer(middleware::from_fn_with_state(
+            manager,
+            authenticated_session,
+        ))
+        .with_state(AccountAdminState {
+            service,
+            admin,
+            limiter,
+        })
+}
+#[derive(Deserialize)]
+struct AdminEmailChangeRequest {
+    email: String,
+}
+async fn admin_email_change(
+    State(state): State<AccountAdminState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    Path(user_id): Path<i64>,
+    Json(request): Json<AdminEmailChangeRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_superadmin(&session)?;
+    if !state.limiter.allow_email_change(session.user.id) {
+        return Err(ApiError::rate_limited());
+    }
+    match state.admin.email_change_status(session.user.id,user_id).await.map_err(map_admin_error)?.as_str() {
+        "registered" => state.service.request_admin_email_change(session.user.id,user_id,request.email).await.map_err(map_account_error)?,
+        "invited" => state.admin.change_invited_email(session.user.id,user_id,request.email).await.map_err(|error| match error {
+            AdminError::DeliveryFailed => ApiError { status: StatusCode::SERVICE_UNAVAILABLE, code: "invitation_delivery_failed", message: "The address changed, but the invitation could not be sent. Use Resend invitation to retry.", current_version: None },
+            other => map_admin_error(other),
+        })?,
+        _ => return Err(map_admin_error(AdminError::Ineligible)),
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

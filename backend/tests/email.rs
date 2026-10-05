@@ -83,6 +83,24 @@ async fn token_values_do_not_appear_in_captured_structured_logs() {
     async {
         sender.send_invitation(invitation_email()).await.unwrap();
         sender.send_login_link(login_email()).await.unwrap();
+        sender
+            .send_password_reset(commoncal_backend::email::PasswordResetEmail::new(
+                "member@example.com",
+                AuthenticationLink::new(
+                    "https://commoncal.example/password-reset?token=recovery-log-secret",
+                ),
+            ))
+            .await
+            .unwrap();
+        sender
+            .send_email_confirmation(commoncal_backend::email::EmailConfirmationEmail::new(
+                "new@example.test",
+                AuthenticationLink::new(
+                    "https://commoncal.test/email/confirm?token=confirmation-log-secret",
+                ),
+            ))
+            .await
+            .unwrap();
     }
     .instrument(tracing::info_span!(parent: None, "development_email_test"))
     .with_subscriber(subscriber)
@@ -91,6 +109,8 @@ async fn token_values_do_not_appear_in_captured_structured_logs() {
     let output = captured.output();
     assert!(!output.contains(INVITATION_TOKEN));
     assert!(!output.contains(LOGIN_TOKEN));
+    assert!(!output.contains("recovery-log-secret"));
+    assert!(!output.contains("confirmation-log-secret"));
 }
 
 fn invitation_email() -> InvitationEmail {
@@ -163,4 +183,66 @@ impl CapturedOutput {
     fn output(&self) -> String {
         String::from_utf8(self.bytes.lock().unwrap().clone()).unwrap()
     }
+}
+
+#[tokio::test]
+async fn password_recovery_uses_its_own_message_and_redacts_link_debug() {
+    use commoncal_backend::email::PasswordResetEmail;
+    let command = PasswordResetEmail::new(
+        "member@example.com",
+        AuthenticationLink::new("https://commoncal.example/password-reset?token=recovery-secret"),
+    );
+    assert!(!format!("{command:?}").contains("recovery-secret"));
+    let sender = InMemoryEmailSender::new();
+    sender.send_password_reset(command.clone()).await.unwrap();
+    assert_eq!(
+        sender.messages()[0].message_type(),
+        EmailMessageType::PasswordReset
+    );
+    assert_eq!(
+        sender.messages()[0].subject(),
+        "Reset your CommonCal password"
+    );
+    let provider = ProductionEmailSender::new(RejectingProvider);
+    assert_eq!(
+        provider
+            .send_password_reset(command)
+            .await
+            .unwrap_err()
+            .code(),
+        EmailErrorCode::ProviderFailure
+    );
+}
+
+#[tokio::test]
+async fn email_confirmation_and_notice_use_distinct_messages_and_redact_tokens() {
+    use commoncal_backend::email::{EmailChangedEmail, EmailConfirmationEmail};
+    let confirmation = EmailConfirmationEmail::new(
+        "new@example.test",
+        AuthenticationLink::new("https://commoncal.test/email/confirm?token=email-secret"),
+    );
+    assert!(!format!("{confirmation:?}").contains("email-secret"));
+    let notice = EmailChangedEmail::new("old@example.test", "new@example.test");
+    let sender = InMemoryEmailSender::new();
+    sender
+        .send_email_confirmation(confirmation.clone())
+        .await
+        .unwrap();
+    sender.send_email_changed(notice.clone()).await.unwrap();
+    assert_eq!(
+        sender.messages()[0].message_type(),
+        EmailMessageType::EmailConfirmation
+    );
+    assert_eq!(
+        sender.messages()[1].message_type(),
+        EmailMessageType::EmailChanged
+    );
+    let provider = ProductionEmailSender::new(RejectingProvider);
+    assert!(
+        provider
+            .send_email_confirmation(confirmation)
+            .await
+            .is_err()
+    );
+    assert!(provider.send_email_changed(notice).await.is_err());
 }

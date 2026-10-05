@@ -9,7 +9,10 @@ import { CompositeViewManagement } from "./calendar/CompositeViewManagement";
 import { listCalendars } from "./calendar/api";
 import type { Calendar } from "./calendar/CalendarManagement";
 import { PublicViewPage } from "./public/PublicView";
-import { CalendarConnections } from "./settings/CalendarConnections";
+import { EmailConfirmation } from "./auth/EmailConfirmation";
+import { PasswordRecoveryRequest, PasswordResetPage } from "./auth/PasswordRecovery";
+import { InvitationPage } from "./auth/InvitationPage";
+import { Settings } from "./settings/Settings";
 import { NotificationDropdown } from "./notification/NotificationDropdown";
 import { listNotifications } from "./notification/api";
 import { DevLoginPage } from "./dev-login";
@@ -135,15 +138,15 @@ function LoginRequestPage() {
           <form className="auth-form" onSubmit={submit}>
             <label className="auth-form__field" htmlFor="email"><span>Email address</span>
               <div className="auth-form__input-wrapper">
-                <span className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--color-on-surface-variant)', pointerEvents: 'none' }}>mail</span>
+                <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--color-on-surface-variant)', pointerEvents: 'none' }}>mail</span>
                 <input id="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
               </div>
             </label>
             {method === "password" && (
               <label className="auth-form__field" htmlFor="password"><span>Password</span>
                 <div className="auth-form__input-wrapper">
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--color-on-surface-variant)', pointerEvents: 'none' }}>lock</span>
-                  <input id="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+                  <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '20px', color: 'var(--color-on-surface-variant)', pointerEvents: 'none' }}>lock</span>
+                  <input id="password" aria-label="Password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
                 </div>
               </label>
             )}
@@ -152,6 +155,7 @@ function LoginRequestPage() {
               {submitting ? (method === "password" ? "Signing in…" : "Sending login link…") : (method === "password" ? "Sign in" : "Email me a login link")}
             </button>
           </form>
+          {method === "password" && <a href="/forgot-password">Forgot password?</a>}
         </>
       )}
       {error && <p className="app-message app-message--error" role="alert">{error}</p>}
@@ -167,7 +171,7 @@ function LoginRequestPage() {
   </main>;
 }
 
-function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
+function TokenConsumptionPage() {
   const { api, completeAuthentication } = useAuth();
   const [result, setResult] = useState<"loading" | "success" | "failure">("loading");
   const [{ token, redirect }] = useState(() => {
@@ -175,9 +179,9 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
     const requestedRedirect = params.get("redirect");
     return { token: params.get("token"), redirect: safeRedirectTarget(requestedRedirect) ?? (requestedRedirect === null ? null : "/") };
   });
-  const endpoint = kind === "invitation" ? "/api/v1/auth/invitations/consume" : "/api/v1/auth/login-links/consume";
-  const failure = kind === "invitation" ? "Invitation is invalid or expired." : "Login link is invalid or expired.";
-  const success = kind === "invitation" ? "Invitation accepted. You are signed in." : "You are signed in.";
+  const endpoint = "/api/v1/auth/login-links/consume";
+  const failure = "Login link is invalid or expired.";
+  const success = "You are signed in.";
 
   useEffect(() => {
     const cleanUrl = () => window.history.replaceState({}, "", window.location.pathname);
@@ -219,7 +223,7 @@ function TokenConsumptionPage({ kind }: { kind: "invitation" | "login" }) {
         <span className="material-symbols-outlined eyebrow-icon" style={{ fontSize: '24px' }}>calendar_month</span>
         <span className="auth-card__eyebrow-text">CommonCal</span>
       </div>
-      <h1 id="authentication-heading" className="typography-headline-lg">{kind === "invitation" ? "Accept invitation" : "Signing in"}</h1>
+      <h1 id="authentication-heading" className="typography-headline-lg">Signing in</h1>
       {result === "loading" && <p className="app-message app-message--status" role="status">Completing sign-in…</p>}
       {result === "success" && <div className="auth-card__success">
         <span className="material-symbols-outlined fill" style={{ fontSize: '48px', color: 'var(--color-on-tertiary-container)' }}>check_circle</span>
@@ -297,7 +301,7 @@ function AuthenticatedShell() {
 
   const name = state.session.user.display_name ?? state.session.user.email;
   const initials = name.split(/[\s.]+/).slice(0, 2).map((n) => n[0]).join('').toUpperCase().slice(0, 2);
-  const activeTab = window.location.pathname === "/calendars" ? "calendars" : window.location.pathname === "/shared" ? "shared" : window.location.pathname === "/settings/calendar-connections" ? "settings" : "calendar";
+  const activeTab = window.location.pathname === "/calendars" ? "calendars" : window.location.pathname === "/shared" ? "shared" : window.location.pathname.startsWith("/settings") ? "settings" : "calendar";
 
   return <main className="app-shell">
     {/* Fixed top header */}
@@ -314,7 +318,7 @@ function AuthenticatedShell() {
       </nav>}
       <div className="app-header__actions">
         <NotificationDropdown api={api} />
-        <button className={`app-nav__button app-nav__button--quiet ${activeTab === "settings" ? "app-nav__button--active" : ""}`} type="button" aria-label="Settings" onClick={() => navigate("/settings/calendar-connections")}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
+        <button className={`app-nav__button app-nav__button--quiet ${activeTab === "settings" ? "app-nav__button--active" : ""}`} type="button" aria-label="Settings" onClick={() => navigate("/settings/account")}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>settings</span></button>
         <ThemeToggle />
         <div className="avatar" aria-label={`Signed in as ${name}`} title={name}>{initials}<span className="avatar__name">{name}</span><span className="avatar__email">{state.session.user.email}</span></div>
         <button className="app-nav__button app-nav__button--quiet" type="button" aria-label="Sign out" onClick={() => void logout()}>
@@ -340,8 +344,8 @@ function AuthenticatedShell() {
     <div className="app-shell__content">
       {window.location.pathname === "/calendars" && <CalendarManagement api={api} />}
       {window.location.pathname === "/shared" && <CompositeViewManagement api={api} />}
-      {window.location.pathname === "/settings/calendar-connections" && <CalendarConnections api={api} />}
-      {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && window.location.pathname !== "/settings/calendar-connections" && <CalendarPage api={api} />}
+      {window.location.pathname.startsWith("/settings") && <Settings api={api} currentUserId={state.session.user.id} isAdmin={state.session.user.is_superadmin} path={window.location.pathname} navigate={navigate} />}
+      {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && !window.location.pathname.startsWith("/settings") && <CalendarPage api={api} />}
     </div>
   </main>;
 }
@@ -373,14 +377,17 @@ function AuthRoutes() {
   const pathname = window.location.pathname;
   if (pathname === "/login") return <LoginRequestPage />;
   if (pathname === "/dev-login") return <DevLoginPage />;
-  if (pathname === "/invitations/consume") return <TokenConsumptionPage kind="invitation" />;
-  if (pathname === "/login/consume") return <TokenConsumptionPage kind="login" />;
+  if (pathname === "/forgot-password") return <PasswordRecoveryRequest />;
+  if (pathname === "/email/confirm") return <EmailConfirmation />;
+  if (pathname === "/password-reset") return <PasswordResetPage />;
+  if (pathname === "/invitations/consume" || pathname === "/invitations/accept") return <InvitationPage />;
+  if (pathname === "/login/consume") return <TokenConsumptionPage />;
   return <AuthenticatedShell key={location} />;
 }
 
 export function App({ fetcher }: { fetcher?: Fetcher }) {
   const publicToken = /^\/public\/views\/([^/]+)$/.exec(window.location.pathname)?.[1];
   if (publicToken) return <PublicViewPage token={publicToken} fetcher={fetcher} />;
-  const isTokenConsumption = window.location.pathname === "/invitations/consume" || window.location.pathname === "/login/consume" || window.location.pathname === "/dev-login";
+  const isTokenConsumption = window.location.pathname === "/invitations/consume" || window.location.pathname === "/invitations/accept" || window.location.pathname === "/login/consume" || window.location.pathname === "/dev-login" || window.location.pathname === "/password-reset" || window.location.pathname === "/forgot-password" || window.location.pathname === "/email/confirm";
   return <ThemeProvider><AuthProvider fetcher={fetcher} loadSession={!isTokenConsumption}><AuthRoutes /></AuthProvider></ThemeProvider>;
 }

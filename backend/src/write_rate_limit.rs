@@ -107,7 +107,7 @@ mod tests {
                 id: user_id,
                 email: "test@example.com".into(),
                 display_name: Some("Test User".into()),
-                status: "active",
+                status: "registered",
                 is_superadmin,
             },
             1000,

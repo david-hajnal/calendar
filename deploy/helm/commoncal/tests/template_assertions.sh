@@ -41,7 +41,7 @@ if ! command -v helm >/dev/null 2>&1; then
   exit 0
 fi
 
-helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag > "$rendered"
+helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test --set-string image.tag=test-image-tag > "$rendered"
 python3 "$chart_dir/../../../scripts/validate-yaml.py" "$rendered"
 
 grep -q 'replicas: 1' "$rendered"
@@ -100,7 +100,7 @@ if grep -q 'kind: HorizontalPodAutoscaler' "$rendered"; then
   exit 1
 fi
 
-if helm template commoncal "$chart_dir" --set-string image.tag=test-image-tag --set replicaCount=2 >/dev/null 2>&1; then
+if helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test --set-string image.tag=test-image-tag --set replicaCount=2 >/dev/null 2>&1; then
   echo 'replicaCount=2 should be rejected by values schema' >&2
   exit 1
 fi
@@ -122,7 +122,7 @@ ingress:
         - cal.example.test
         - mcal.example.test
 VALUES
-helm template commoncal "$chart_dir" -f "$prod_values" > "$prod_rendered"
+helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test -f "$prod_values" > "$prod_rendered"
 
 grep -F -q 'secretName: commoncal-tls' "$prod_rendered" || {
   echo 'production Ingress must reference the commoncal-tls Secret' >&2
@@ -181,7 +181,7 @@ PY
 # non-secret config, and the NetworkPolicy egress permits the bridge.
 bridge_rendered=$(mktemp)
 trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered"' EXIT
-helm template commoncal "$chart_dir" \
+helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test \
   --set image.tag=test-image-tag \
   --set config.appOrigin=https://cal.example.test \
   --set authBridge.enabled=true \
@@ -218,7 +218,7 @@ fi
 # Default (bridge disabled) must not render the bridge env var.
 default_rendered=$(mktemp)
 trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered" "$default_rendered"' EXIT
-helm template commoncal "$chart_dir" \
+helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test \
   --set image.tag=test-image-tag \
   --set config.appOrigin=https://cal.example.test \
   > "$default_rendered"
@@ -232,7 +232,7 @@ fi
 # left seven Error pods for each failed Job because backoffLimit was omitted.
 backup_rendered=$(mktemp)
 trap 'rm -f "$rendered" "$prod_values" "$prod_rendered" "$bridge_rendered" "$default_rendered" "$backup_rendered"' EXIT
-helm template commoncal "$chart_dir" \
+helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test \
   --set image.tag=test-image-tag \
   --set backup.enabled=true \
   > "$backup_rendered"

@@ -10,6 +10,9 @@ use std::{
 
 const INVITATION_SUBJECT: &str = "You are invited to CommonCal";
 const LOGIN_LINK_SUBJECT: &str = "Your CommonCal login link";
+const PASSWORD_RESET_SUBJECT: &str = "Reset your CommonCal password";
+const EMAIL_CONFIRMATION_SUBJECT: &str = "Confirm your CommonCal email";
+const EMAIL_CHANGED_SUBJECT: &str = "Your CommonCal email changed";
 const NOTIFICATION_SUBJECT: &str = "CommonCal reminder";
 
 pub trait EmailSender {
@@ -22,6 +25,29 @@ pub trait EmailSender {
         &self,
         command: LoginLinkEmail,
     ) -> impl Future<Output = Result<(), EmailError>> + Send;
+
+    fn send_password_reset(
+        &self,
+        command: PasswordResetEmail,
+    ) -> impl Future<Output = Result<(), EmailError>> + Send {
+        let _ = command;
+        async { Err(EmailError::provider_failure()) }
+    }
+
+    fn send_email_confirmation(
+        &self,
+        command: EmailConfirmationEmail,
+    ) -> impl Future<Output = Result<(), EmailError>> + Send {
+        let _ = command;
+        async { Err(EmailError::provider_failure()) }
+    }
+    fn send_email_changed(
+        &self,
+        command: EmailChangedEmail,
+    ) -> impl Future<Output = Result<(), EmailError>> + Send {
+        let _ = command;
+        async { Err(EmailError::provider_failure()) }
+    }
 
     fn send_notification(
         &self,
@@ -64,12 +90,77 @@ impl InvitationEmail {
             authentication_link,
         }
     }
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+    pub fn authentication_link(&self) -> &AuthenticationLink {
+        &self.authentication_link
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoginLinkEmail {
     recipient: String,
     authentication_link: AuthenticationLink,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PasswordResetEmail {
+    recipient: String,
+    authentication_link: AuthenticationLink,
+}
+impl PasswordResetEmail {
+    pub fn new(recipient: impl Into<String>, authentication_link: AuthenticationLink) -> Self {
+        Self {
+            recipient: recipient.into(),
+            authentication_link,
+        }
+    }
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+    pub fn authentication_link(&self) -> &AuthenticationLink {
+        &self.authentication_link
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmailConfirmationEmail {
+    recipient: String,
+    authentication_link: AuthenticationLink,
+}
+impl EmailConfirmationEmail {
+    pub fn new(recipient: impl Into<String>, authentication_link: AuthenticationLink) -> Self {
+        Self {
+            recipient: recipient.into(),
+            authentication_link,
+        }
+    }
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+    pub fn authentication_link(&self) -> &AuthenticationLink {
+        &self.authentication_link
+    }
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmailChangedEmail {
+    recipient: String,
+    new_email: String,
+}
+impl EmailChangedEmail {
+    pub fn new(recipient: impl Into<String>, new_email: impl Into<String>) -> Self {
+        Self {
+            recipient: recipient.into(),
+            new_email: new_email.into(),
+        }
+    }
+    pub fn recipient(&self) -> &str {
+        &self.recipient
+    }
+    pub fn new_email(&self) -> &str {
+        &self.new_email
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +203,9 @@ impl LoginLinkEmail {
 pub enum EmailMessageType {
     Invitation,
     LoginLink,
+    PasswordReset,
+    EmailConfirmation,
+    EmailChanged,
     Notification,
 }
 
@@ -120,6 +214,9 @@ impl EmailMessageType {
         match self {
             Self::Invitation => "invitation",
             Self::LoginLink => "login_link",
+            Self::PasswordReset => "password_reset",
+            Self::EmailConfirmation => "email_confirmation",
+            Self::EmailChanged => "email_changed",
             Self::Notification => "notification",
         }
     }
@@ -188,6 +285,33 @@ impl EmailSender for InMemoryEmailSender {
         Ok(())
     }
 
+    async fn send_password_reset(&self, command: PasswordResetEmail) -> Result<(), EmailError> {
+        self.capture(
+            command.recipient,
+            EmailMessageType::PasswordReset,
+            PASSWORD_RESET_SUBJECT,
+        );
+        Ok(())
+    }
+    async fn send_email_confirmation(
+        &self,
+        command: EmailConfirmationEmail,
+    ) -> Result<(), EmailError> {
+        self.capture(
+            command.recipient,
+            EmailMessageType::EmailConfirmation,
+            EMAIL_CONFIRMATION_SUBJECT,
+        );
+        Ok(())
+    }
+    async fn send_email_changed(&self, command: EmailChangedEmail) -> Result<(), EmailError> {
+        self.capture(
+            command.recipient,
+            EmailMessageType::EmailChanged,
+            EMAIL_CHANGED_SUBJECT,
+        );
+        Ok(())
+    }
     async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
         self.capture(
             command.recipient,
@@ -272,6 +396,33 @@ impl EmailSender for DevelopmentEmailSender {
         )
     }
 
+    async fn send_password_reset(&self, command: PasswordResetEmail) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::PasswordReset,
+            PASSWORD_RESET_SUBJECT,
+            &command.recipient,
+            Some(command.authentication_link.expose()),
+        )
+    }
+    async fn send_email_confirmation(
+        &self,
+        command: EmailConfirmationEmail,
+    ) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::EmailConfirmation,
+            EMAIL_CONFIRMATION_SUBJECT,
+            &command.recipient,
+            Some(command.authentication_link.expose()),
+        )
+    }
+    async fn send_email_changed(&self, command: EmailChangedEmail) -> Result<(), EmailError> {
+        self.log(
+            EmailMessageType::EmailChanged,
+            EMAIL_CHANGED_SUBJECT,
+            &command.recipient,
+            None,
+        )
+    }
     async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
         self.log(
             EmailMessageType::Notification,
@@ -328,6 +479,36 @@ impl ProviderEmail {
         }
     }
 
+    fn password_reset(command: PasswordResetEmail) -> Self {
+        Self {
+            recipient: command.recipient,
+            subject: PASSWORD_RESET_SUBJECT,
+            body: format!(
+                "Reset your CommonCal password within 15 minutes: {}",
+                command.authentication_link.expose()
+            ),
+        }
+    }
+    fn email_confirmation(command: EmailConfirmationEmail) -> Self {
+        Self {
+            recipient: command.recipient,
+            subject: EMAIL_CONFIRMATION_SUBJECT,
+            body: format!(
+                "Confirm your CommonCal email within 24 hours: {}",
+                command.authentication_link.expose()
+            ),
+        }
+    }
+    fn email_changed(command: EmailChangedEmail) -> Self {
+        Self {
+            recipient: command.recipient,
+            subject: EMAIL_CHANGED_SUBJECT,
+            body: format!(
+                "Your CommonCal email is now {}. If you did not request this change, contact your administrator.",
+                command.new_email
+            ),
+        }
+    }
     fn notification(command: NotificationEmail) -> Self {
         Self {
             recipient: command.recipient,
@@ -386,6 +567,27 @@ where
             .map_err(|_| EmailError::provider_failure())
     }
 
+    async fn send_password_reset(&self, command: PasswordResetEmail) -> Result<(), EmailError> {
+        self.provider
+            .send(ProviderEmail::password_reset(command))
+            .await
+            .map_err(|_| EmailError::provider_failure())
+    }
+    async fn send_email_confirmation(
+        &self,
+        command: EmailConfirmationEmail,
+    ) -> Result<(), EmailError> {
+        self.provider
+            .send(ProviderEmail::email_confirmation(command))
+            .await
+            .map_err(|_| EmailError::provider_failure())
+    }
+    async fn send_email_changed(&self, command: EmailChangedEmail) -> Result<(), EmailError> {
+        self.provider
+            .send(ProviderEmail::email_changed(command))
+            .await
+            .map_err(|_| EmailError::provider_failure())
+    }
     async fn send_notification(&self, command: NotificationEmail) -> Result<(), EmailError> {
         self.provider
             .send(ProviderEmail::notification(command))

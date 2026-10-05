@@ -172,6 +172,11 @@ impl AppConfig {
             ));
         }
 
+        if environment == Environment::Production && !password_login_enabled {
+            return Err(ConfigError::new(
+                "PASSWORD_LOGIN_ENABLED=true is required in production",
+            ));
+        }
         let password_login_enabled = if environment == Environment::Production {
             password_login_enabled
         } else {
@@ -290,12 +295,14 @@ mod tests {
     use super::*;
 
     fn base_config(environment: Environment) -> AppConfig {
-        AppConfig::with_database_path_and_origin(
+        AppConfig::with_database_path_and_origin_and_access_log_level(
             environment,
             "127.0.0.1:3000",
             Some("secret".into()),
             "test.sqlite",
             "https://app.example",
+            tracing::level_filters::LevelFilter::DEBUG,
+            true,
         )
         .unwrap()
     }

@@ -4,12 +4,17 @@ Multi-user calendar platform with email-based authentication, shared composite v
 public calendar sharing, one-time editable ICS file import, external ICS feed ingestion,
 Apple Calendar (CalDAV) account sync, and encrypted backup/restore.
 
+Admins manage invitations, resends, account access, and email changes under
+Settings → Users. Users can recover passwords and confirm email changes under
+Settings → Account. See the [account management guide](docs/ACCOUNT-MANAGEMENT.md).
+
 ## Tech stack
 
 - **Backend**: Rust (Axum, SQLite, sqlx, tokio)
 - **Frontend**: React 19, Vite 7, TypeScript
 - **Infra**: Docker multi-stage build, Helm charts
-- **Auth**: Magic-link email auth, session cookies (`__Host-commoncal_session`)
+- **Auth**: Password and email-link login, invitation setup, password recovery,
+  verified email changes, and session cookies (`__Host-commoncal_session` on HTTPS)
 - **Storage**: SQLite (single-node, file-backed)
 
 ## Prerequisites
@@ -172,6 +177,11 @@ docker buildx version
 ```
 
 ## Production container
+
+Production invitations and account recovery require authenticated TLS SMTP and
+`PASSWORD_LOGIN_ENABLED=true`. See [account email setup](docs/external/account-email.md)
+for required environment variables, Helm secret mappings, and delivery checks.
+Development captures mail locally.
 
 Build the production image using `scripts/docker-build-push.sh --build-only`,
 then run the bounded runtime acceptance checks (non-root execution, read-only

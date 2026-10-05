@@ -291,7 +291,7 @@ where
              FROM users
              JOIN calendar_acl ON calendar_acl.user_id = users.id
              JOIN events ON events.id = ? AND events.calendar_id = calendar_acl.calendar_id
-             WHERE users.id = ? AND users.status = 'active' AND calendar_acl.calendar_id = ?",
+             WHERE users.id = ? AND users.status = 'registered' AND calendar_acl.calendar_id = ?",
         )
         .bind(job.event_id)
         .bind(job.user_id)

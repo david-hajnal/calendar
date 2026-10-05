@@ -30,6 +30,26 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, PasswordError
     bcrypt::verify(password, hash).map_err(|e| PasswordError::HashError(e.to_string()))
 }
 
+/// New account passwords obey the policy without changing legacy verification.
+pub async fn hash_new_password(
+    password: String,
+    confirmation: String,
+) -> Result<String, PasswordError> {
+    if password != confirmation || password.chars().count() < 12 || password.len() > 72 {
+        return Err(PasswordError::InvalidPassword);
+    }
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|_| PasswordError::HashError("password worker failed".to_owned()))?
+}
+
+/// Avoid blocking the asynchronous runtime when checking password credentials.
+pub async fn verify_password_async(password: String, hash: String) -> Result<bool, PasswordError> {
+    tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .map_err(|_| PasswordError::HashError("password worker failed".to_owned()))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

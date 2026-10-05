@@ -96,7 +96,7 @@ export function PublicViewPage({ token, fetcher = fetch, now = defaultNow }: { t
   const [events, setEvents] = useState<PublicEvent[]>([]);
   const [failed, setFailed] = useState(false);
   const [mode, setMode] = useState<"month" | "agenda">("month");
-  const [currentDate, setCurrentDate] = useState(() => new Date(now()));
+  const [currentDate, setCurrentDate] = useState(() => new Date(now() * 1000));
 
   useEffect(() => {
     let active = true;
@@ -132,7 +132,7 @@ export function PublicViewPage({ token, fetcher = fetch, now = defaultNow }: { t
       rows.push(
         <div key={i} className="public-view__grid-row">
           {row.map((cell, j) => {
-            const isToday = cell.date.toDateString() === new Date(now()).toDateString();
+            const isToday = cell.date.toDateString() === new Date(now() * 1000).toDateString();
             const isCurrentMonth = cell.isCurrentMonth;
             const dayEvents = eventsForDay(events, cell.date);
             return <div key={j} className={`public-view__day-cell ${!isCurrentMonth ? 'public-view__day-cell--other' : ''} ${isToday ? 'public-view__day-cell--today' : ''}`} onClick={() => setCurrentDate(cell.date)}>

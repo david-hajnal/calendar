@@ -208,7 +208,7 @@ impl CaldavAccountService {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO caldav_credentials (
                 user_id, label, token_prefix, token_hash, created_at
-             ) VALUES (?, ?, ?, ?, ?)
+             ) SELECT ?, ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM users WHERE id = ? AND status = 'registered')
              RETURNING id",
         )
         .bind(actor_user_id)
@@ -216,9 +216,11 @@ impl CaldavAccountService {
         .bind(&token_prefix)
         .bind(token_hash.as_bytes().to_vec())
         .bind(now)
-        .fetch_one(&mut *transaction)
+        .bind(actor_user_id)
+        .fetch_optional(&mut *transaction)
         .await
-        .map_err(|_| CaldavAuthError::Persistence)?;
+        .map_err(|_| CaldavAuthError::Persistence)?
+        .ok_or(CaldavAuthError::InvalidCredentials)?;
         insert_audit(
             &mut transaction,
             actor_user_id,
@@ -329,7 +331,7 @@ impl CaldavAccountService {
             .take(TOKEN_PREFIX_LENGTH)
             .collect::<String>();
         let user_id: Option<i64> = sqlx::query_scalar(
-            "SELECT id FROM users WHERE normalized_email = ? AND status = 'active'",
+            "SELECT id FROM users WHERE normalized_email = ? AND status = 'registered'",
         )
         .bind(&username)
         .fetch_optional(&self.pool)
@@ -388,14 +390,17 @@ impl CaldavAccountService {
         let principal_id = principal_id.ok_or(CaldavAuthError::InvalidCredentials)?;
         let user_id = user_id.ok_or(CaldavAuthError::InvalidCredentials)?;
         let now = (self.clock)();
-        sqlx::query(
-            "UPDATE caldav_credentials SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL",
+        let verified_update = sqlx::query(
+            "UPDATE caldav_credentials SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM users WHERE id = caldav_credentials.user_id AND status = 'registered')",
         )
         .bind(now)
         .bind(credential_id)
         .execute(&self.pool)
         .await
         .map_err(|_| CaldavAuthError::Persistence)?;
+        if verified_update.rows_affected() != 1 {
+            return Err(CaldavAuthError::InvalidCredentials);
+        }
         Ok(DavSession {
             user_id,
             credential_id,
@@ -731,7 +736,7 @@ mod tests {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     normalized_email TEXT NOT NULL UNIQUE COLLATE NOCASE,
                     display_name TEXT,
-                    status TEXT NOT NULL CHECK (status IN ('invited', 'active', 'suspended', 'deleted')),
+                    status TEXT NOT NULL CHECK (status IN ('invited', 'registered', 'inactive', 'deleted')),
                     created_at INTEGER NOT NULL
                 )",
             )
@@ -785,7 +790,7 @@ mod tests {
             let now = 1000i64;
             sqlx::query_scalar(
                 "INSERT INTO users (normalized_email, display_name, status, created_at)
-                 VALUES (?, 'Test', 'active', ?) RETURNING id",
+                 VALUES (?, 'Test', 'registered', ?) RETURNING id",
             )
             .bind(email)
             .bind(now)

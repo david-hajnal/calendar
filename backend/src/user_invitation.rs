@@ -120,7 +120,7 @@ impl UserInvitationService {
     ) -> Result<CreatedInvitation, UserInvitationError> {
         let now = (self.clock)();
         let normalized_email = normalize_email(&email);
-        if normalized_email.is_empty() {
+        if !crate::admin::valid_invitation_email(&normalized_email) {
             return Err(UserInvitationError::InvalidInput);
         }
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -141,11 +141,16 @@ impl UserInvitationService {
         .fetch_one(&mut *transaction)
         .await?;
 
-        if existing_user != 0 || pending != 0 {
+        let reserved =
+            crate::admin::invitation_email_reserved(&mut transaction, &normalized_email, now)
+                .await?;
+        if existing_user != 0 || pending != 0 || reserved {
             transaction.rollback().await?;
             return Err(UserInvitationError::Conflict);
         }
 
+        sqlx::query("INSERT INTO users(normalized_email, display_name, status, created_at) VALUES (?, ?, 'invited', ?)")
+            .bind(&normalized_email).bind(&display_name).bind(now).execute(&mut *transaction).await?;
         let created = self
             .insert_invitation(
                 &mut transaction,
@@ -164,7 +169,7 @@ impl UserInvitationService {
 
     /// Resend an invitation by revoking the old one and creating a new one.
     ///
-    /// Looks for a pending (unconsumed, unrevoke) invitation for the given email.
+    /// Looks for the latest unconsumed invitation for an invited account, including failed delivery.
     /// Returns NotFound if no pending invitation exists.
     pub async fn resend_invitation_by_email(
         &self,
@@ -172,22 +177,28 @@ impl UserInvitationService {
     ) -> Result<CreatedInvitation, UserInvitationError> {
         let now = (self.clock)();
         let normalized_email = normalize_email(&email);
-        if normalized_email.is_empty() {
+        if !crate::admin::valid_invitation_email(&normalized_email) {
             return Err(UserInvitationError::InvalidInput);
         }
 
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
 
-        // Find pending invitation for this email
+        // Find the latest invitation, including expired or failed delivery.
         let invitation = sqlx::query_as::<_, PendingInvitation>(
-            "SELECT normalized_email, display_name FROM invitations
-             WHERE normalized_email = ? AND revoked_at IS NULL AND consumed_at IS NULL",
+            "SELECT i.normalized_email, i.display_name FROM invitations i
+             JOIN users u ON u.normalized_email = i.normalized_email
+             WHERE i.normalized_email = ? AND i.consumed_at IS NULL AND u.status = 'invited'
+             ORDER BY i.id DESC LIMIT 1",
         )
         .bind(&normalized_email)
         .fetch_optional(&mut *transaction)
         .await?;
 
         let invitation = invitation.ok_or(UserInvitationError::NotFound)?;
+        if crate::admin::invitation_email_reserved(&mut transaction, &normalized_email, now).await?
+        {
+            return Err(UserInvitationError::Conflict);
+        }
 
         // Revoke old invitation
         sqlx::query(

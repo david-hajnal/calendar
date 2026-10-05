@@ -82,7 +82,7 @@ async fn existing_user_blocks_bootstrap() {
         .create_user(NewUser {
             normalized_email: "existing@example.com".to_owned(),
             display_name: None,
-            status: UserStatus::Active,
+            status: UserStatus::Registered,
             created_at: 500,
         })
         .await

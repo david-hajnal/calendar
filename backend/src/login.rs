@@ -212,7 +212,7 @@ where
 
         let record = sqlx::query_as::<_, UserWithPasswordRecord>(
             "SELECT id, normalized_email, display_name, status, created_at, password_hash
-             FROM users WHERE normalized_email = ? AND status = 'active'",
+             FROM users WHERE normalized_email = ? AND status = 'registered'",
         )
         .bind(&normalized_email)
         .fetch_optional(&mut *user)
@@ -237,7 +237,8 @@ where
             }
         };
 
-        let valid = password::verify_password(&command.password, &password_hash)
+        let valid = password::verify_password_async(command.password, password_hash)
+            .await
             .map_err(|e| PasswordLoginError::Database(e.to_string()))?;
 
         if !valid {
@@ -301,7 +302,7 @@ where
                 id: record.id,
                 email: record.normalized_email,
                 display_name: record.display_name,
-                status: "active",
+                status: "registered",
                 is_superadmin: false,
             },
             session_token,
@@ -362,7 +363,7 @@ where
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let user = sqlx::query_as::<_, RequestUser>(
             "SELECT id, normalized_email FROM users
-             WHERE normalized_email = ? AND status = 'active'",
+             WHERE normalized_email = ? AND status = 'registered'",
         )
         .bind(&normalized_email)
         .fetch_optional(&mut *transaction)
@@ -541,7 +542,7 @@ where
                 id: record.user_id,
                 email: record.normalized_email,
                 display_name: record.display_name,
-                status: "active",
+                status: "registered",
                 is_superadmin: record.is_superadmin,
             },
             session_token,
@@ -574,7 +575,7 @@ where
             None => {
                 let result = sqlx::query(
                     "INSERT INTO users (normalized_email, display_name, status, created_at)
-                     VALUES (?, ?, 'active', ?)",
+                     VALUES (?, ?, 'registered', ?)",
                 )
                 .bind(&command.normalized_email)
                 .bind(&command.display_name)
@@ -733,7 +734,7 @@ struct LoginTokenUser {
 
 impl LoginTokenUser {
     fn rejection_reason(&self, now: i64) -> Option<&'static str> {
-        if self.status != "active" {
+        if self.status != "registered" {
             Some("account_ineligible")
         } else if self.revoked_at.is_some() {
             Some("revoked")

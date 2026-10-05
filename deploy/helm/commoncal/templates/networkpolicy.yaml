@@ -13,6 +13,16 @@ spec:
     - Ingress
     - Egress
   egress:
+    # The configured SMTP relay uses mandatory TLS and authentication. Keep
+    # this port in sync with SMTP_PORT; private relay CIDRs may be configured.
+    - to:
+        {{- range .Values.mail.egressCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.mail.port }}
     - to:
         - namespaceSelector:
             matchLabels:

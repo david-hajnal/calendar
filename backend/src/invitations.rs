@@ -8,7 +8,10 @@ use std::{
 use serde::Serialize;
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 
-use crate::security::{CsrfToken, SecretKey, SecretToken, TokenDomain};
+use crate::{
+    password::{PasswordError, hash_new_password},
+    security::{SecretKey, SecretToken, TokenDomain},
+};
 
 const SUCCEEDED_ACTION: &str = "auth.invitation.consume.succeeded";
 const FAILED_ACTION: &str = "auth.invitation.consume.failed";
@@ -17,16 +20,14 @@ const FAILED_ACTION: &str = "auth.invitation.consume.failed";
 pub struct InvitationConsumer {
     pool: SqlitePool,
     secret_key: SecretKey,
-    session_lifetime_seconds: i64,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl InvitationConsumer {
-    pub fn new(pool: SqlitePool, secret_key: SecretKey, session_lifetime_seconds: i64) -> Self {
+    pub fn new(pool: SqlitePool, secret_key: SecretKey) -> Self {
         Self {
             pool,
             secret_key,
-            session_lifetime_seconds,
             clock: Arc::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -36,18 +37,33 @@ impl InvitationConsumer {
         }
     }
 
-    pub fn new_at(
-        pool: SqlitePool,
-        secret_key: SecretKey,
-        session_lifetime_seconds: i64,
-        now: i64,
-    ) -> Self {
+    pub fn new_at(pool: SqlitePool, secret_key: SecretKey, now: i64) -> Self {
         Self {
             pool,
             secret_key,
-            session_lifetime_seconds,
             clock: Arc::new(move || now),
         }
+    }
+
+    pub async fn preview(
+        &self,
+        token: String,
+    ) -> Result<InvitationPreview, ConsumeInvitationError> {
+        let token = SecretToken::parse(token).ok_or(ConsumeInvitationError::Invalid)?;
+        let hash = self.secret_key.hash_token(TokenDomain::Invitation, &token);
+        let email: Option<String> = sqlx::query_scalar(
+            "SELECT i.normalized_email FROM invitations i
+             LEFT JOIN users u ON u.normalized_email = i.normalized_email
+             WHERE i.token_hash = ? AND i.revoked_at IS NULL AND i.consumed_at IS NULL
+               AND i.expires_at > ? AND (u.id IS NULL OR u.status = 'invited')",
+        )
+        .bind(hash.as_bytes().as_slice())
+        .bind((self.clock)())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(InvitationPreview {
+            email: email.ok_or(ConsumeInvitationError::Invalid)?,
+        })
     }
 
     pub async fn consume(
@@ -62,6 +78,27 @@ impl InvitationConsumer {
         let invitation_hash = self
             .secret_key
             .hash_token(TokenDomain::Invitation, &invitation_token);
+        // Reject unavailable tokens before doing expensive password work.
+        // The transaction below rechecks the record after hashing to prevent races.
+        let available = sqlx::query_as::<_, InvitationRecord>(
+            "SELECT id, normalized_email, display_name, expires_at, revoked_at,
+                    consumed_at, platform_role FROM invitations WHERE token_hash = ?",
+        )
+        .bind(invitation_hash.as_bytes().as_slice())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(available) = available else {
+            audit_failure(&self.pool, None, "token_not_found", now).await?;
+            return Err(ConsumeInvitationError::Invalid);
+        };
+        if let Some(reason) = available.rejection_reason(now) {
+            audit_failure(&self.pool, Some(available.id), reason, now).await?;
+            return Err(ConsumeInvitationError::Invalid);
+        }
+        let password_hash = hash_new_password(command.password, command.password_confirmation)
+            .await
+            .map_err(ConsumeInvitationError::Password)?;
+        let now = (self.clock)();
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let invitation = sqlx::query_as::<_, InvitationRecord>(
             "SELECT id, normalized_email, display_name, expires_at, revoked_at,
@@ -94,7 +131,7 @@ impl InvitationConsumer {
         .await?;
 
         let user = match existing_user {
-            Some(user) if user.status == "suspended" || user.status == "deleted" => {
+            Some(user) if user.status != "invited" => {
                 audit_failure_in_transaction(
                     &mut transaction,
                     Some(invitation.id),
@@ -109,13 +146,14 @@ impl InvitationConsumer {
                 let is_superadmin = user.is_superadmin || invitation.platform_role == "superadmin";
                 sqlx::query(
                     "UPDATE users
-                     SET status = 'active',
+                     SET status = 'registered',
                          display_name = COALESCE(display_name, ?),
-                         is_superadmin = ?
+                         is_superadmin = ?, password_hash = ?
                      WHERE id = ?",
                 )
                 .bind(&invitation.display_name)
                 .bind(is_superadmin)
+                .bind(&password_hash)
                 .bind(user.id)
                 .execute(&mut *transaction)
                 .await?;
@@ -123,7 +161,7 @@ impl InvitationConsumer {
                     id: user.id,
                     email: user.normalized_email,
                     display_name: user.display_name.or(invitation.display_name.clone()),
-                    status: "active",
+                    status: "registered",
                     is_superadmin,
                 }
             }
@@ -131,20 +169,21 @@ impl InvitationConsumer {
                 let is_superadmin = invitation.platform_role == "superadmin";
                 let inserted = sqlx::query(
                     "INSERT INTO users (
-                        normalized_email, display_name, status, is_superadmin, created_at
-                     ) VALUES (?, ?, 'active', ?, ?)",
+                        normalized_email, display_name, status, is_superadmin, created_at, password_hash
+                     ) VALUES (?, ?, 'registered', ?, ?, ?)",
                 )
                 .bind(&invitation.normalized_email)
                 .bind(&invitation.display_name)
                 .bind(is_superadmin)
                 .bind(now)
+                .bind(&password_hash)
                 .execute(&mut *transaction)
                 .await?;
                 ActiveUser {
                     id: inserted.last_insert_rowid(),
                     email: invitation.normalized_email.clone(),
                     display_name: invitation.display_name.clone(),
-                    status: "active",
+                    status: "registered",
                     is_superadmin,
                 }
             }
@@ -165,70 +204,25 @@ impl InvitationConsumer {
         .execute(&mut *transaction)
         .await?;
 
-        if let Some(prior_session_token) = command.prior_session_token.and_then(SecretToken::parse)
-        {
-            let prior_hash = self
-                .secret_key
-                .hash_token(TokenDomain::Session, &prior_session_token);
-            sqlx::query(
-                "UPDATE sessions SET revoked_at = ?
-                 WHERE session_hash = ? AND revoked_at IS NULL",
-            )
-            .bind(now)
-            .bind(prior_hash.as_bytes().as_slice())
-            .execute(&mut *transaction)
-            .await?;
-        }
-
-        let session_token = self.secret_key.generate_token();
-        let session_hash = self
-            .secret_key
-            .hash_token(TokenDomain::Session, &session_token);
-        let session_result = sqlx::query(
-            "INSERT INTO sessions (
-                user_id, session_hash, expires_at, revoked_at, created_at, last_seen_at
-             ) VALUES (?, ?, ?, NULL, ?, ?)",
-        )
-        .bind(user.id)
-        .bind(session_hash.as_bytes().as_slice())
-        .bind(now + self.session_lifetime_seconds)
-        .bind(now)
-        .bind(now)
-        .execute(&mut *transaction)
-        .await;
-        if let Err(error) = session_result {
-            transaction.rollback().await?;
-            audit_failure(
-                &self.pool,
-                Some(invitation.id),
-                "session_creation_failed",
-                now,
-            )
-            .await?;
-            return Err(ConsumeInvitationError::Database(error));
-        }
-
         audit_success(&mut transaction, invitation.id, user.id, now).await?;
         transaction.commit().await?;
-        let csrf_token = self.secret_key.generate_csrf_token(&session_token);
-
-        Ok(ConsumedInvitation {
-            user,
-            session_token,
-            csrf_token,
-        })
+        Ok(ConsumedInvitation { user })
     }
 }
 
 pub struct ConsumeInvitation {
     pub token: String,
-    pub prior_session_token: Option<String>,
+    pub password: String,
+    pub password_confirmation: String,
 }
 
 pub struct ConsumedInvitation {
     pub user: ActiveUser,
-    pub session_token: SecretToken,
-    pub csrf_token: CsrfToken,
+}
+
+#[derive(Serialize)]
+pub struct InvitationPreview {
+    pub email: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -340,12 +334,14 @@ where
 #[derive(Debug)]
 pub enum ConsumeInvitationError {
     Invalid,
+    Password(PasswordError),
     Database(sqlx::Error),
 }
 
 impl Display for ConsumeInvitationError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Password(_) => formatter.write_str("password creation failed"),
             Self::Invalid => formatter.write_str("invitation is invalid or expired"),
             Self::Database(_) => formatter.write_str("invitation consumption failed"),
         }
@@ -356,6 +352,7 @@ impl Error for ConsumeInvitationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Invalid => None,
+            Self::Password(error) => Some(error),
             Self::Database(error) => Some(error),
         }
     }

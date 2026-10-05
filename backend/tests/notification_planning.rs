@@ -245,7 +245,7 @@ async fn setup() -> (TempDir, sqlx::SqlitePool, i64, i64) {
     (dir, pool, owner, calendar)
 }
 async fn user(pool: &sqlx::SqlitePool, email: &str) -> i64 {
-    sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, ?, 'active', ?)").bind(email).bind(email).bind(NOW).execute(pool).await.unwrap().last_insert_rowid()
+    sqlx::query("INSERT INTO users (normalized_email, display_name, status, created_at) VALUES (?, ?, 'registered', ?)").bind(email).bind(email).bind(NOW).execute(pool).await.unwrap().last_insert_rowid()
 }
 fn timed_event(start: i64) -> EventMutation {
     EventMutation {

@@ -10,7 +10,6 @@ use commoncal_backend::{
     calendar::CalendarService,
     config::{AppConfig, Environment},
     database::{connect_and_migrate, connect_read_only},
-    email::DevelopmentEmailSender,
     event::EventService,
     external_feed::ExternalFeedService,
     http::{
@@ -23,6 +22,7 @@ use commoncal_backend::{
     notification::NotificationWorker,
     public_rate_limit::PublicRateLimiterState,
     rate_limiter::FixedWindowRateLimiter,
+    runtime_email::RuntimeEmailSender,
     security::SecretKey,
     sessions::{SessionManager, SessionSecurityConfig},
     shared_view::SharedViewService,
@@ -55,6 +55,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return run_backup(database, &arguments[1..]).await;
     }
 
+    // Validate mail before migrations/readiness on server startup. Maintenance
+    // commands do not deliver email and do not need SMTP credentials.
+    let runtime_email = if arguments.is_empty() {
+        Some(RuntimeEmailSender::from_env(config.environment)?)
+    } else {
+        None
+    };
     let readiness = Readiness::new();
     let database = connect_and_migrate(&config, readiness.clone()).await?;
 
@@ -83,16 +90,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .session_secret()
         .map(|secret| SecretKey::derive(secret.as_bytes()))
         .unwrap_or_else(SecretKey::generate);
-    let invitation_consumer =
-        InvitationConsumer::new(database.clone(), secret_key.clone(), 30 * 24 * 60 * 60);
-    let email_sender = Arc::new(DevelopmentEmailSender::new());
+    let invitation_consumer = InvitationConsumer::new(database.clone(), secret_key.clone());
+    let email_sender = Arc::new(runtime_email.expect("server startup validated email transport"));
     let is_secure = config.app_origin().starts_with("https://");
     let login_service = LoginService::new(
         database.clone(),
         secret_key.clone(),
         15 * 60,
         30 * 24 * 60 * 60,
-        "/login",
+        format!("{}/login/consume", config.app_origin()),
         email_sender.clone(),
         Arc::new(FixedWindowLoginRateLimiter::new(5, 15 * 60)),
         is_secure,
@@ -199,6 +205,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         email_sender.clone(),
     );
     let caldav_session_manager = session_manager.clone();
+    let account_session_manager = session_manager.clone();
+    let account_admin_service = admin_service.clone();
 
     let mut router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
         readiness,
@@ -220,6 +228,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user_invitation_service,
         user_invitation_rate_limiter,
     );
+
+    let account_service = commoncal_backend::account::AccountService::new(
+        database.clone(),
+        secret_key.clone(),
+        config.app_origin(),
+        email_sender.clone(),
+    );
+    let account_limiter = commoncal_backend::account_rate_limit::AccountRateLimiter::default();
+    router = router.merge(commoncal_backend::http::build_account_recovery_router(
+        account_service.clone(),
+        config.app_origin(),
+        account_limiter.clone(),
+    ));
+    router = router.merge(commoncal_backend::http::build_account_settings_router(
+        account_service.clone(),
+        account_session_manager.clone(),
+        account_limiter.clone(),
+    ));
+    router = router.merge(commoncal_backend::http::build_account_admin_router(
+        account_service,
+        account_admin_service,
+        account_session_manager,
+        account_limiter,
+    ));
 
     // Add MCP internal API routes (separate router with its own state).
     // The internal API key is required in production; startup fails when it is
@@ -398,7 +430,7 @@ async fn run_seed(
     // Create user
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (normalized_email, display_name, status, is_superadmin, created_at)
-         VALUES ('dev@example.com', 'Dev User', 'active', 1, ?)
+         VALUES ('dev@example.com', 'Dev User', 'registered', 1, ?)
          RETURNING id",
     )
     .bind(now)

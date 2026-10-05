@@ -30,7 +30,7 @@ async fn repository() -> (TempDir, SqlitePool, EventRepository) {
 async fn create_user(pool: &SqlitePool, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO users (normalized_email, display_name, status, created_at)
-         VALUES (?, ?, 'active', ?)",
+         VALUES (?, ?, 'registered', ?)",
     )
     .bind(email)
     .bind(email)

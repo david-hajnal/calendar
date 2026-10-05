@@ -27,7 +27,7 @@ async fn repository() -> (TempDir, SqlitePool, CalendarRepository) {
 async fn create_user(pool: &SqlitePool, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO users (normalized_email, display_name, status, created_at)
-         VALUES (?, ?, 'active', ?)",
+         VALUES (?, ?, 'registered', ?)",
     )
     .bind(email)
     .bind(email)
@@ -145,7 +145,7 @@ async fn failed_transfer_rolls_back() {
 
 #[tokio::test]
 async fn ownership_transfer_rejects_inactive_targets_without_changes() {
-    for status in ["suspended", "deleted"] {
+    for status in ["inactive", "deleted"] {
         let (_temp_dir, pool, repository) = repository().await;
         let owner_id = create_user(&pool, "owner@example.com").await;
         let target_id = create_user(&pool, "target@example.com").await;

@@ -19,7 +19,7 @@ export default defineConfig({
     { name: "desktop", use: { ...devices["Desktop Firefox"] } },
     { name: "mobile", use: { ...devices["iPhone 13"] } },
   ],
-  webServer: process.env.E2E_BASE_URL ? undefined : {
+  webServer: process.env.E2E_BASE_URL || process.env.E2E_ISOLATED_BACKEND ? undefined : {
     command: "pnpm e2e:server",
     url: `${baseURL}/health/ready`,
     reuseExistingServer: !process.env.CI,

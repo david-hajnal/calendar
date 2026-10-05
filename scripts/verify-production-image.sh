@@ -39,7 +39,13 @@ container_id=$(docker run -d --rm --read-only --tmpfs /app/tmp \
   --mount "type=bind,src=$temporary_directory/data,dst=/app/data" \
   -e APP_ENV=production \
   -e SESSION_SECRET=acceptance-test-secret \
-  -e APP_ORIGIN=http://127.0.0.1 \
+  -e MCP_INTERNAL_API_KEY=isolated-test-internal-key \
+  -e APP_ORIGIN=https://app.example.test \
+  -e CALDAV_PUBLIC_ORIGIN=https://app.example.test \
+  -e PASSWORD_LOGIN_ENABLED=true \
+  -e SMTP_HOST=smtp.example.test -e SMTP_PORT=587 \
+  -e SMTP_USERNAME=isolated-test-user -e SMTP_PASSWORD=isolated-test-password \
+  -e SMTP_FROM=no-reply@example.test \
   -p 127.0.0.1::3000 "$image")
 
 port=$(docker port "$container_id" 3000/tcp | sed -n '1s/.*://p')

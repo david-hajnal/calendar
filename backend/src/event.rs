@@ -1857,7 +1857,7 @@ impl EventService {
             PlatformRole::User
         };
         if authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(platform_role),
             Some(role),
             CalendarAction::ReadDetails,
@@ -1865,7 +1865,7 @@ impl EventService {
         {
             Ok(EventAccess::Details)
         } else if authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(platform_role),
             Some(role),
             CalendarAction::ReadFreeBusy,
@@ -1917,8 +1917,12 @@ async fn authorize_in_transaction(
     } else {
         PlatformRole::User
     };
-    if authorize_calendar_action(UserStatus::Active, Some(platform_role), Some(role), action)
-        == AuthorizationDecision::Allow
+    if authorize_calendar_action(
+        UserStatus::Registered,
+        Some(platform_role),
+        Some(role),
+        action,
+    ) == AuthorizationDecision::Allow
     {
         Ok(())
     } else {

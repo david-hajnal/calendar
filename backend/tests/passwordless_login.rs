@@ -217,7 +217,7 @@ async fn body(response: axum::response::Response) -> String {
 async fn registered_and_unknown_requests_are_indistinguishable() {
     let registered = TestApplication::new().await;
     registered
-        .user("known@example.com", UserStatus::Active)
+        .user("known@example.com", UserStatus::Registered)
         .await;
     let registered_response = registered.request_link(" Known@Example.com ").await;
     let registered_status = registered_response.status();
@@ -239,7 +239,7 @@ async fn registered_and_unknown_requests_are_indistinguishable() {
 async fn active_user_receives_a_link() {
     let application = TestApplication::new().await;
     application
-        .user("active@example.com", UserStatus::Active)
+        .user("active@example.com", UserStatus::Registered)
         .await;
 
     let response = application.request_link("ACTIVE@example.com").await;
@@ -274,7 +274,7 @@ async fn unknown_user_does_not_create_a_token() {
 async fn delivery_failure_keeps_the_generic_response_and_revokes_the_token() {
     let application = TestApplication::new().await;
     application
-        .user("active@example.com", UserStatus::Active)
+        .user("active@example.com", UserStatus::Registered)
         .await;
     let service = LoginService::new_at(
         application.pool.clone(),
@@ -316,11 +316,11 @@ async fn delivery_failure_keeps_the_generic_response_and_revokes_the_token() {
 async fn suspended_user_cannot_log_in() {
     let application = TestApplication::new().await;
     let user_id = application
-        .user("suspended@example.com", UserStatus::Active)
+        .user("suspended@example.com", UserStatus::Registered)
         .await;
     application.request_link("suspended@example.com").await;
     let token = application.issued_token().await;
-    sqlx::query("UPDATE users SET status = 'suspended' WHERE id = ?")
+    sqlx::query("UPDATE users SET status = 'inactive' WHERE id = ?")
         .bind(user_id)
         .execute(&application.pool)
         .await
@@ -340,7 +340,7 @@ async fn suspended_user_cannot_log_in() {
 async fn expired_and_reused_links_fail() {
     let application = TestApplication::new().await;
     application
-        .user("active@example.com", UserStatus::Active)
+        .user("active@example.com", UserStatus::Registered)
         .await;
     application.request_link("active@example.com").await;
     let expired = application.issued_token().await;
@@ -370,7 +370,7 @@ async fn expired_and_reused_links_fail() {
 async fn rate_limit_checks_ip_and_normalized_email() {
     let application = TestApplication::new().await;
     application
-        .user("active@example.com", UserStatus::Active)
+        .user("active@example.com", UserStatus::Registered)
         .await;
     application.limiter.deny_email("active@example.com");
 
@@ -401,7 +401,7 @@ fn fixed_window_limiter_enforces_each_key_independently() {
 async fn successful_login_rotates_session_and_updates_last_login() {
     let application = TestApplication::new().await;
     let user_id = application
-        .user("active@example.com", UserStatus::Active)
+        .user("active@example.com", UserStatus::Registered)
         .await;
     let old_session = application.secret_key.generate_token();
     let old_hash = application
@@ -461,7 +461,7 @@ async fn successful_login_rotates_session_and_updates_last_login() {
 async fn logs_and_audits_do_not_reveal_account_existence_or_tokens() {
     let application = TestApplication::new().await;
     application
-        .user("secret@example.com", UserStatus::Active)
+        .user("secret@example.com", UserStatus::Registered)
         .await;
     let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
     let writer = captured.clone();

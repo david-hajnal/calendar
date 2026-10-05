@@ -150,3 +150,54 @@ fn independently_derived_keys_decrypt_persisted_secret() {
             .is_none()
     );
 }
+
+#[test]
+fn local_http_session_cookie_uses_a_browser_valid_name() {
+    let token = key().generate_token();
+    let cookie = SessionCookieBuilder::new(&token).is_secure(false).build();
+    assert!(cookie.starts_with("commoncal_session="));
+    assert!(!cookie.starts_with("__Host-"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Lax"));
+}
+
+#[test]
+fn recovery_tokens_are_separate_from_every_existing_token_domain() {
+    let key = key();
+    let token = key.generate_token();
+    let reset = key.hash_token(TokenDomain::PasswordReset, &token);
+    for domain in [
+        TokenDomain::Invitation,
+        TokenDomain::Login,
+        TokenDomain::Session,
+        TokenDomain::PublicView,
+        TokenDomain::CaldavConnection,
+        TokenDomain::EmailChange,
+    ] {
+        assert!(!key.verify_token(domain, &token, &reset));
+        let other = key.hash_token(domain, &token);
+        assert!(!key.verify_token(TokenDomain::PasswordReset, &token, &other));
+    }
+}
+
+#[test]
+fn email_change_tokens_are_separate_from_every_other_domain() {
+    let key = key();
+    let token = key.generate_token();
+    let email = key.hash_token(TokenDomain::EmailChange, &token);
+    for domain in [
+        TokenDomain::Invitation,
+        TokenDomain::Login,
+        TokenDomain::Session,
+        TokenDomain::PublicView,
+        TokenDomain::CaldavConnection,
+        TokenDomain::PasswordReset,
+    ] {
+        assert!(!key.verify_token(domain, &token, &email));
+        assert!(!key.verify_token(
+            TokenDomain::EmailChange,
+            &token,
+            &key.hash_token(domain, &token)
+        ));
+    }
+}

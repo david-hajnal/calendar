@@ -6,6 +6,16 @@ import { PublicViewPage } from "./PublicView";
 afterEach(cleanup);
 
 describe("PublicViewPage", () => {
+  it("renders the current public month from the seconds clock used by event queries", async () => {
+    const now = Date.UTC(2026, 9, 5, 9) / 1000;
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "Current calendar", projection: "title_and_time", display_timezone: "UTC", expires_at: now + 86400 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ title: "Current published event", event_kind: "timed", start_utc: now + 60, end_utc: now + 3600 }])));
+    render(<PublicViewPage token="current-token" fetcher={fetcher} now={() => now} />);
+    expect(await screen.findByText(/October 2026/)).toBeInTheDocument();
+    expect(await screen.findByText("Current published event")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith(`/api/v1/public/views/current-token/events?from=${now}&to=${now + 42 * 86400}`, { credentials: "omit" });
+  });
   it("renders only its public allowlist, even when a response contains private fields", async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ name: "Published view", projection: "full_details", display_timezone: "UTC", expires_at: 2_000, owner_user_id: 7 }), { status: 200 }))

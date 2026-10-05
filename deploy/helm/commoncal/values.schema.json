@@ -9,36 +9,125 @@
     },
     "existingSecret": {
       "type": "object",
-      "required": ["name", "sessionSecretKey"],
+      "required": [
+        "name",
+        "sessionSecretKey"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "sessionSecretKey": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionSecretKey": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "mcpInternalApiSecret": {
       "type": "object",
       "description": "Optional Secret mapping for the core MCP internal API key.",
-      "required": ["name", "key"],
+      "required": [
+        "name",
+        "key"
+      ],
       "properties": {
-        "name": { "type": "string" },
-        "key": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "persistence": {
       "type": "object",
-      "required": ["size"],
+      "required": [
+        "size"
+      ],
       "properties": {
-        "size": { "type": "string", "minLength": 1 }
+        "size": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "config": {
       "type": "object",
-      "required": ["appOrigin"],
+      "required": [
+        "appOrigin",
+        "passwordLoginEnabled"
+      ],
       "properties": {
-        "appOrigin": { "type": "string", "minLength": 1 },
+        "appOrigin": {
+          "type": "string",
+          "minLength": 1
+        },
         "caldavPublicOrigin": {
           "type": "string",
           "description": "Public origin for CalDAV. Falls back to appOrigin when empty."
+        },
+        "passwordLoginEnabled": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "mail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "port",
+        "from",
+        "existingSecret",
+        "egressCIDRs"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "existingSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "usernameKey",
+            "passwordKey"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "usernameKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "passwordKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "egressCIDRs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }

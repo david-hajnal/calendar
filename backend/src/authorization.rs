@@ -88,7 +88,7 @@ pub fn authorize_platform_action(
     platform_role: Option<PlatformRole>,
     _action: PlatformAction,
 ) -> AuthorizationDecision {
-    if user_status == UserStatus::Active && platform_role == Some(PlatformRole::Superadmin) {
+    if user_status == UserStatus::Registered && platform_role == Some(PlatformRole::Superadmin) {
         AuthorizationDecision::Allow
     } else {
         AuthorizationDecision::Deny
@@ -101,7 +101,7 @@ pub fn authorize_calendar_action(
     calendar_role: Option<CalendarRole>,
     action: CalendarAction,
 ) -> AuthorizationDecision {
-    if user_status != UserStatus::Active || platform_role.is_none() {
+    if user_status != UserStatus::Registered || platform_role.is_none() {
         return AuthorizationDecision::Deny;
     }
 

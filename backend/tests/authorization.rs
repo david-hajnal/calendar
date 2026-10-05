@@ -47,7 +47,7 @@ fn every_calendar_role_action_pair_matches_the_permission_matrix() {
     for (role, expected) in cases {
         for (action, should_allow) in ACTIONS.into_iter().zip(expected) {
             let decision = authorize_calendar_action(
-                UserStatus::Active,
+                UserStatus::Registered,
                 Some(PlatformRole::User),
                 Some(role),
                 action,
@@ -73,7 +73,7 @@ fn missing_or_unrecognized_roles_deny() {
 
     assert_eq!(
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(PlatformRole::User),
             None,
             CalendarAction::ReadFreeBusy,
@@ -82,7 +82,7 @@ fn missing_or_unrecognized_roles_deny() {
     );
     assert_eq!(
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(PlatformRole::User),
             unrecognized_calendar_role,
             CalendarAction::ReadFreeBusy,
@@ -91,7 +91,7 @@ fn missing_or_unrecognized_roles_deny() {
     );
     assert_eq!(
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             None,
             Some(CalendarRole::Owner),
             CalendarAction::ReadDetails,
@@ -100,7 +100,7 @@ fn missing_or_unrecognized_roles_deny() {
     );
     assert_eq!(
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             unrecognized_platform_role,
             Some(CalendarRole::Owner),
             CalendarAction::ReadDetails,
@@ -114,7 +114,7 @@ fn superadmin_has_no_implicit_private_calendar_read_permission() {
     for action in [CalendarAction::ReadDetails, CalendarAction::ReadFreeBusy] {
         assert_eq!(
             authorize_calendar_action(
-                UserStatus::Active,
+                UserStatus::Registered,
                 Some(PlatformRole::Superadmin),
                 None,
                 action,
@@ -125,7 +125,7 @@ fn superadmin_has_no_implicit_private_calendar_read_permission() {
 
     assert_eq!(
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(PlatformRole::Superadmin),
             Some(CalendarRole::Viewer),
             CalendarAction::ReadDetails,
@@ -146,7 +146,7 @@ fn suspended_users_are_denied_every_calendar_action() {
         for action in ACTIONS {
             assert_eq!(
                 authorize_calendar_action(
-                    UserStatus::Suspended,
+                    UserStatus::Inactive,
                     Some(PlatformRole::Superadmin),
                     Some(role),
                     action,
@@ -183,7 +183,7 @@ fn ownership_transfer_and_calendar_deletion_remain_owner_only() {
     ] {
         assert_eq!(
             authorize_calendar_action(
-                UserStatus::Active,
+                UserStatus::Registered,
                 Some(PlatformRole::User),
                 Some(CalendarRole::Owner),
                 action,
@@ -199,7 +199,7 @@ fn ownership_transfer_and_calendar_deletion_remain_owner_only() {
         ] {
             assert_eq!(
                 authorize_calendar_action(
-                    UserStatus::Active,
+                    UserStatus::Registered,
                     Some(PlatformRole::Superadmin),
                     Some(role),
                     action,
@@ -208,4 +208,16 @@ fn ownership_transfer_and_calendar_deletion_remain_owner_only() {
             );
         }
     }
+}
+
+#[test]
+fn pending_users_are_denied_platform_management() {
+    assert_eq!(
+        commoncal_backend::authorization::authorize_platform_action(
+            UserStatus::Pending,
+            Some(PlatformRole::Superadmin),
+            commoncal_backend::authorization::PlatformAction::ManageUsers,
+        ),
+        AuthorizationDecision::Deny
+    );
 }

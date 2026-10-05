@@ -218,6 +218,8 @@ pub enum TokenDomain {
     PublicView,
     Session,
     CaldavConnection,
+    PasswordReset,
+    EmailChange,
 }
 
 impl TokenDomain {
@@ -228,6 +230,8 @@ impl TokenDomain {
             Self::PublicView => b"public-view",
             Self::Session => b"session",
             Self::CaldavConnection => b"caldav-connection",
+            Self::PasswordReset => b"password-reset",
+            Self::EmailChange => b"email-change",
         }
     }
 }
@@ -321,7 +325,12 @@ impl<'a> SessionCookieBuilder<'a> {
 
     pub fn build(self) -> String {
         let cookie = format!(
-            "__Host-commoncal_session={}; Path=/; HttpOnly; SameSite=Lax",
+            "{}={}; Path=/; HttpOnly; SameSite=Lax",
+            if self.is_secure {
+                "__Host-commoncal_session"
+            } else {
+                "commoncal_session"
+            },
             self.token.expose()
         );
         if self.is_secure {

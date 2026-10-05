@@ -320,7 +320,7 @@ textarea {
 }
 
 .app-message--success {
-  color: var(--color-tertiary);
+  color: var(--color-on-tertiary-container);
   background: var(--color-tertiary-container);
 }
 

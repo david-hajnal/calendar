@@ -54,50 +54,50 @@ struct Principal {
 const PRINCIPALS: &[Principal] = &[
     Principal {
         name: "owner",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::Owner),
     },
     Principal {
         name: "manager",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::Manager),
     },
     Principal {
         name: "editor",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::Editor),
     },
     Principal {
         name: "viewer",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::Viewer),
     },
     Principal {
         name: "free_busy_viewer",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::FreeBusyViewer),
     },
     Principal {
         name: "unrelated",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::User),
         calendar_role: None,
     },
     Principal {
-        name: "suspended",
-        status: UserStatus::Suspended,
+        name: "inactive",
+        status: UserStatus::Inactive,
         platform_role: Some(PlatformRole::User),
         calendar_role: Some(CalendarRole::Owner),
     },
     // Platform administration deliberately does not grant private-calendar access.
     Principal {
         name: "superadmin_without_acl",
-        status: UserStatus::Active,
+        status: UserStatus::Registered,
         platform_role: Some(PlatformRole::Superadmin),
         calendar_role: None,
     },
@@ -215,12 +215,13 @@ fn calendar_authorization_matrix_covers_every_fixture_and_endpoint_family() {
                 principal.calendar_role,
                 operation.action,
             );
-            let expected =
-                if principal.status == UserStatus::Active && principal.calendar_role.is_some() {
-                    expected(principal.calendar_role, operation.action)
-                } else {
-                    AuthorizationDecision::Deny
-                };
+            let expected = if principal.status == UserStatus::Registered
+                && principal.calendar_role.is_some()
+            {
+                expected(principal.calendar_role, operation.action)
+            } else {
+                AuthorizationDecision::Deny
+            };
             assert_eq!(
                 actual, expected,
                 "{} must be {:?} for {}",
@@ -243,7 +244,12 @@ fn identifier_substitution_and_public_tokens_are_not_authorization_inputs() {
         CalendarAction::ManageSettings,
     ] {
         assert_eq!(
-            authorize_calendar_action(UserStatus::Active, Some(PlatformRole::User), None, action),
+            authorize_calendar_action(
+                UserStatus::Registered,
+                Some(PlatformRole::User),
+                None,
+                action
+            ),
             AuthorizationDecision::Deny,
             "substituted calendar/event id or public token unexpectedly authorized {action:?}",
         );
@@ -262,7 +268,12 @@ fn missing_calendar_acl_is_denied_before_any_endpoint_can_authorize() {
         CalendarAction::ManageSettings,
     ] {
         assert_eq!(
-            authorize_calendar_action(UserStatus::Active, Some(PlatformRole::User), None, action),
+            authorize_calendar_action(
+                UserStatus::Registered,
+                Some(PlatformRole::User),
+                None,
+                action
+            ),
             AuthorizationDecision::Deny,
             "missing calendar ACL unexpectedly authorized {action:?}",
         );
@@ -298,10 +309,11 @@ impl EndpointHarness {
         let pool = connect_and_migrate(&config, Readiness::new())
             .await
             .unwrap();
-        let owner = insert_user(&pool, "owner@example.test", "active", false).await;
-        let unrelated = insert_user(&pool, "unrelated@example.test", "active", false).await;
-        let suspended = insert_user(&pool, "suspended@example.test", "suspended", false).await;
-        let superadmin_without_acl = insert_user(&pool, "admin@example.test", "active", true).await;
+        let owner = insert_user(&pool, "owner@example.test", "registered", false).await;
+        let unrelated = insert_user(&pool, "unrelated@example.test", "registered", false).await;
+        let suspended = insert_user(&pool, "suspended@example.test", "inactive", false).await;
+        let superadmin_without_acl =
+            insert_user(&pool, "admin@example.test", "registered", true).await;
         let calendars = CalendarRepository::new(pool.clone());
         let primary_calendar = create_calendar(&calendars, owner, "Primary").await;
         let other_calendar = create_calendar(&calendars, unrelated, "Other").await;
@@ -336,7 +348,7 @@ impl EndpointHarness {
     fn router(&self) -> axum::Router {
         build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
             Readiness::new(),
-            InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), 300, NOW),
+            InvitationConsumer::new_at(self.pool.clone(), self.key.clone(), NOW),
             LoginService::new_at(
                 self.pool.clone(),
                 self.key.clone(),

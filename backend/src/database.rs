@@ -32,13 +32,32 @@ pub async fn connect_and_migrate(
         .await
         .map_err(DatabaseError::Connect)?;
 
-    MIGRATOR
-        .run(&pool)
-        .await
-        .map_err(DatabaseError::Migration)?;
+    run_migrations(&pool).await?;
     readiness.mark_ready();
 
     Ok(pool)
+}
+
+/// Migrations rebuilding identity tables require foreign keys off before SQLx
+/// starts a transaction. Call only at startup, before serving application requests.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DatabaseError> {
+    let mut connection = pool.acquire().await.map_err(DatabaseError::Connect)?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *connection)
+        .await
+        .map_err(DatabaseError::Connect)?;
+    let result = MIGRATOR.run(&mut *connection).await;
+    let restored = sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *connection)
+        .await;
+    if let Err(error) = restored {
+        connection.close().await.map_err(DatabaseError::Connect)?;
+        return Err(DatabaseError::Connect(error));
+    }
+    // Return only after restoring FK enforcement; keep in-memory test databases alive.
+    drop(connection);
+    result.map_err(DatabaseError::Migration)?;
+    Ok(())
 }
 
 /// Opens an existing database for operations that must not mutate the source.

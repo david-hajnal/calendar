@@ -56,7 +56,7 @@ async fn database() -> (tempfile::TempDir, SqlitePool) {
 #[tokio::test]
 async fn creates_verified_compressed_snapshot_during_controlled_writes() {
     let (directory, database) = database().await;
-    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('backup@example.test', 'active', 1)")
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('backup@example.test', 'registered', 1)")
         .execute(&database)
         .await
         .unwrap();
@@ -65,7 +65,7 @@ async fn creates_verified_compressed_snapshot_during_controlled_writes() {
     let writer = tokio::spawn(async move {
         for number in 0..20 {
             sqlx::query(
-                "INSERT INTO users (normalized_email, status, created_at) VALUES (?, 'active', 1)",
+                "INSERT INTO users (normalized_email, status, created_at) VALUES (?, 'registered', 1)",
             )
             .bind(format!("writer-{number}@example.test"))
             .execute(&*writes)
@@ -120,7 +120,7 @@ async fn creates_verified_compressed_snapshot_during_controlled_writes() {
 #[tokio::test]
 async fn creates_an_encrypted_backup_when_the_source_database_is_read_only() {
     let (directory, database) = database().await;
-    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('readonly-backup@example.test', 'active', 1)")
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('readonly-backup@example.test', 'registered', 1)")
         .execute(&database)
         .await
         .unwrap();
@@ -442,7 +442,7 @@ fn from_hex_key_raw_path_is_exactly_at_64_hex_chars() {
 #[tokio::test]
 async fn backup_cli_round_trips_with_a_48_hex_key() {
     let (directory, database) = database().await;
-    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('cli-48hex@example.test', 'active', 1)")
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('cli-48hex@example.test', 'registered', 1)")
         .execute(&database)
         .await
         .unwrap();
@@ -599,7 +599,7 @@ async fn upload_failure_retains_encrypted_local_recovery_artifact_without_loggin
 #[tokio::test]
 async fn restore_decrypts_decompresses_and_verifies_representative_records() {
     let (directory, database) = database().await;
-    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('restore@example.test', 'active', 1)")
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('restore@example.test', 'registered', 1)")
         .execute(&database)
         .await
         .unwrap();
@@ -636,7 +636,7 @@ async fn restore_decrypts_decompresses_and_verifies_representative_records() {
 #[tokio::test]
 async fn backup_cli_creates_an_encrypted_artifact_that_restores_a_representative_record() {
     let (directory, database) = database().await;
-    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('cli-restore@example.test', 'active', 1)")
+    sqlx::query("INSERT INTO users (normalized_email, status, created_at) VALUES ('cli-restore@example.test', 'registered', 1)")
         .execute(&database)
         .await
         .unwrap();
@@ -747,6 +747,7 @@ fn restore_cli_refuses_the_configured_production_database_before_reading_key_mat
         .arg("backup.sqlite.gz.enc")
         .arg(&database_path)
         .env("APP_ENV", "production")
+        .env("PASSWORD_LOGIN_ENABLED", "true")
         .env("SESSION_SECRET", "not-a-real-production-secret")
         .env("CALDAV_PUBLIC_ORIGIN", "https://dav.example")
         .env("DATABASE_PATH", &database_path)

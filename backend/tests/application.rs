@@ -210,7 +210,11 @@ async fn response_hardening_covers_html_api_public_and_authentication_routes() {
         );
         assert_eq!(
             response.headers().get("referrer-policy").unwrap(),
-            "strict-origin-when-cross-origin"
+            if path.starts_with("/api/v1/auth/") {
+                "no-referrer"
+            } else {
+                "strict-origin-when-cross-origin"
+            }
         );
         assert_eq!(
             response.headers().get("permissions-policy").unwrap(),

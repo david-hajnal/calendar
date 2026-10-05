@@ -152,8 +152,7 @@ async fn cmd_reset(db_path: &str) -> Result<(), String> {
 
     println!("running migrations...");
     let pool = connect(db_path).await?;
-    MIGRATOR
-        .run(&pool)
+    commoncal_backend::database::run_migrations(&pool)
         .await
         .map_err(|e| format!("migration failed: {e}"))?;
 
@@ -173,8 +172,7 @@ async fn cmd_seed(db_path: &str) -> Result<(), String> {
     let pool = connect(db_path).await?;
 
     // Ensure migrations are run first
-    MIGRATOR
-        .run(&pool)
+    commoncal_backend::database::run_migrations(&pool)
         .await
         .map_err(|e| format!("migration failed: {e}"))?;
 
@@ -186,7 +184,7 @@ async fn cmd_seed(db_path: &str) -> Result<(), String> {
     // Create user
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (normalized_email, display_name, status, is_superadmin, created_at)
-         VALUES ('dev@example.com', 'Dev User', 'active', 1, ?)
+         VALUES ('dev@example.com', 'Dev User', 'registered', 1, ?)
          RETURNING id",
     )
     .bind(now)

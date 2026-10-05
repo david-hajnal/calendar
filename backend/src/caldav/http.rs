@@ -72,7 +72,7 @@ fn read_access_for_role(role: &str) -> Option<DavReadAccess> {
     };
     let allows = |action: CalendarAction| {
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(PlatformRole::User),
             Some(role),
             action,
@@ -705,7 +705,7 @@ async fn handle_put_create_event_resource(
         return dav_server_error(accounts.metrics());
     };
     if authorize_calendar_action(
-        UserStatus::Active,
+        UserStatus::Registered,
         Some(PlatformRole::User),
         Some(role),
         CalendarAction::CreateEvent,
@@ -931,7 +931,7 @@ async fn handle_put_update_event_resource(
         return dav_server_error(accounts.metrics());
     };
     if authorize_calendar_action(
-        UserStatus::Active,
+        UserStatus::Registered,
         Some(PlatformRole::User),
         Some(role),
         CalendarAction::EditAnyEvent,
@@ -1453,7 +1453,7 @@ async fn handle_delete_event_resource(
         return dav_server_error(accounts.metrics());
     };
     if authorize_calendar_action(
-        UserStatus::Active,
+        UserStatus::Registered,
         Some(PlatformRole::User),
         Some(role),
         CalendarAction::EditAnyEvent,
@@ -2501,7 +2501,7 @@ fn privileges_for_role(role: &str) -> Vec<&'static str> {
     };
     let allows = |action: CalendarAction| {
         authorize_calendar_action(
-            UserStatus::Active,
+            UserStatus::Registered,
             Some(PlatformRole::User),
             Some(role),
             action,
@@ -3240,7 +3240,7 @@ mod tests {
             let file = NamedTempFile::new().unwrap();
             let conn_str = format!("sqlite:{}", file.path().to_str().unwrap());
             let pool = SqlitePool::connect(&conn_str).await.unwrap();
-            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+            crate::database::run_migrations(&pool).await.unwrap();
             Self { _file: file, pool }
         }
 
@@ -3248,7 +3248,7 @@ mod tests {
             let now = 1000i64;
             sqlx::query_scalar(
                 "INSERT INTO users (normalized_email, display_name, status, created_at)
-                 VALUES (?, 'Test', 'active', ?) RETURNING id",
+                 VALUES (?, 'Test', 'registered', ?) RETURNING id",
             )
             .bind(email)
             .bind(now)
@@ -5307,12 +5307,14 @@ mod tests {
     #[test]
     fn production_config_rejects_http_caldav_origin() {
         use crate::config::{AppConfig, Environment};
-        let config = AppConfig::with_database_path_and_origin(
+        let config = AppConfig::with_database_path_and_origin_and_access_log_level(
             Environment::Production,
             "127.0.0.1:3000",
             Some("secret".into()),
             "test.sqlite",
             "https://app.example",
+            tracing::level_filters::LevelFilter::OFF,
+            true,
         )
         .unwrap();
         let result = config.with_caldav_public_origin(Some("http://dav.example".into()));
@@ -5322,12 +5324,14 @@ mod tests {
     #[test]
     fn production_config_accepts_https_caldav_origin() {
         use crate::config::{AppConfig, Environment};
-        let config = AppConfig::with_database_path_and_origin(
+        let config = AppConfig::with_database_path_and_origin_and_access_log_level(
             Environment::Production,
             "127.0.0.1:3000",
             Some("secret".into()),
             "test.sqlite",
             "https://app.example",
+            tracing::level_filters::LevelFilter::OFF,
+            true,
         )
         .unwrap();
         let config = config

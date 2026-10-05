@@ -323,8 +323,9 @@ fn normalize_email(email: &str) -> String {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserStatus {
     Invited,
-    Active,
-    Suspended,
+    Registered,
+    Pending,
+    Inactive,
     Deleted,
 }
 
@@ -332,8 +333,9 @@ impl UserStatus {
     fn as_str(self) -> &'static str {
         match self {
             Self::Invited => "invited",
-            Self::Active => "active",
-            Self::Suspended => "suspended",
+            Self::Pending => "pending",
+            Self::Registered => "registered",
+            Self::Inactive => "inactive",
             Self::Deleted => "deleted",
         }
     }
@@ -345,8 +347,9 @@ impl TryFrom<&str> for UserStatus {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "invited" => Ok(Self::Invited),
-            "active" => Ok(Self::Active),
-            "suspended" => Ok(Self::Suspended),
+            "pending" => Ok(Self::Pending),
+            "registered" => Ok(Self::Registered),
+            "inactive" => Ok(Self::Inactive),
             "deleted" => Ok(Self::Deleted),
             value => Err(RepositoryError::InvalidUserStatus(value.to_owned())),
         }

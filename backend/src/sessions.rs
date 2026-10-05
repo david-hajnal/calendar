@@ -135,7 +135,7 @@ impl SessionManager {
         .ok_or(SessionError::Unauthorized)?;
         let now = (self.clock)();
         if record.revoked_at.is_some()
-            || record.status != "active"
+            || record.status != "registered"
             || now >= record.expires_at
             || now - record.last_seen_at >= self.config.idle_timeout_seconds
         {
@@ -172,13 +172,17 @@ impl SessionManager {
                 id: record.user_id,
                 email: record.normalized_email,
                 display_name: record.display_name,
-                status: "active",
+                status: "registered",
                 is_superadmin: record.is_superadmin,
             },
             created_at: record.created_at,
             last_seen_at,
             expires_at: record.expires_at,
         })
+    }
+
+    pub fn uses_secure_cookies(&self) -> bool {
+        self.config.allowed_origin.starts_with("https://")
     }
 
     pub fn enforce_csrf(

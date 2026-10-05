@@ -82,6 +82,9 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          pull: true
+          # Refresh Debian security packages without discarding the dependency build cache.
+          no-cache-filters: runtime
           push: false
           load: true
           tags: ghcr.io/david-hajnal/calendar-core:${{ env.MAIN_TAG }}
@@ -119,6 +122,9 @@ jobs:
         with:
           context: .
           file: Dockerfile.mcp
+          pull: true
+          # Refresh Debian security packages without discarding the dependency build cache.
+          no-cache-filters: runtime
           push: false
           load: true
           tags: ghcr.io/david-hajnal/calendar-mcp:${{ env.MAIN_TAG }}

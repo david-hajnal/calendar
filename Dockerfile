@@ -17,8 +17,10 @@ COPY backend/src src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim AS runtime
+# Upgrade inherited PCRE2 for CVE-2026-103111; fail if the security fix is unavailable.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates busybox-static sqlite3 \
+    && apt-get install -y --no-install-recommends ca-certificates busybox-static sqlite3 libpcre2-8-0 \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" ge '10.42-1+deb12u2' \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system commoncal \
     && useradd --system --gid commoncal --home-dir /app --shell /usr/sbin/nologin commoncal \

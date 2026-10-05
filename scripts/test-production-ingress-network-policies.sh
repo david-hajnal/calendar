@@ -17,9 +17,9 @@ render_and_check() {
   values="$work_dir/$release-values.yaml"
   rendered="$work_dir/$release-rendered.yaml"
 
-  # Use exactly the values Flux supplies to Helm in production. Checking chart
-  # defaults or the HelmRelease YAML alone can miss an incorrect effective
-  # selector after the two layers are merged.
+  # Preserve the values Flux supplies for effective production NetworkPolicies.
+  # Supply test-only host/sender when SMTP is not provisioned, so this ingress
+  # check can render; mail validation separately rejects missing settings.
   python3 - "$helmrelease" "$values" <<'PY'
 import sys
 
@@ -28,13 +28,24 @@ import yaml
 with open(sys.argv[1], encoding="utf-8") as stream:
     helmrelease = yaml.safe_load(stream)
 
+values = helmrelease["spec"]["values"]
+if helmrelease["metadata"]["name"] == "commoncal":
+    mail = values.setdefault("mail", {})
+    if not mail.get("host"):
+        mail["host"] = "smtp.example.test"
+    if not mail.get("from"):
+        mail["from"] = "no-reply@example.test"
+
 with open(sys.argv[2], "w", encoding="utf-8") as stream:
-    yaml.safe_dump(helmrelease["spec"]["values"], stream)
+    yaml.safe_dump(values, stream)
 PY
 
   helm template "$release" "$chart" \
     --namespace commoncal \
-    --values "$values" > "$rendered"
+    --values "$values" > "$rendered" || {
+      echo "$release: production NetworkPolicy render failed" >&2
+      return 1
+    }
 
   python3 - "$release" "$rendered" <<'PY'
 import sys

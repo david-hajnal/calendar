@@ -19,7 +19,8 @@ echo ""
 echo "--- Helm lint (auth, core, mcp) ---"
 if command -v helm &>/dev/null; then
   helm lint deploy/helm/commoncal-auth >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-auth"; ERRORS=$((ERRORS+1)); }
-  helm lint deploy/helm/commoncal >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal"; ERRORS=$((ERRORS+1)); }
+  # Rendering fixtures only; production mail settings must be supplied by the operator.
+  helm lint deploy/helm/commoncal --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal"; ERRORS=$((ERRORS+1)); }
   helm lint deploy/helm/commoncal-mcp >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-mcp"; ERRORS=$((ERRORS+1)); }
   
   echo "--- Helm template (auth) ---"
@@ -34,6 +35,8 @@ if command -v helm &>/dev/null; then
   
   echo "--- Helm template (core) ---"
   helm template commoncal deploy/helm/commoncal \
+    --set-string mail.host=smtp.example.test \
+    --set-string mail.from=no-reply@example.test \
     --set-string image.tag=test \
     --set-string domain=example.com \
     --set-string config.appOrigin=https://example.com \
@@ -170,6 +173,12 @@ if [ -f "deploy/helm/commoncal/tests/template_assertions.sh" ]; then
   sh deploy/helm/commoncal/tests/template_assertions.sh || { echo "FAIL: commoncal template_assertions.sh"; ERRORS=$((ERRORS+1)); }
 else
   echo "SKIP: commoncal template_assertions.sh not found"
+fi
+
+if [ -f "deploy/helm/commoncal/tests/mail_assertions.sh" ]; then
+  sh deploy/helm/commoncal/tests/mail_assertions.sh || { echo "FAIL: commoncal mail_assertions.sh"; ERRORS=$((ERRORS+1)); }
+else
+  echo "SKIP: commoncal mail_assertions.sh not found"
 fi
 
 if [ -f "deploy/helm/commoncal-mcp/tests/template_assertions.sh" ]; then

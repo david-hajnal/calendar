@@ -1,0 +1,15 @@
+{
+  "id": "mcp-acceptance-harness-foundation",
+  "title": "Phase 0.1: establish the production-component MCP acceptance harness",
+  "priority": 3,
+  "depends_on": [],
+  "acceptance": [
+    "a standalone black-box harness targets configurable production-component URLs rather than launching or treating slice1-lab binaries as release artifacts",
+    "the harness reuses only appropriate slice1-lab fixtures/helpers and owns its production-facing configuration, lifecycle, reporting, and cleanup",
+    "a baseline probe sends a JSON-RPC initialize request to the configured MCP endpoint and records the response deterministically",
+    "against the current production component, the baseline test fails because initialize is not standards-compatible; this failure is an intentional, asserted exit condition",
+    "the harness has a focused command and README-level invocation guidance suitable for CI and a production-equivalent deployment"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

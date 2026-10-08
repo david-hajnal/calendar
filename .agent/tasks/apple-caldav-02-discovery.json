@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-02-discovery",
+  "title": "Principal and service discovery — docs/plans/apple-calendar-support/04-task-slices.md#t02--principal-and-service-discovery-complete",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-01-secure-tracer"
+  ],
+  "acceptance": [
+    "well-known and OPTIONS discovery are deterministic",
+    "principal exposes a stable calendar-home URL",
+    "cross-user principal paths are rejected"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

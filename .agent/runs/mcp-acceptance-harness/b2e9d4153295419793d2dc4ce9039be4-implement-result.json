@@ -1,0 +1,31 @@
+{
+  "status": "completed",
+  "summary": "Built Phase 0.3 (oauth-lifecycle.js) and Phase 0.4 (security-isolation.js) black-box acceptance harnesses with shared helpers (lib.js), mock test hooks for negative token/grant cases, and self-contained verify scripts. All four Phase 0 harnesses (0.1-0.4) are intentionally red against current production behavior and green against the compliant mock.",
+  "files_changed": [
+    "mcp-acceptance/lib.js",
+    "mcp-acceptance/oauth-lifecycle.js",
+    "mcp-acceptance/security-isolation.js",
+    "mcp-acceptance/verify-oauth-lifecycle.js",
+    "mcp-acceptance/verify-security-isolation.js",
+    "mcp-acceptance/README.md",
+    "mcp-acceptance/mock/lifecycle-server.js",
+    "mcp-acceptance/mock/oauth-provider.js"
+  ],
+  "verification_commands": [
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/verify-security-isolation.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The harnesses are intentionally red against the current production component; they will turn green when Phases 2-6 of the fix plan are implemented.",
+    "The S9 concurrency-isolation test uses two different subjects (sub=1, sub=2) via the mock's token-mint hook; a real production component would need two independently authenticated clients with different grants."
+  ],
+  "important_context": [
+    "The mock server (mock/lifecycle-server.js) is driven by MOCK_WORLD (compliant|current) and has verification-only test hooks (/_test/token/mint, /_test/grant/*) for driving negative cases.",
+    "The harnesses are pure HTTP clients; they do not launch the slice1-lab binaries or treat the lab binary as a release artifact.",
+    "Phase 0.3/0.4 harnesses use lib.js for shared OAuth flow, MCP calls, and JWT helpers."
+  ]
+}

@@ -33,6 +33,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["node", "src/production.mjs"]
           ports:
             - name: public
               containerPort: {{ .Values.public.targetPort }}
@@ -51,7 +52,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.name }}
                   key: {{ .Values.secrets.databaseUrlKey }}
-            - name: LAB_BRIDGE_KEY
+            - name: AUTH_BRIDGE_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.name }}
@@ -70,9 +71,14 @@ spec:
             # path is passed via env. The file content comes from the Secret.
             - name: AUTH_JWKS_FILE
               value: /etc/commoncal-auth/jwks.json
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/auth-database/ca.crt
           volumeMounts:
             - name: jwks
               mountPath: /etc/commoncal-auth
+              readOnly: true
+            - name: database-ca
+              mountPath: /etc/auth-database
               readOnly: true
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
@@ -87,6 +93,12 @@ spec:
             items:
               - key: {{ .Values.secrets.jwksKey }}
                 path: jwks.json
+        - name: database-ca
+          secret:
+            secretName: {{ .Values.secrets.databaseCaSecret }}
+            items:
+              - key: {{ .Values.secrets.databaseCaKey }}
+                path: ca.crt
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

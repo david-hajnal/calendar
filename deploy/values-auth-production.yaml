@@ -2,7 +2,7 @@
 #
 # The authorization server (calendar-auth) provides OIDC for CommonCal and a
 # private bridge for consent/interaction handoffs. Secrets (DATABASE_URL,
-# LAB_BRIDGE_KEY, AUTH_COOKIE_KEYS, AUTH_SIGNING_KID) are injected from the
+# AUTH_BRIDGE_KEY, AUTH_COOKIE_KEYS, AUTH_SIGNING_KID) are injected from the
 # pre-existing commoncal-auth-secrets Secret — never rendered into a manifest.
 #
 # The issuer is held by CommonCal/MCP without cutover: the existing issuer
@@ -17,8 +17,8 @@ image:
 
 # Issuer / resource identifiers (non-secret).
 config:
-  issuer: https://cal.hajnal.space
-  resourceUrl: https://cal.hajnal.space
+  issuer: https://auth.hajnal.space
+  resourceUrl: https://mcal.hajnal.space/mcp
   commoncalUrl: https://cal.hajnal.space
 
 # Public service (OIDC endpoints) — exposed via Ingress.
@@ -34,27 +34,27 @@ internal:
 ingress:
   enabled: true
   className: traefik
-  host: cal.hajnal.space
+  host: auth.hajnal.space
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
   tls:
     enabled: true
-    secretName: commoncal-tls
+    secretName: commoncal-auth-tls
 
 # Pre-existing Secret holding the auth server's secrets. The chart never
 # creates this Secret; it is created out-of-band (see bootstrap-production.sh).
 secrets:
   name: commoncal-auth-secrets
   databaseUrlKey: DATABASE_URL
-  bridgeKeyKey: LAB_BRIDGE_KEY
+  bridgeKeyKey: AUTH_BRIDGE_KEY
   cookieKeysKey: AUTH_COOKIE_KEYS
   signingKidKey: AUTH_SIGNING_KID
 
 networkPolicy:
   enabled: true
-  # k3s installs the Traefik controller in kube-system. This value is a
+  # Verify the actual Traefik controller namespace before rollout. This is a
   # namespace name, not the IngressClass name.
-  ingressNamespace: kube-system
+  ingressNamespace: traefik
   commoncalNamespace: commoncal
   postgres:
     port: 5432

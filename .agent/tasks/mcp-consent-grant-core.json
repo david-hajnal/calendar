@@ -1,0 +1,18 @@
+{
+  "id": "mcp-consent-grant-core",
+  "title": "Phase 4: promote consent and grant integration into core. Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 2,
+  "depends_on": [
+    "mcp-discovery-token-validation"
+  ],
+  "acceptance": [
+    "lab private interaction bridge client ported into the real backend using AUTH_BRIDGE_URL, timeout, and secret configuration",
+    "session-protected login continuation and consent endpoints/UI showing registered client, requested scopes, and calendars; never trust a user id from the browser payload",
+    "on approval upsert exactly one active grant for the authenticated user and OAuth client_id, intersecting requested scopes/calendars with the live allowed set, then resume the interaction",
+    "on denial create no grant; retries idempotent; approval cannot broaden an existing grant",
+    "all user_id = 0 and empty-list placeholders replaced; list, narrow, and revoke routes session-bound and ownership-checked",
+    "immediate revocation preserved by checking the authoritative grant and live calendar membership for every tool invocation"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

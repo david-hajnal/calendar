@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "Added missing record_caldav_change calls to create_recurring (created), update_all_day_occurrence (updated), delete_all_day_occurrence (updated), update_occurrence (updated), and delete_occurrence (updated) so no supported mutation bypasses DAV sync.",
+  "files_changed": [
+    "backend/src/event.rs"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test --test caldav_event_resource",
+    "cargo test --test recurring_event_api",
+    "cargo test --test event_api",
+    "cargo test --test event_repository",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Occurrence mutations (update/delete of a single occurrence) record 'updated' not 'deleted' because the series event row persists; only the exception row changes. This matches the existing pattern where the series is the DAV resource."
+  ]
+}

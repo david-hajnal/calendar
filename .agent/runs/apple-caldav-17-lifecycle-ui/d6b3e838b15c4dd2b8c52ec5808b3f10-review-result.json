@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "Review found no actionable defects. All three acceptance criteria are met: secret displayed once via React state, revoke-one/disconnect-all correctly wired to backend endpoints with tests, and all four accessible states (loading/connected/attention/error) are implemented and tested.",
+  "files_changed": [],
+  "verification_commands": [
+    "npx vitest run src/settings/CalendarConnections.test.tsx",
+    "npx vitest run src/App.test.tsx",
+    "npx vitest run",
+    "npx tsc --noEmit"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Backend tests for credential lifecycle (revoke-one, revoke-all) are in backend/src/caldav/auth.rs:788 and :820",
+    "The 'copied' button state persists until next generation or unmount \u2014 minor UX, not a defect"
+  ]
+}

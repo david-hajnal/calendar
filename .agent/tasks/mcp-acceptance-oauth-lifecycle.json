@@ -1,0 +1,18 @@
+{
+  "id": "mcp-acceptance-oauth-lifecycle",
+  "title": "Phase 0.3: prove OAuth authorization and the authenticated MCP lifecycle",
+  "priority": 3,
+  "depends_on": [
+    "mcp-acceptance-discovery"
+  ],
+  "acceptance": [
+    "the harness registers a client through DCR using the supported OpenCode loopback redirect shape",
+    "the harness drives Authorization Code flow with state and S256 PKCE, including the existing login/consent fixture boundary where required",
+    "a token exchange completes and yields a resource-bound access token without manual JWT construction",
+    "with that token, initialize, notifications/initialized, tools/list, and tools/call calendar_list are asserted end-to-end",
+    "tools/list asserts the expected nine tools each expose a description and complete input schema",
+    "current production behavior fails in this slice for the expected lifecycle/discovery reason, not because the harness calls the lab release binary"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

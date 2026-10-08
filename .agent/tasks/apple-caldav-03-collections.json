@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-03-collections",
+  "title": "Real calendar collections \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t03--real-calendar-collections",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-02-discovery"
+  ],
+  "acceptance": [
+    "active authorized calendars appear with stable paths names and colors",
+    "revoked archived and foreign calendars do not appear",
+    "DAV privileges match Happening roles"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

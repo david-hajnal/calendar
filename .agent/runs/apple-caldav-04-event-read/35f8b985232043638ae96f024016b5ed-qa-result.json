@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "T04 first timed event resource verified: stable URL/UID mapping, GET returns parser-valid canonical VCALENDAR, HEAD mirrors GET headers without body, ETag is content-derived and rotates only on canonical change. Full backend test suite passes with 0 failures.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "backend/tests/scratch_axum.rs and backend/tests/scratch_ics.rs are debug scratch tests left in the tree; passing but candidates for removal in a later cleanup packet",
+    "clippy warning collapsible_if at backend/src/caldav/ical.rs:75 (style only)"
+  ],
+  "important_context": [
+    "ETag is a quoted SHA-256 of the serialized ICS body (strong ETag); resource names are random UUIDs with .ics suffix; DAV mapping is created lazily on first PROPFIND Depth 1 listing via ensure_resource",
+    "Worktree also contains unrelated MCP internal API-key auth changes (main.rs, mcp_internal.rs) from a separate plan; their tests pass and were preserved",
+    "T04 scope excludes REPORT/writes/recurrence/all-day; free-busy viewer role can currently read event details (permission boundaries deferred to T15)"
+  ]
+}

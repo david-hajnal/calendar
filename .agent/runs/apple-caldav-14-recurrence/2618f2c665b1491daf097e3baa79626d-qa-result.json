@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "summary": "All 6 T14 recurrence tests pass and the full backend test suite (300+ tests) passes with 0 failures. All three acceptance criteria are verified: supported series round-trips as one UID/resource, modified and deleted occurrences persist, unsupported recurrence fails with 400, and ETags are deterministic.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource -- put_recurring put_unsupported_rrule",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "T14 recurrence tests live in backend/tests/caldav_event_resource.rs (lines 1182-1561)",
+    "The recurrence implementation spans: backend/src/recurrence.rs (rule parsing/expansion), backend/src/ics.rs (ICS parsing), backend/src/caldav/ical.rs (serialization), backend/src/caldav/http.rs (HTTP handlers), backend/src/event.rs (domain service)"
+  ]
+}

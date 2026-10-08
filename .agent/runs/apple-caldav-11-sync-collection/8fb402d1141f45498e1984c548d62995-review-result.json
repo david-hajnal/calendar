@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "summary": "One defect: sync-collection deleted-resource response uses 207 Multi-Status instead of the RFC 6578-required 404 Not Found, which Apple clients will misinterpret.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --test caldav_event_resource",
+    "cargo test --manifest-path backend/Cargo.toml --lib caldav",
+    "cargo clippy --manifest-path backend/Cargo.toml --lib"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/caldav/http.rs:1417 \u2014 sync_deleted_response_xml emits <D:status>HTTP/1.1 207 Multi-Status</D:status> for deleted resources; RFC 6578 requires 404 Not Found for deleted resources in sync-collection responses. 207 is the multistatus envelope status, not a per-resource status. Inconsistent with the codebase's own multiget 404 handling (http.rs:1462). Apple CalDAV clients expect 404 to recognize deletions. Test at backend/tests/caldav_event_resource.rs:2935 asserts the wrong status, masking the defect."
+  ],
+  "follow_up": [
+    "Fix sync_deleted_response_xml to use HTTP/1.1 404 Not Found and update the test assertion at caldav_event_resource.rs:2935 to match."
+  ],
+  "important_context": [
+    "The sync-collection implementation is otherwise correct: HMAC-verified opaque tokens, ordered change-log pagination with no-skip guarantee, safe 400 on invalid tokens, transactional change recording with tombstones."
+  ]
+}

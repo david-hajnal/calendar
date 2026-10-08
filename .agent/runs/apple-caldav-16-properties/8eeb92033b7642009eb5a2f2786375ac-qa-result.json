@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "T16 safe client-property preservation verified against all three acceptance criteria. All 4 original T16 tests pass; added 4 tests covering full-allowlist normalization, VTODO/VJOURNAL rejection, scheduling recording, and full-allowlist survival. Full backend suite (400+ tests) passes with 0 failures.",
+  "files_changed": [
+    "backend/tests/ics.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource t16",
+    "cargo test --test ics",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Design: the incoming PUT body is the source of truth \u2014 present allowlisted properties are stored, absent ones are removed (the caldav_event_properties row is replaced wholesale). This matches CalDAV full-replacement semantics and is why 'survives unrelated edits' means the client resends the metadata it wants kept.",
+    "Allowlist: CATEGORIES, URL, TRANSP, DISPLAY/AUDIO VALARMs with a TRIGGER, and X-APPLE-CEVENT-CATEGORY / X-APPLE-STRUCTURED-LOCATION / X-APPLE-FALLBACK-ALARM-UID. Non-allowlisted X-properties and EMAIL alarms are dropped at parse time.",
+    "Scheduling (ATTENDEE/ORGANIZER/METHOD) is rejected by validate_dav_write in the DAV layer; VTODO/VJOURNAL are rejected by the ics parser (Malformed). ETag = SHA-256 of the canonical serialized ICS, so it is a deterministic function of content.",
+    "Pre-existing (not a T16 defect): `cargo fmt --check` reports diffs across the entire codebase, including production files never touched by T16 (http.rs, event.rs, ical.rs, repository.rs). The project has no rustfmt config and does not enforce formatting; the test suite is the real verification and it passes."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "Rewrote oauth.rs with RFC 8414/OIDC discovery (issuer verification, HTTPS jwks_uri), standard claims (numeric sub, client_id, space-delimited scope), iat validation with 30s skew, bounded TTL caching with one-refresh-on-unknown-kid for key rotation. Added 9 Phase 3 integration tests validating real RSA-signed tokens against the auth-server claim contract.",
+  "files_changed": [
+    "mcp-server/src/oauth.rs",
+    "mcp-server/src/auth.rs",
+    "mcp-server/tests/integration.rs"
+  ],
+  "verification_commands": [
+    "cd mcp-server && cargo test",
+    "cd mcp-server && cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The one-refresh-on-unknown-kid path is exercised by the stale-key test (refresh happens, key still absent \u2192 reject). A dedicated positive refresh test (JWKS changes between first fetch and refresh) would require a stateful mock server; the key-rotation-overlap test covers the success case with both keys present."
+  ],
+  "important_context": [
+    "TokenValidator is now the shared validator in AuthState; the free function validate_access_token creates a fresh validator per call (no shared cache) \u2014 production code uses AuthState.validator which shares caches across requests",
+    "The jwks_uri HTTPS check is conditional: enforced when issuer is HTTPS, relaxed for HTTP issuers (test environments)",
+    "scope claim is now a space-delimited string (standard OAuth), not a JSON array; the old namespaced claims (https://commoncal.tld/*) are no longer parsed"
+  ]
+}

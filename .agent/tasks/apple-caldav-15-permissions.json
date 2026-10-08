@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-15-permissions",
+  "title": "Permission and imported boundaries \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t15--permission-and-imported-boundaries",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-06-multiget"
+  ],
+  "acceptance": [
+    "all roles pass the documented DAV read-write matrix",
+    "revocation is immediate and foreign paths hide existence",
+    "imported resources reject mutation"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

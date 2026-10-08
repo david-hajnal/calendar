@@ -1,0 +1,25 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.2 discovery harness correctly asserts A1-A4 and captures current production behavior as focused failing assertions (A1/A2/A4 red, A3 green) without modifying production; both self-contained verifiers pass and the Phase 0.1 harness shows no regression.",
+  "files_changed": [],
+  "verification_commands": [
+    "node --check mcp-acceptance/discovery.js",
+    "node --check mcp-acceptance/mock/server.js",
+    "node --check mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-discovery.js --port 4123",
+    "node mcp-acceptance/verify.js --port 4130",
+    "node mcp-acceptance/discovery.js --timeout-ms 15000",
+    "node mcp-acceptance/discovery.js --url http://127.0.0.1:4141/mcp --timeout-ms 2000"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "A2 violation message reads '401 response has no WWW-Authenticate header' even when the actual status is 400; harmless wording nit, A1 already carries the status expectation"
+  ],
+  "important_context": [
+    "Harness is a pure black-box HTTP client; it does not modify production behavior.",
+    "Current production baseline: initialize -> 400/-32601 (no 401 challenge), no WWW-Authenticate, protected-resource metadata valid JSON naming cal.hajnal.space, issuer discovery returns SPA HTML.",
+    "discovery.js exits 1 against current production (intentional Phase 0.2 baseline) and 0 against compliant behavior; deterministic record written to $MCP_RECORD_DIR/mcp-acceptance-discovery.json.",
+    "Backend worktree changes (caldav/*, mcp_internal.rs, main.rs) are from other tasks and were correctly left untouched."
+  ]
+}

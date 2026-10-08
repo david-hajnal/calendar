@@ -75,6 +75,7 @@ function matchesShape(uri, shape) {
       // Normalize [::1] vs ::1.
       const host = parts.host === '[::1]' ? '[::1]' : parts.host;
       if (host !== shape.host) return false;
+      if (shape.port === 'any' && (!parts.port || parts.port < 1024 || parts.port > 65535)) return false;
       if (shape.port !== 'any' && parts.port !== shape.port) return false;
       if (parts.path !== shape.path) return false;
       // Loopback redirects must not carry a query or fragment.

@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "Added conditional CalDAV DELETE that removes the event through EventService and retains a durable tombstone; stale/missing If-Match returns 412 without mutation and repeated deletes are deterministic.",
+  "files_changed": [
+    "backend/migrations/0024_caldav_event_resources.sql",
+    "backend/migrations/rollbacks/0024_rollback.sql",
+    "backend/src/caldav/repository.rs",
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy",
+    "cargo fmt"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Tombstone/revision is not yet exposed via sync-collection (T11) or recorded for native mutations (T10); the durable row is ready for those consumers."
+  ],
+  "important_context": [
+    "caldav_event_resources.event_id is now nullable with no ON DELETE CASCADE; live lookups filter deleted_at IS NULL. DELETE tombstones the mapping before calling EventService.delete and compensates (restore_resource) if the domain delete fails."
+  ]
+}

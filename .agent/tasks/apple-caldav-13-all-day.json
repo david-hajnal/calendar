@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-13-all-day",
+  "title": "All-day event semantics \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t13--all-day-semantics",
+  "priority": 2,
+  "depends_on": [
+    "apple-caldav-08-update"
+  ],
+  "acceptance": [
+    "single and multi-day dates round-trip across timezone and DST boundaries",
+    "edits preserve all-day representation",
+    "invalid mixed DATE and DATE-TIME values are rejected"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

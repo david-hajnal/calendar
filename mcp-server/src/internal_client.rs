@@ -596,6 +596,7 @@ impl InternalClient {
     pub async fn check_idempotency(
         &self,
         operation_id: &str,
+        user_id: i64,
     ) -> Result<Option<serde_json::Value>, InternalError> {
         let url = self
             .api_base
@@ -604,6 +605,7 @@ impl InternalClient {
         let resp = self
             .http_client
             .get(url.as_str())
+            .query(&[("user_id", &user_id.to_string())])
             .header("x-mcp-api-key", &self.api_key)
             .send()
             .await
@@ -631,6 +633,7 @@ impl InternalClient {
     pub async fn record_idempotency(
         &self,
         operation_id: &str,
+        user_id: i64,
         payload: &serde_json::Value,
     ) -> Result<(), InternalError> {
         let url = self
@@ -643,6 +646,7 @@ impl InternalClient {
             .header("x-mcp-api-key", &self.api_key)
             .json(&serde_json::json!({
                 "operation_id": operation_id,
+                "user_id": user_id,
                 "payload": payload,
             }))
             .send()

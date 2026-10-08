@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "T08 conflict-safe update verified: matching If-Match routes through EventService and rotates ETag; stale/missing precondition returns 412 without mutation; unauthorized update returns 404 with no body disclosure. All 5 T08 tests, 25 integration tests, 72 caldav unit tests, and the full backend suite pass; clippy clean.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource put_update",
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo clippy --all-targets",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Update path is backend/src/caldav/http.rs handle_put_update_event_resource (lines 645-789); etag_matches (795-804) accepts the * wildcard per RFC 7232, concurrency safety relies on EventService BEGIN IMMEDIATE + optimistic version check",
+    "T08 tests live in backend/tests/caldav_event_resource.rs (put_update_* tests)"
+  ]
+}

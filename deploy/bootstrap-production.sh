@@ -11,7 +11,7 @@ set -euo pipefail
 #   MCP_OAUTH_ISSUER            - HTTPS OAuth issuer exposing the JWKS endpoint
 #   AUTH_DATABASE_URL           - PostgreSQL DSN for the authorization server (slice 5)
 #   AUTH_BRIDGE_KEY             - shared secret for the private bridge (slice 5)
-#   AUTH_COOKIE_KEYS            - JSON array of cookie encryption keys (slice 5)
+#   AUTH_COOKIE_KEYS            - comma-separated distinct cookie signing keys (slice 5)
 #   AUTH_SIGNING_KID            - JWKS key ID for the authorization server (slice 5)
 #   GITHUB_TOKEN                - GitHub PAT with repo write access
 #   DOMAIN                      - core domain (default: cal.hajnal.space)
@@ -73,11 +73,18 @@ if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^([[:xdigit:]]{2}){16,}$ ]]; then
   exit 1
 fi
 
-# AUTH_COOKIE_KEYS must be a JSON array (at least one key).
-if ! python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if isinstance(d,list) and len(d)>=1 else 1)" "$AUTH_COOKIE_KEYS" 2>/dev/null; then
-  echo "ERROR: AUTH_COOKIE_KEYS must be a JSON array with at least one key" >&2
+# Match the production runtime's comma-separated cookie-key rotation set.
+if ! AUTH_COOKIE_KEYS="$AUTH_COOKIE_KEYS" python3 - <<'KEYS'
+import os, sys
+keys = [key.strip() for key in os.environ['AUTH_COOKIE_KEYS'].split(',')]
+sys.exit(0 if len(keys) >= 2 and len(set(keys)) == len(keys) and all(len(key) >= 32 for key in keys) else 1)
+KEYS
+then
+  echo "ERROR: AUTH_COOKIE_KEYS requires at least two distinct keys of 32+ characters" >&2
   exit 1
 fi
+: "${AUTH_JWKS_FILE:?AUTH_JWKS_FILE must point to the private production JWKS}"
+[[ -r "$AUTH_JWKS_FILE" ]] || { echo 'ERROR: AUTH_JWKS_FILE is not readable' >&2; exit 1; }
 
 # AUTH_DATABASE_URL must be a PostgreSQL DSN.
 if [[ ! "$AUTH_DATABASE_URL" =~ ^postgres(ql)?:// ]]; then
@@ -111,13 +118,8 @@ kubectl create secret generic commoncal-mcp-secrets \
 echo "==> Creating auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;
 # it is created here out-of-band and referenced by the Helm chart.
-kubectl create secret generic commoncal-auth-secrets \
-  --from-literal=DATABASE_URL="$AUTH_DATABASE_URL" \
-  --from-literal=LAB_BRIDGE_KEY="$AUTH_BRIDGE_KEY" \
-  --from-literal=AUTH_COOKIE_KEYS="$AUTH_COOKIE_KEYS" \
-  --from-literal=AUTH_SIGNING_KID="$AUTH_SIGNING_KID" \
-  -n "$NAMESPACE" \
-  --dry-run=client -o yaml | kubectl apply -f -
+source "$(dirname "${BASH_SOURCE[0]}")/auth-secret.sh"
+apply_auth_secret "$NAMESPACE" apply -f -
 
 echo "==> Bootstrapping Flux (path: deploy/flux/overlays/production)..."
 # flux v2.9.4 reads the PAT from the GITHUB_TOKEN env var (loaded above) and

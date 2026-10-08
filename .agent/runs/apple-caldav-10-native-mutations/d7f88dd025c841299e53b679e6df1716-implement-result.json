@@ -1,0 +1,32 @@
+{
+  "status": "completed",
+  "summary": "Centralized CalDAV change recording at the EventService transaction boundary: added a caldav_event_changes revision log (migration 0025), recorded exactly one change per committed base create/update/delete, tombstoned the DAV mapping on native delete to keep its FK satisfied, and exposed an ordered change-log read API (list_changes_since) for T11 sync tokens.",
+  "files_changed": [
+    "backend/migrations/0025_caldav_event_changes.sql",
+    "backend/migrations/rollbacks/0025_rollback.sql",
+    "backend/src/caldav/types.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/src/event.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo check --manifest-path backend/Cargo.toml --locked",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "MCP internal API (backend/src/mcp_internal.rs) event create/update handlers use raw SQL that does not match the current events schema (non-existent start_utc/end_utc columns, event_kind='default' violates the CHECK constraint, omits NOT NULL created_by_user_id/last_edited_by_user_id) and do not route through EventService, so MCP mutations are not recorded in the CalDAV change log. Pre-existing and outside T10 scope."
+  ],
+  "follow_up": [
+    "T11 should build sync-token encoding/decoding on top of CaldavRepository::list_changes_since and resolve each change's resource (ensure_resource for created/updated, tombstone lookup for deleted).",
+    "Moves (update with target_calendar_id != source_calendar_id) currently record a single 'updated' change against the target calendar; T12 should emit remove/add pairs.",
+    "create_recurring and occurrence mutations are intentionally not recorded; T12/T14 should extend coverage."
+  ],
+  "important_context": [
+    "Change recording is centralized in EventService::create/update/delete (base paths only), so browser, DAV, and any future EventService-based mutation record exactly one change per commit and none on rollback; the DAV layer adds no separate recording (no double-count).",
+    "EventService::delete now tombstones the live caldav_event_resources mapping (event_id->NULL, deleted_at set) within the same transaction before deleting the event, preventing the mapping's foreign-key violation and leaving a durable tombstone consistent with T09.",
+    "caldav_event_changes.id is the monotonically increasing revision; list_changes_since(calendar_id, after_revision, limit) pages it in ascending order."
+  ]
+}

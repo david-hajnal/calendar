@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "Changed sync_deleted_response_xml to emit HTTP/1.1 404 Not Found (was 207 Multi-Status) for deleted resources per RFC 6578, updated the doc comment, and fixed the test assertion that asserted the wrong status.",
+  "files_changed": [
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource sync_collection_represents_deletions",
+    "cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Deleted-resource sync-collection responses now use 404 Not Found as a direct child of D:response, consistent with the multiget 404 handling at http.rs:1462."
+  ]
+}

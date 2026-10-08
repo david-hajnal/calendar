@@ -1,0 +1,17 @@
+{{- range $name, $size := dict "data" .Values.storage.size "backup" .Values.storage.backupSize }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if $.Values.storage.storageClassName }}
+  storageClassName: {{ $.Values.storage.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $size }}
+---
+{{- end }}

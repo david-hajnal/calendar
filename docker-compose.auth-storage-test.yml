@@ -1,0 +1,90 @@
+# Only scripts/dev.sh auth-storage-check owns this disposable project.
+services:
+  prepare:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth-postgres
+    image: commoncal-auth-postgres-proof:local
+    user: root
+    entrypoint: [bash, -ec]
+    command:
+      - |
+        cp /fixture/ca.crt /fixture/tls.crt /fixture/tls.key /tls/
+        chown -R 999:999 /tls /backup
+        chmod 600 /tls/tls.key
+        age-keygen -o /proof/identity.age 2>/proof/identity.log
+        age-keygen -y /proof/identity.age >/proof/recipient
+        cp /fixture/renewed.crt /fixture/renewed.key /proof/
+        chown -R 999:999 /proof
+    volumes:
+      - ${AUTH_STORAGE_FIXTURE:?}:/fixture:ro
+      - tls:/tls
+      - backup:/backup
+      - proof:/proof
+  db:
+    image: commoncal-auth-postgres-proof:local
+    user: "999:999"
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: disposable-admin-password
+      POSTGRES_DB: commoncal_auth
+      AUTH_DATABASE_PASSWORD: disposable-application-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    command: [postgres, -c, ssl=on, -c, ssl_cert_file=/etc/postgres-tls/tls.crt, -c, ssl_key_file=/etc/postgres-tls/tls.key]
+    tmpfs:
+      - /var/lib/postgresql/data:uid=999,gid=999,mode=0700
+    volumes:
+      - tls:/etc/postgres-tls:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d commoncal_auth]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  restore:
+    image: commoncal-auth-postgres-proof:local
+    user: "999:999"
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: disposable-restore-admin-password
+      POSTGRES_DB: commoncal_auth
+      AUTH_DATABASE_PASSWORD: disposable-application-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    command: [postgres, -c, ssl=on, -c, ssl_cert_file=/etc/postgres-tls/tls.crt, -c, ssl_key_file=/etc/postgres-tls/tls.key]
+    tmpfs:
+      - /var/lib/postgresql/data:uid=999,gid=999,mode=0700
+    volumes:
+      - tls:/etc/postgres-tls:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d commoncal_auth]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  proof:
+    image: commoncal-auth-postgres-proof:local
+    user: "999:999"
+    entrypoint: [bash, /tests/auth-storage-proof.sh]
+    environment:
+      PGHOST: db
+      PGUSER: commoncal_auth
+      PGDATABASE: commoncal_auth
+      PGPASSWORD: disposable-application-password
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /tls/ca.crt
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./scripts/auth-storage-proof.sh:/tests/auth-storage-proof.sh:ro
+      - ${AUTH_STORAGE_FIXTURE:?}:/fixture:ro
+      - tls:/tls
+      - backup:/backup
+      - proof:/proof
+volumes:
+  tls: {}
+  backup: {}
+  proof: {}

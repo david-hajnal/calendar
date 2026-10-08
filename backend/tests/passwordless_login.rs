@@ -518,3 +518,31 @@ impl ProductionEmailProvider for RejectingProvider {
         Err(ProviderError::new())
     }
 }
+
+#[tokio::test]
+async fn emailed_login_link_preserves_safe_consent_continuation_and_rejects_external_targets() {
+    for (requested, expected) in [
+        ("/consent?handoff=a+b=c", Some("/consent?handoff=a+b=c")),
+        ("https://evil.example", None),
+        ("//evil.example", None),
+        ("/\\evil.example", None),
+    ] {
+        let app = TestApplication::new().await;
+        app.user("continuation@example.test", UserStatus::Registered)
+            .await;
+        let response = app.router().oneshot(
+            Request::builder().method("POST").uri("/api/v1/auth/login-links")
+                .header(CONTENT_TYPE,"application/json")
+                .body(Body::from(serde_json::json!({"email":"continuation@example.test","redirect":requested}).to_string())).unwrap()
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let links = app.email_sender.links();
+        let url = url::Url::parse(&links[0].1).unwrap();
+        let redirect = url
+            .query_pairs()
+            .find(|(key, _)| key == "redirect")
+            .map(|(_, value)| value.into_owned());
+        assert_eq!(redirect.as_deref(), expected);
+        assert!(url.query_pairs().any(|(key, _)| key == "token"));
+    }
+}

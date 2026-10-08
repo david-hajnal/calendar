@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "Fixed T03 shared-calendar projection: list_calendars no longer requires requester==owner so granted calendars appear in the grantee's calendar home, and dav_calendar now accepts the requester's own principal path so listed hrefs resolve; extended the grantee test to prove href resolution with editor privileges.",
+  "files_changed": [
+    "backend/src/caldav/auth.rs",
+    "backend/src/caldav/http.rs"
+  ],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy --all-targets",
+    "cargo fmt --check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T04/T15 should freeze the collection path scheme /dav/calendars/{principal}/{calendar_id}/ and the privileges_for_role mapping as specified in the T03 handoff"
+  ],
+  "important_context": [
+    "T03 implementation was already present uncommitted in the working tree; only the two shared-calendar defects above were fixed this session",
+    "Unrelated MCP work in backend/src/main.rs and backend/src/mcp_internal.rs was preserved untouched",
+    "Privilege projection routes through authorization::authorize_calendar_action, the single source of truth for Happening roles"
+  ]
+}

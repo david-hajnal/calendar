@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "All 8 acceptance criteria verified. rmcp Streamable HTTP service mounted at /mcp with ServerHandler, bearer-token auth with standards-compliant 401 challenge, resource_metadata derived from MCP_PUBLIC_RESOURCE_URL, all nine tools ported to typed SDK handlers, domain behavior preserved, identity in task-local with concurrency isolation test, calendar_list permission mapping corrected, custom dispatcher retired. 249 tests pass, clippy clean.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo check",
+    "cargo test",
+    "cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The custom dispatcher (Gateway::handle_authorized_tool_call) is retired from the main request path but retained for integration tests that exercise audit recording",
+    "calendar_list now maps to grant.allow_availability via its own check_tool_permission entry rather than reusing the availability_find capability",
+    "Identity is stored in a tokio task-local (identity::IDENTITY) set by auth middleware and read by tool handlers at call time"
+  ]
+}

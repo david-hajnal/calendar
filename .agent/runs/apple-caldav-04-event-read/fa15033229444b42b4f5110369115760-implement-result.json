@@ -1,0 +1,31 @@
+{
+  "status": "completed",
+  "summary": "Implemented T04 first timed event resource: calendar PROPFIND now lazily creates stable (uid, resource_name) mappings for existing timed non-recurring events so they appear in Apple; GET returns a valid canonical VCALENDAR, HEAD matches GET headers (fixed Content-Length), 404s return empty bodies, and ETag is a sha256 of canonical content that changes only with content. Added a lazy-mapping regression test and fixed the TestDb fixture (missing events/caldav_event_resources tables) which also un-broke 3 pre-existing T03 calendar tests.",
+  "files_changed": [
+    "backend/src/caldav/auth.rs",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/tests/caldav_event_resource.rs",
+    "backend/tests/scratch_axum.rs"
+  ],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --test caldav_event_resource",
+    "cargo test --no-fail-fast --manifest-path backend/Cargo.toml",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo check --manifest-path backend/Cargo.toml --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "dav_event_resource recurring check uses unwrap_or(false), swallowing DB errors (fail-open); pre-existing, left as-is"
+  ],
+  "follow_up": [
+    "dav_calendar creates resource mappings during PROPFIND (a write side-effect on read) and issues N+1 queries per event; acceptable for T04 but a performance/limit concern for T18"
+  ],
+  "important_context": [
+    "Resource mapping (caldav_event_resources row) is created lazily on first exposure (calendar listing or GET) and is the stable uid/resource_name per event.",
+    "ETag = quoted sha256 hex of the canonical serialized VCALENDAR; deterministic for unchanged content.",
+    "Exposure is limited to timed, non-recurring events; all-day and recurring events are excluded per T04 scope.",
+    "TestDb fixture in backend/src/caldav/http.rs now includes events and caldav_event_resources tables, required for dav_calendar to run in unit tests."
+  ]
+}

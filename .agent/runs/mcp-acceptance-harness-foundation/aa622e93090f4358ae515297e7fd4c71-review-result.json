@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "The Phase 0.1 MCP acceptance harness is correctly implemented: standalone black-box HTTP client targeting a configurable production URL, reuses the slice1-lab case-10 initialize fixture shape, sends a deterministic initialize probe, and intentionally exits 1 against the current non-standards-compatible production component. The self-test (verify.js) passes on both the FAIL and PASS paths. All five acceptance criteria are met.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/harness.js --help",
+    "read mcp-acceptance/harness.js",
+    "read mcp-acceptance/verify.js",
+    "read mcp-acceptance/README.md",
+    "read mcp-acceptance/fixtures/initialize-request.json",
+    "read mcp-acceptance/mock/server.js",
+    "read slice1-lab/negative_tests.py",
+    "read .agent/tasks/mcp-acceptance-harness-foundation.json",
+    "read docs/MCP-CONNECTION.md",
+    "read docs/MCP-PRODUCTION-FIX-PLAN.md"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The working tree also contains uncommitted changes from other tasks (backend/src/caldav/*, backend/src/mcp_internal.rs) that are out of scope for this harness task; they belong to the apple-caldav-* and mcp-secure-internal-api tasks."
+  ],
+  "important_context": [
+    "The harness default URL is the real production endpoint https://mcal.hajnal.space/mcp; running `node mcp-acceptance/harness.js` with no args makes a live call to production and exits 1 (the intentional Phase 0.1 baseline). CI must set MCP_URL to a production-equivalent deployment and expect a red baseline during Phase 0."
+  ]
+}

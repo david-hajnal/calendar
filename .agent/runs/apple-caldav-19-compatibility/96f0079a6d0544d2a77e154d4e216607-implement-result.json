@@ -1,0 +1,29 @@
+{
+  "status": "completed",
+  "summary": "Removed legacy fake-CalDAV UI (toggle, subscribe button, CSS) from frontend and switched feed_ics endpoint to use raw event projections instead of the removed caldav_events method.",
+  "files_changed": [
+    "backend/src/shared_view.rs",
+    "backend/src/http.rs",
+    "frontend/src/public/PublicView.tsx",
+    "frontend/src/calendar/api.ts",
+    "frontend/src/calendar/CompositeViewManagement.tsx",
+    "frontend/src/calendar/CompositeViewManagement.css"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test",
+    "npx tsc --noEmit",
+    "npx vitest run"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "macOS/iOS real-client connect/sync/CRUD/revoke checks require physical devices \u2014 not verifiable in this environment",
+    "Sanitized real-client traces as regression fixtures require captured client sessions"
+  ],
+  "important_context": [
+    "feed_ics now uses public_events_raw() returning Vec<EventProjection> directly, bypassing projection filtering \u2014 ICS gets full event data",
+    "Migration 0021_caldav_token.sql retains caldav_token_hash/caldav_enabled columns (historical, harmless)",
+    "No deployment/user docs referenced the fake CalDAV UI"
+  ]
+}

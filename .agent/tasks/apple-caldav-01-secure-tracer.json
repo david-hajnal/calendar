@@ -1,0 +1,13 @@
+{
+  "id": "apple-caldav-01-secure-tracer",
+  "title": "Secure credential and DAV-root tracer — docs/plans/apple-calendar-support/04-task-slices.md#t01--secure-credential-and-dav-root-tracer-complete",
+  "priority": 3,
+  "depends_on": [],
+  "acceptance": [
+    "connection password is shown once and stored only as a hash",
+    "invalid or revoked credentials fail",
+    "authenticated DAV root PROPFIND returns current-principal DAV XML"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

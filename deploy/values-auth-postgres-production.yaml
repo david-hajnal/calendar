@@ -1,0 +1,11 @@
+# Not referenced by the active production kustomization. Supply a published
+# immutable image tag explicitly when provisioning after the prerequisites.
+image:
+  repository: ghcr.io/david-hajnal/calendar-auth-postgres
+  tag: ""
+storage:
+  size: 10Gi
+  backupSize: 10Gi
+backup:
+  schedule: "15 2 * * *"
+  retentionDays: 14

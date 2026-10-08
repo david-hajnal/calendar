@@ -1,0 +1,17 @@
+{
+  "id": "mcp-acceptance-discovery",
+  "title": "Phase 0.2: assert public MCP challenge and OAuth discovery",
+  "priority": 3,
+  "depends_on": [
+    "mcp-acceptance-harness-foundation"
+  ],
+  "acceptance": [
+    "an unauthenticated JSON-RPC initialize request must receive 401 rather than a protocol-dispatch error",
+    "the 401 challenge contains the configured public resource_metadata URL and never a loopback or lab URL",
+    "protected-resource metadata is parsed as JSON and names the configured authorization-server issuer",
+    "authorization-server metadata is parsed as JSON and supplies usable authorization, token, registration, and JWKS endpoints",
+    "current production behavior is captured as focused failing assertions without modifying production behavior"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

@@ -7,14 +7,16 @@
 // - Valid delete intent (not expired, not already committed)
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::output_schema::{ContentBlock, DeleteCommitOutput, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventDeleteCommitParams {
+    /// The deletion intent ID returned by event_delete_prepare.
     pub intent_id: String,
 }
 

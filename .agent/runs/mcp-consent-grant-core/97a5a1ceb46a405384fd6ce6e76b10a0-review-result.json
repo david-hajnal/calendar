@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "summary": "Found 1 security defect: open redirect in login_continue handler",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib mcp_consent",
+    "cargo test --lib mcp_grant_management",
+    "cargo test --lib mcp_bridge",
+    "cargo test --lib mcp_internal",
+    "cargo check"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/mcp_consent.rs:388-397: login_continue handler redirects to unvalidated continue_url query parameter without same-origin check. Lab reference (slice1-lab/src/bin/commoncal.rs:2072-2090) has validate_continuation enforcing relative paths. Production version allows ?continue_url=https://evil.com to redirect authenticated users to arbitrary external sites (open redirect)."
+  ],
+  "follow_up": [],
+  "important_context": [
+    "The login_continue endpoint is mounted at /consent/login-continue and is session-protected but lacks open-redirect validation on the continue_url parameter"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "summary": "T11 incremental sync collection is correctly implemented: opaque HMAC-signed tokens, ordered change-log paging with no-skip guarantee, RFC 6578 deletion representation, and safe failure on invalid tokens. All 133 tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "stamp_change_resource_name in the DAV delete path is a post-commit safety net; if it fails the deleted href degrades to an empty name but the 404 status is still emitted"
+  ]
+}

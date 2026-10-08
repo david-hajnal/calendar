@@ -1,0 +1,17 @@
+# Disposable Phase 5 PostgreSQL fixture; invoked only through scripts/dev.sh.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: auth_test
+      POSTGRES_PASSWORD: disposable-auth-check-password
+      POSTGRES_DB: auth_test
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_test -d auth_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

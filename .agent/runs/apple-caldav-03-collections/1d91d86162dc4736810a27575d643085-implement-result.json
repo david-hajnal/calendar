@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "Implemented T03 real calendar collections: PROPFIND on calendar-home (Depth 0/1) and calendar-collection endpoints, projecting active ACL-authorized calendars with stable paths, display properties, resource types, and role-derived DAV privileges; revoked/archived/foreign calendars are hidden.",
+  "files_changed": [
+    "backend/src/caldav/auth.rs",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/types.rs"
+  ],
+  "verification_commands": [
+    "cargo test --locked --lib caldav",
+    "cargo clippy --locked",
+    "cargo fmt --check",
+    "cargo test --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "e2e suite could be extended to exercise the new calendar-home/collection PROPFIND endpoints over real HTTP (optional; T03 verification is the cargo caldav::http suite)."
+  ],
+  "important_context": [
+    "Collection key is the numeric calendars.id (stable AUTOINCREMENT) \u2014 this is the frozen collection ID for T04/T15.",
+    "Privilege mapping is derived from the existing authorize_calendar_action matrix (owner\u2192DAV:all+write+acl; editor\u2192write-content/calendar-write; viewer\u2192read; free-busy\u2192read+calendar-write-freebusy) \u2014 frozen privilege mapping for T04/T15.",
+    "Calendar-home is owner-only (cross-user principal \u2192 404), consistent with T02; shared calendars are reached via the owner's principal URL and authorized by calendar_acl.",
+    "Free-busy viewers are granted DAV:read so they can read calendar metadata (name/color); event-level free-busy restriction is deferred to T04+."
+  ]
+}

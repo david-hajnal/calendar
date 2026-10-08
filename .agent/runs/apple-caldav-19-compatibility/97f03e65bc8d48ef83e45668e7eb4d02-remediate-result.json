@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "Changed handle_delete_event_resource to return 200 OK instead of 204 No Content to match the Apple Calendar regression fixture, and updated 4 test assertions in caldav_event_resource.rs that expected 204.",
+  "files_changed": [
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test apple_calendar_fixtures",
+    "cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The fixture README states fixtures encode 'the responses it must return', making the fixture the source of truth for DELETE status. Server now returns 200 to match.",
+    "Credential revocation (revoke_apple_password) and disconnect (disconnect_apple) still return 204 \u2014 those are separate operations not covered by this defect."
+  ]
+}

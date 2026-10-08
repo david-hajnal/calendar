@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "Completed Phase 0.1 MCP acceptance harness: wired the initialize request fixture into the probe (was unused), verified both exit paths via mock, and confirmed the intentional baseline failure (exit 1) against live production https://mcal.hajnal.space/mcp (HTTP 400 + JSON-RPC -32601 Method not found: initialize).",
+  "files_changed": [
+    "mcp-acceptance/harness.js",
+    "mcp-acceptance/README.md"
+  ],
+  "verification_commands": [
+    "node --check mcp-acceptance/harness.js && node --check mcp-acceptance/verify.js && node --check mcp-acceptance/mock/server.js",
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/harness.js --url https://mcal.hajnal.space/mcp (expected and observed exit 1: intentional Phase 0.1 baseline failure)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Phase 0.2 (mcp-acceptance-discovery) can extend this harness; note the plan's acceptance matrix expects unauthenticated initialize to return 401 + public resource_metadata, but current production returns 400 + -32601 \u2014 that assertion belongs to the discovery task, not this one."
+  ],
+  "important_context": [
+    "mcp-acceptance/ is a new untracked directory; a prior interrupted run of this same task (run d042b496) left harness.js/verify.js/mock/server.js/fixtures in place, this session completed fixture wiring and full verification.",
+    "Harness exit codes: 0 = standards-compatible, 1 = not standards-compatible (intentional baseline red), 2 = harness/config/network error.",
+    "Production baseline evidence recorded deterministically at $MCP_RECORD_DIR/mcp-acceptance-initialize.json (default OS temp dir)."
+  ]
+}

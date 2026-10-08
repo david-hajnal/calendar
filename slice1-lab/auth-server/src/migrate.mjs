@@ -6,9 +6,7 @@
 // re-running is safe. Exits 0 on success, non-zero on the first failure.
 //
 // This is the immutable entrypoint used by the Helm migration Job. The long-
-// lived server (server.mjs) also runs the same migrations inline so a fresh
-// pod can start without a separate migration step; the Job exists to gate
-// rollout on a clean schema before the Deployment becomes ready.
+// lived production server never migrates; the Job gates rollout on a clean schema.
 
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -36,11 +34,20 @@ async function main() {
     console.error('migrate: no migration files found in', migrationsDir);
     process.exit(1);
   }
+  const client = await pool.connect();
+  try {
+  await client.query('BEGIN');
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('commoncal-auth-migrations'))");
   for (const file of files) {
     const sql = await readFile(resolve(migrationsDir, file), 'utf8');
-    await pool.query(sql);
+    await client.query(sql);
     console.log(`migrate: applied ${file}`);
   }
+  await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
   console.log(`migrate: applied ${files.length} migration(s)`);
 }
 
@@ -49,7 +56,7 @@ try {
   await pool.end();
   process.exit(0);
 } catch (error) {
-  console.error('migrate: failed:', error?.message ?? 'unknown error');
+  console.error('migrate: failed');
   await pool.end().catch(() => {});
   process.exit(1);
 }

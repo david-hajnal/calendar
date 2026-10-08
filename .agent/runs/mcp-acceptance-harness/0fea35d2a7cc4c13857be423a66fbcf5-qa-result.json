@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "All four self-contained verifiers pass (both PASS and FAIL paths), and the harness correctly fails against the real production endpoint with the expected Phase 0 baseline violations (initialize HTTP 400/-32601; discovery A1/A2/A4 red, A3 green). All acceptance criteria are covered; the harness is a pure HTTP client reusing slice1-lab fixture shapes, not the lab binary.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/verify-security-isolation.js",
+    "node mcp-acceptance/harness.js --timeout-ms 8000",
+    "node mcp-acceptance/discovery.js --timeout-ms 8000"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The harness is a regression gate: it stays red (exit 1) against the current production component until later phases implement the MCP lifecycle, public 401 challenge, and authorization-server metadata.",
+    "The harness (harness.js/discovery.js/oauth-lifecycle.js/security-isolation.js/lib.js) is a pure HTTP client using only Node built-ins; it does not launch or import the slice1-lab binaries.",
+    "The mock servers (mock/server.js, mock/lifecycle-server.js, mock/oauth-provider.js) are verification-only and are not release artifacts.",
+    "The Phase 0.4 security harness uses verification-only /_test/* hooks (token mint, grant set/revoke/broaden/reset/delete) on the mock to drive negative-token and grant-state cases in isolation."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "Fixed EventService::update to atomically emit source deletion and target creation on calendar moves, and added 6 regression tests covering the move path, rollback safety, imported-write rejection, and two-calendar sync-token behavior.",
+  "files_changed": [
+    "backend/src/event.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource -- --test-threads=1",
+    "cargo test",
+    "cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Move path in EventService::update now records 'deleted' on source + 'created' on target (not 'updated'), and updates caldav_event_resources.calendar_id to the target. The source 'deleted' change carries resource_name for sync-collection href resolution."
+  ]
+}

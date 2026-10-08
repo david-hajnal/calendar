@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "Added an accessible loading state to the CalendarConnections component and added tests covering the loading, attention/error, revoke-one-preserves-others, and disconnect-all lifecycle states, plus a settings-navigation test.",
+  "files_changed": [
+    "frontend/src/settings/CalendarConnections.tsx",
+    "frontend/src/settings/CalendarConnections.test.tsx",
+    "frontend/src/App.test.tsx"
+  ],
+  "verification_commands": [
+    "npm test",
+    "npx tsc -b --pretty false",
+    "npx eslint src/settings/CalendarConnections.tsx src/settings/CalendarConnections.test.tsx src/App.test.tsx"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Playwright lifecycle test with immediate DAV failure after revoke (from the packet Verify line) is not covered by the frontend unit suite; it belongs to the e2e tracer/compatibility work in T19."
+  ],
+  "important_context": [
+    "The CalendarConnections component, calendarConnectionsApi, backend connection-management routes, and App.tsx wiring already existed and were committed; this task added the missing loading state and the lifecycle/attention test coverage.",
+    "Acceptance criteria met: secret displayed once (existing test), revoke-one preserves others + disconnect-all invalidates all (new tests), accessible loading/connected/attention/error states tested (new tests)."
+  ]
+}

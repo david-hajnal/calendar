@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-11-sync-collection",
+  "title": "Incremental sync collection \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t11--incremental-sync-collection",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-10-native-mutations"
+  ],
+  "acceptance": [
+    "opaque tokens return only later ordered changes",
+    "deletions are represented and invalid tokens fail safely",
+    "pagination cannot skip changes"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

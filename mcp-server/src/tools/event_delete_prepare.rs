@@ -7,6 +7,7 @@
 // - Calendar ID in grant's allowed_calendar_ids
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -17,9 +18,11 @@ use crate::tools::AuthorizedToolContext;
 /// Deletion intent expiry in seconds (24 hours).
 const DELETE_INTENT_EXPIRY: i64 = 86400;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventDeletePrepareParams {
+    /// The calendar the event belongs to.
     pub calendar_id: i64,
+    /// The event to delete.
     pub event_id: i64,
 }
 

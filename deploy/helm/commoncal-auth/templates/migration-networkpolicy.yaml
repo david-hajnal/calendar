@@ -1,0 +1,21 @@
+{{- if and .Values.migration.enabled .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commoncal-auth.fullname" . }}-migration
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    # Retain policy while the later migration Job runs and between revisions.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commoncal-auth.selectorBaseLabels" . | nindent 6 }}
+      app.kubernetes.io/component: migration
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    {{- include "commoncal-auth.databaseEgress" . | nindent 4 }}
+{{- end }}

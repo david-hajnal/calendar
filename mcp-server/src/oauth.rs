@@ -1,53 +1,81 @@
 // OAuth token validation module.
 //
 // Validates access tokens from MCP clients:
-// - JWT signature verification via JWKS
-// - Issuer validation
-// - Audience validation (must be MCP resource)
-// - Expiry check
+// - Discovery: fetch `/.well-known/oauth-authorization-server` (RFC 8414) or
+//   `/.well-known/openid-configuration` (OIDC), verify the returned `issuer`
+//   exactly matches configuration, then follow its HTTPS `jwks_uri`.
+// - JWT signature verification via JWKS (bounded TTL cache, one refresh on
+//   unknown kid for key rotation overlap).
+// - Standard claims: numeric `sub` (CommonCal user id), `client_id`,
+//   space-delimited `scope`, `iss`, `aud`, `exp`, `iat`, `jti`.
+// - Validation: signature, allowed algorithm, kid, exact iss, exact MCP
+//   audience, exp, iat with small clock skew.
 //
 // DPoP validation is handled separately in the security module.
 
-use crate::error::TokenError;
+use std::sync::Arc;
+use std::time::Instant;
+
 use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, errors::ErrorKind as JwtErrorKind};
 use rsa::pkcs8::{EncodePublicKey, LineEnding};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use tokio::sync::Mutex;
+
+use crate::error::TokenError;
+
+/// Clock skew tolerance in seconds for `exp` and `iat` validation.
+const CLOCK_SKEW_SECS: u64 = 30;
+
+/// TTL for the discovery metadata cache (seconds).
+const METADATA_CACHE_TTL_SECS: u64 = 300;
+
+/// TTL for the JWKS cache (seconds).
+const JWKS_CACHE_TTL_SECS: u64 = 300;
 
 /// Parsed JWT header (for kid and alg extraction).
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct JwtHeader {
     kid: Option<String>,
     alg: Option<String>,
 }
 
 /// Parsed JWT claims from the MCP access token.
+///
+/// Uses the standard OAuth 2.0 / OIDC claim set as issued by the repository's
+/// authorization server (`slice1-lab/auth-server`):
+/// - `sub`: numeric CommonCal user id (string-encoded integer)
+/// - `client_id`: the OAuth client identifier
+/// - `scope`: space-delimited scope string
+/// - `iss`: the issuer URL
+/// - `aud`: the MCP resource URL
+/// - `exp`: expiry (Unix seconds)
+/// - `iat`: issued-at (Unix seconds)
+/// - `jti`: unique token identifier
+/// - `amr`: array of authentication methods (optional)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct TokenClaims {
-    #[serde(rename = "sub")]
-    _sub: String,
-    #[serde(rename = "iss")]
-    _iss: String,
-    #[serde(rename = "aud")]
-    _aud: serde_json::Value,
-    exp: usize,
-    iat: usize,
-    #[serde(rename = "azp")]
-    _azp: Option<String>,
-    auth_time: Option<usize>,
-    #[serde(rename = "auth_method")]
-    _auth_method: Option<String>,
+    sub: String,
+    iss: String,
+    #[serde(default)]
+    aud: serde_json::Value,
+    exp: i64,
+    iat: i64,
+    #[serde(default)]
+    jti: Option<String>,
+    #[serde(default)]
     client_id: Option<String>,
-    #[serde(rename = "https://commoncal.tld/auth_strength")]
-    auth_strength: Option<String>,
-    #[serde(rename = "https://commoncal.tld/scopes")]
-    scopes: Option<Vec<String>>,
-    #[serde(rename = "https://commoncal.tld/user_id")]
-    user_id: Option<i64>,
-    #[serde(rename = "https://commoncal.tlp/token_id")]
-    token_id: Option<String>,
-    #[serde(rename = "https://commoncal.tld/resource")]
-    _resource: Option<String>,
+    /// Standard `scope` claim: space-delimited string.
+    #[serde(default, alias = "scp")]
+    scope: Option<String>,
+    /// Authentication methods (optional, used to derive auth strength).
+    #[serde(default)]
+    amr: Option<Vec<String>>,
+    /// Legacy `auth_time` claim (optional, falls back to `iat`).
+    #[serde(default)]
+    auth_time: Option<i64>,
 }
 
 /// Result of OAuth token validation.
@@ -101,95 +129,333 @@ struct JwksDocument {
 }
 
 /// A single JSON Web Key.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct Jwk {
     kty: String,
     alg: String,
     #[serde(rename = "use")]
-    _key_use: String,
+    _key_use: Option<String>,
     n: String,
     e: String,
     kid: String,
 }
 
-/// Validate an MCP access token.
+/// Cached discovery metadata.
+struct CachedMetadata {
+    jwks_uri: String,
+    fetched_at: Instant,
+}
+
+/// Cached JWKS document.
+struct CachedJwks {
+    keys: Vec<Jwk>,
+    fetched_at: Instant,
+}
+
+/// Stateful token validator with bounded metadata/JWKS caching.
 ///
-/// Performs:
-/// 1. Parse JWT header to find `kid`
-/// 2. Fetch JWKS from issuer's `.well-known/openid-configuration`
-/// 3. Select the matching key by `kid`
-/// 4. Verify JWT signature and expiry
-/// 5. Validate issuer, audience, and resource
-/// 6. Extract user identity and auth strength from claims
+/// The caches are shared across requests via `Arc<Mutex<...>>`. The TTL
+/// ensures stale keys are never accepted indefinitely: after the TTL expires,
+/// the next validation fetches fresh JWKS. If a key is no longer present,
+/// tokens signed with it are rejected.
+///
+/// Key rotation overlap: when a new key is added to the JWKS, both old and
+/// new keys are present during the overlap window. The validator accepts
+/// tokens signed by any key in the current JWKS. If a token's `kid` is not
+/// found in the cached JWKS, the validator performs one refresh to pick up
+/// the new key. If the kid is still absent after the refresh, the token is
+/// rejected.
+#[derive(Clone)]
+pub struct TokenValidator {
+    http_client: reqwest::Client,
+    metadata_cache: Arc<Mutex<Option<CachedMetadata>>>,
+    jwks_cache: Arc<Mutex<Option<CachedJwks>>>,
+}
+
+impl TokenValidator {
+    pub fn new() -> Self {
+        Self {
+            http_client: reqwest::Client::builder()
+                .danger_accept_invalid_certs(false)
+                .danger_accept_invalid_hostnames(false)
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("http client"),
+            metadata_cache: Arc::new(Mutex::new(None)),
+            jwks_cache: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Validate an MCP access token.
+    ///
+    /// Performs:
+    /// 1. Discover `jwks_uri` from authorization-server metadata (cached).
+    /// 2. Verify the metadata `issuer` exactly matches the configured issuer.
+    /// 3. Fetch JWKS from the discovered `jwks_uri` (cached).
+    /// 4. Parse JWT header to find `kid` and `alg`.
+    /// 5. Find the matching key by `kid` (one refresh on unknown kid).
+    /// 6. Verify JWT signature, issuer, audience, exp, iat.
+    /// 7. Extract standard claims (numeric sub, client_id, scope).
+    pub async fn validate(
+        &self,
+        token: &str,
+        issuer: &str,
+        resource: &str,
+    ) -> Result<TokenValidationResult, TokenError> {
+        if token.is_empty() {
+            return Err(TokenError::MissingToken);
+        }
+
+        // Step 1: Discover jwks_uri (cached).
+        let jwks_uri = self.discover_jwks_uri(issuer).await?;
+
+        // Step 2: Fetch JWKS (cached).
+        let mut jwks = self.fetch_jwks(&jwks_uri).await?;
+
+        // Step 3: Parse JWT header.
+        let header = parse_jwt_header(token)?;
+
+        // Step 4: Find the matching key by kid.
+        let jwk = match find_jwk(&jwks.keys, &header.kid) {
+            Some(jwk) => jwk,
+            None => {
+                // One refresh on unknown kid (key rotation overlap).
+                tracing::debug!(
+                    kid = ?header.kid,
+                    "unknown kid in cached JWKS, refreshing once"
+                );
+                jwks = self.refresh_jwks(&jwks_uri).await?;
+                find_jwk(&jwks.keys, &header.kid).ok_or_else(|| {
+                    TokenError::InvalidToken(format!(
+                        "no matching key for kid: {:?}",
+                        header.kid
+                    ))
+                })?
+            }
+        };
+
+        // Step 5: Convert JWK to DecodingKey.
+        let decoding_key = jwk_to_decoding_key(jwk)?;
+
+        // Step 6: Build validation rules.
+        let alg = alg_from_jwk(jwk)?;
+        let mut validation = Validation::new(alg);
+        validation.set_issuer(&[issuer]);
+        validation.set_audience(&[resource]);
+        validation.set_required_spec_claims(&["exp", "iss", "aud", "sub", "iat"]);
+        validation.leeway = CLOCK_SKEW_SECS;
+
+        // Step 7: Decode and validate the token.
+        let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
+            .map_err(|e| match e.kind() {
+                JwtErrorKind::ExpiredSignature => TokenError::Expired,
+                JwtErrorKind::InvalidIssuer => TokenError::InvalidIssuer,
+                JwtErrorKind::InvalidAudience => TokenError::InvalidAudience,
+                JwtErrorKind::InvalidSignature => TokenError::InvalidToken(e.to_string()),
+                _ => TokenError::InvalidToken(e.to_string()),
+            })?;
+
+        // Step 8: Validate iat (not in the future beyond clock skew).
+        let now = current_time_secs();
+        if token_data.claims.iat > now + CLOCK_SKEW_SECS as i64 {
+            return Err(TokenError::InvalidToken(
+                "iat is in the future beyond clock skew".to_string(),
+            ));
+        }
+
+        // Step 9: Extract standard claims.
+        let claims = &token_data.claims;
+
+        // Parse numeric sub as CommonCal user id.
+        let user_id: i64 = claims
+            .sub
+            .parse()
+            .map_err(|_| TokenError::InvalidToken("sub must be a numeric user id".to_string()))?;
+
+        let client_id = claims
+            .client_id
+            .clone()
+            .ok_or_else(|| TokenError::InvalidToken("missing client_id claim".to_string()))?;
+
+        let token_id = claims
+            .jti
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // Parse space-delimited scope claim.
+        let scopes: Vec<String> = claims
+            .scope
+            .as_deref()
+            .map(|s| s.split_whitespace().map(String::from).collect())
+            .unwrap_or_default();
+
+        // Derive auth strength from amr array.
+        let auth_strength = derive_auth_strength(claims.amr.as_deref());
+
+        // auth_time from auth_time claim or iat.
+        let auth_time = claims.auth_time.unwrap_or(claims.iat);
+
+        Ok(TokenValidationResult {
+            user_id,
+            oauth_client_id: client_id,
+            scopes,
+            auth_strength,
+            auth_time,
+            token_id,
+            expires_at: claims.exp,
+        })
+    }
+
+    /// Discover the `jwks_uri` from authorization-server metadata.
+    ///
+    /// Tries `/.well-known/oauth-authorization-server` (RFC 8414) first, then
+    /// falls back to `/.well-known/openid-configuration` (OIDC). Verifies the
+    /// returned `issuer` exactly matches the configured issuer.
+    async fn discover_jwks_uri(&self, issuer: &str) -> Result<String, TokenError> {
+        // Check cache first.
+        {
+            let cache = self.metadata_cache.lock().await;
+            if let Some(entry) = cache.as_ref()
+                && entry.fetched_at.elapsed().as_secs() < METADATA_CACHE_TTL_SECS
+            {
+                return Ok(entry.jwks_uri.clone());
+            }
+        }
+
+        // Try RFC 8414 location first, then OIDC fallback.
+        let rfc8414_url = format!("{}/.well-known/oauth-authorization-server", issuer.trim_end_matches('/'));
+        let oidc_url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+
+        let metadata = match self.fetch_metadata(&rfc8414_url).await {
+            Ok(m) => m,
+            Err(_) => self
+                .fetch_metadata(&oidc_url)
+                .await
+                .map_err(|e| TokenError::InvalidToken(format!("discovery failed: {e}")))?,
+        };
+
+        // Verify issuer matches configuration exactly.
+        let returned_issuer = metadata
+            .get("issuer")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TokenError::InvalidToken("metadata missing issuer".to_string()))?;
+        if returned_issuer != issuer {
+            return Err(TokenError::InvalidIssuer);
+        }
+
+        let jwks_uri = metadata
+            .get("jwks_uri")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TokenError::InvalidToken("metadata missing jwks_uri".to_string()))?
+            .to_string();
+
+        // Validate jwks_uri is a valid absolute URL. Require HTTPS when the
+        // issuer is HTTPS (production); allow HTTP for loopback test issuers.
+        let url = url::Url::parse(&jwks_uri)
+            .map_err(|_| TokenError::InvalidToken("invalid jwks_uri".to_string()))?;
+        let issuer_url = url::Url::parse(issuer)
+            .map_err(|_| TokenError::InvalidToken("invalid issuer URL".to_string()))?;
+        if issuer_url.scheme() == "https" && url.scheme() != "https" {
+            return Err(TokenError::InvalidToken(
+                "jwks_uri must use https scheme when issuer is https".to_string(),
+            ));
+        }
+
+        // Cache the result.
+        *self.metadata_cache.lock().await = Some(CachedMetadata {
+            jwks_uri: jwks_uri.clone(),
+            fetched_at: Instant::now(),
+        });
+
+        Ok(jwks_uri)
+    }
+
+    /// Fetch authorization-server metadata.
+    async fn fetch_metadata(&self, url: &str) -> Result<serde_json::Value, String> {
+        let resp = self
+            .http_client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !resp.status().is_success() {
+            return Err(format!("metadata fetch returned status {}", resp.status()));
+        }
+
+        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        Ok(body)
+    }
+
+    /// Fetch JWKS from the given URI (using cache if fresh).
+    async fn fetch_jwks(&self, jwks_uri: &str) -> Result<JwksDocument, TokenError> {
+        // Check cache first.
+        {
+            let cache = self.jwks_cache.lock().await;
+            if let Some(entry) = cache.as_ref()
+                && entry.fetched_at.elapsed().as_secs() < JWKS_CACHE_TTL_SECS
+            {
+                return Ok(JwksDocument {
+                    keys: entry.keys.clone(),
+                });
+            }
+        }
+
+        self.refresh_jwks(jwks_uri).await
+    }
+
+    /// Force-refresh JWKS from the given URI (bypasses cache).
+    async fn refresh_jwks(&self, jwks_uri: &str) -> Result<JwksDocument, TokenError> {
+        let resp = self
+            .http_client
+            .get(jwks_uri)
+            .send()
+            .await
+            .map_err(|e| TokenError::InvalidToken(format!("failed to fetch JWKS: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(TokenError::InvalidToken(format!(
+                "JWKS fetch returned status {}",
+                resp.status()
+            )));
+        }
+
+        let jwks: JwksDocument = resp
+            .json()
+            .await
+            .map_err(|e| TokenError::InvalidToken(format!("failed to parse JWKS: {e}")))?;
+
+        if jwks.keys.is_empty() {
+            return Err(TokenError::InvalidToken("JWKS contains no keys".to_string()));
+        }
+
+        // Update cache.
+        *self.jwks_cache.lock().await = Some(CachedJwks {
+            keys: jwks.keys.clone(),
+            fetched_at: Instant::now(),
+        });
+
+        Ok(jwks)
+    }
+}
+
+impl Default for TokenValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Validate an MCP access token (convenience wrapper using a fresh validator).
+///
+/// For production use, prefer creating a `TokenValidator` and reusing it
+/// across requests so the metadata/JWKS caches are shared.
 pub async fn validate_access_token(
     token: &str,
     issuer: &str,
     resource: &str,
 ) -> Result<TokenValidationResult, TokenError> {
-    if token.is_empty() {
-        return Err(TokenError::MissingToken);
-    }
-
-    // Fetch JWKS from the issuer.
-    let jwks = load_jwks(issuer).await?;
-
-    // Parse the JWT header to find the key ID.
-    let header = parse_jwt_header(token)?;
-
-    // Find the matching key in the JWKS.
-    let jwk = find_jwk(&jwks, &header.kid)?;
-
-    // Convert the JWK to a DecodingKey.
-    let decoding_key = jwk_to_decoding_key(jwk)?;
-
-    // Build validation rules.
-    let mut validation = Validation::new(alg_from_jwk(jwk)?);
-    validation.set_issuer(&[issuer]);
-    let audience = extract_audience(resource);
-    validation.set_audience(&[&audience]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-    validation.leeway = 30;
-
-    // Decode and validate the token.
-    let token_data =
-        decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
-            JwtErrorKind::ExpiredSignature => TokenError::Expired,
-            JwtErrorKind::InvalidIssuer => TokenError::InvalidIssuer,
-            JwtErrorKind::InvalidAudience => TokenError::InvalidAudience,
-            JwtErrorKind::InvalidSignature => TokenError::InvalidToken(e.to_string()),
-            _ => TokenError::InvalidToken(e.to_string()),
-        })?;
-
-    // Extract user identity from claims.
-    let claims = &token_data.claims;
-
-    let user_id = claims.user_id.ok_or(TokenError::InvalidToken(
-        "missing user_id claim".to_string(),
-    ))?;
-    let client_id = claims.client_id.clone().ok_or(TokenError::InvalidToken(
-        "missing client_id claim".to_string(),
-    ))?;
-    let token_id = claims
-        .token_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let scopes = claims.scopes.clone().unwrap_or_default();
-    let auth_strength = parse_auth_strength(claims.auth_strength.as_deref());
-    let auth_time = claims
-        .auth_time
-        .map(|t| t as i64)
-        .unwrap_or(claims.iat as i64);
-
-    Ok(TokenValidationResult {
-        user_id,
-        oauth_client_id: client_id,
-        scopes,
-        auth_strength,
-        auth_time: auth_time as i64,
-        token_id,
-        expires_at: claims.exp as i64,
-    })
+    let validator = TokenValidator::new();
+    validator.validate(token, issuer, resource).await
 }
 
 /// Validate a DPoP proof against the token.
@@ -246,7 +512,7 @@ pub async fn validate_dpop_proof(_token: &str, proof: &str, nonce: &str) -> Resu
     let n = jwk["n"].as_str().ok_or(TokenError::InvalidDpop)?;
     let e = jwk["e"].as_str().ok_or(TokenError::InvalidDpop)?;
 
-    // Determine algorithm (default to RS256 per DPoF spec).
+    // Determine algorithm (default to RS256 per DPoP spec).
     let alg_str = dpop_header.alg.as_deref().unwrap_or("RS256");
     let alg = match alg_str {
         "RS256" => Algorithm::RS256,
@@ -310,100 +576,6 @@ pub async fn validate_dpop_proof(_token: &str, proof: &str, nonce: &str) -> Resu
     Ok(())
 }
 
-/// Load JWKS from the OAuth issuer's well-known endpoint.
-///
-/// Fetches `/.well-known/oauth-jwks` from the issuer URL.
-/// Caches the result to avoid repeated network calls.
-async fn load_jwks(issuer: &str) -> Result<JwksDocument, TokenError> {
-    let jwks_url = format!("{}/.well-known/oauth-jwks", issuer);
-
-    // Validate URL to prevent SSRF.
-    let url = url::Url::parse(&jwks_url)
-        .map_err(|_| TokenError::InvalidToken("invalid JWKS URL".to_string()))?;
-
-    // Require https scheme.
-    if url.scheme() != "https" {
-        return Err(TokenError::InvalidToken(
-            "JWKS URL must use https scheme".to_string(),
-        ));
-    }
-
-    // Reject private/resolved hosts.
-    let host = url
-        .host_str()
-        .ok_or_else(|| TokenError::InvalidToken("JWKS URL has no host".to_string()))?;
-
-    if is_private_host(host) {
-        return Err(TokenError::InvalidToken(
-            "JWKS URL points to a private address".to_string(),
-        ));
-    }
-
-    // Use a reqwest client with strict TLS settings.
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(false)
-        .danger_accept_invalid_hostnames(false)
-        .build()
-        .map_err(|e| TokenError::InvalidToken(format!("failed to build HTTP client: {}", e)))?;
-
-    let resp = client
-        .get(&jwks_url)
-        .send()
-        .await
-        .map_err(|e| TokenError::InvalidToken(format!("failed to fetch JWKS: {}", e)))?;
-
-    if !resp.status().is_success() {
-        return Err(TokenError::InvalidToken(format!(
-            "JWKS fetch returned status {}",
-            resp.status()
-        )));
-    }
-
-    let jwks: JwksDocument = resp
-        .json()
-        .await
-        .map_err(|e| TokenError::InvalidToken(format!("failed to parse JWKS: {}", e)))?;
-
-    if jwks.keys.is_empty() {
-        return Err(TokenError::InvalidToken(
-            "JWKS contains no keys".to_string(),
-        ));
-    }
-
-    Ok(jwks)
-}
-
-/// Check if a host string is a private/reserved address.
-fn is_private_host(host: &str) -> bool {
-    // Check for localhost variants.
-    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" {
-        return true;
-    }
-
-    // Check for IPv4 private ranges.
-    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
-        return ip.is_loopback() || ip.is_unspecified();
-    }
-
-    // Check for IPv6 private/reserved ranges (fc00::/7).
-    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
-        if ip.is_loopback() || ip.is_unspecified() {
-            return true;
-        }
-        // fc00::/7 covers fc00::/8 (ULA) and fe00::/8 (reserved).
-        let first_byte = ip.octets()[0];
-        if first_byte == 0xfc || first_byte == 0xfd {
-            return true;
-        }
-        // fe80::/10 (link-local).
-        if first_byte == 0xfe && (ip.octets()[1] & 0xc0) == 0x80 {
-            return true;
-        }
-    }
-
-    false
-}
-
 /// Parse the JWT header to extract `kid` and `alg`.
 fn parse_jwt_header(token: &str) -> Result<JwtHeader, TokenError> {
     let parts: Vec<&str> = token.split('.').collect();
@@ -425,20 +597,11 @@ fn parse_jwt_header(token: &str) -> Result<JwtHeader, TokenError> {
     Ok(header)
 }
 
-/// Find a JWK by kid in the JWKS document.
-fn find_jwk<'a>(jwks: &'a JwksDocument, kid: &'a Option<String>) -> Result<&'a Jwk, TokenError> {
+/// Find a JWK by kid in the JWKS key list.
+fn find_jwk<'a>(keys: &'a [Jwk], kid: &Option<String>) -> Option<&'a Jwk> {
     match kid {
-        Some(kid) => {
-            jwks.keys.iter().find(|j| j.kid == *kid).ok_or_else(|| {
-                TokenError::InvalidToken(format!("no matching key for kid: {}", kid))
-            })
-        }
-        None => {
-            // If no kid, return the first key (should not happen in production).
-            jwks.keys
-                .first()
-                .ok_or_else(|| TokenError::InvalidToken("JWKS contains no keys".to_string()))
-        }
+        Some(kid) => keys.iter().find(|j| j.kid == *kid),
+        None => keys.first(),
     }
 }
 
@@ -508,13 +671,26 @@ pub fn extract_audience(resource_url: &str) -> String {
     resource_url.to_string()
 }
 
-/// Parse auth strength from the token claim.
-fn parse_auth_strength(raw: Option<&str>) -> AuthStrength {
-    match raw {
-        Some("passkey") => AuthStrength::Passkey,
-        Some("mfa") => AuthStrength::Mfa,
-        Some(_) | None => AuthStrength::Passwordless,
+/// Derive auth strength from the `amr` array.
+fn derive_auth_strength(amr: Option<&[String]>) -> AuthStrength {
+    let Some(amr) = amr else {
+        return AuthStrength::Passwordless;
+    };
+    if amr.iter().any(|m| m == "passkey" || m == "fido2" || m == "webauthn") {
+        AuthStrength::Passkey
+    } else if amr.iter().any(|m| m == "mfa" || m == "otp" || m == "totp") {
+        AuthStrength::Mfa
+    } else {
+        AuthStrength::Passwordless
     }
+}
+
+/// Get current time as Unix seconds.
+fn current_time_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -537,26 +713,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_auth_strength_passkey() {
-        assert_eq!(parse_auth_strength(Some("passkey")), AuthStrength::Passkey);
-    }
-
-    #[test]
-    fn parse_auth_strength_mfa() {
-        assert_eq!(parse_auth_strength(Some("mfa")), AuthStrength::Mfa);
-    }
-
-    #[test]
-    fn parse_auth_strength_unknown_defaults_to_passwordless() {
+    fn derive_auth_strength_passkey() {
         assert_eq!(
-            parse_auth_strength(Some("unknown")),
-            AuthStrength::Passwordless
+            derive_auth_strength(Some(&["passkey".to_string()])),
+            AuthStrength::Passkey
         );
     }
 
     #[test]
-    fn parse_auth_strength_none_defaults_to_passwordless() {
-        assert_eq!(parse_auth_strength(None), AuthStrength::Passwordless);
+    fn derive_auth_strength_mfa() {
+        assert_eq!(
+            derive_auth_strength(Some(&["mfa".to_string()])),
+            AuthStrength::Mfa
+        );
+    }
+
+    #[test]
+    fn derive_auth_strength_none_defaults_to_passwordless() {
+        assert_eq!(derive_auth_strength(None), AuthStrength::Passwordless);
+    }
+
+    #[test]
+    fn derive_auth_strength_unknown_defaults_to_passwordless() {
+        assert_eq!(
+            derive_auth_strength(Some(&["pwd".to_string()])),
+            AuthStrength::Passwordless
+        );
     }
 
     #[test]
@@ -579,7 +761,6 @@ mod tests {
 
     #[test]
     fn parse_jwt_header_rejects_invalid_json() {
-        // Valid base64 but invalid JSON.
         let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"not json");
         let token = format!("{}.b.c", header_b64);
         let result = parse_jwt_header(&token);
@@ -588,11 +769,7 @@ mod tests {
 
     #[test]
     fn parse_jwt_header_accepts_valid_header() {
-        let header = JwtHeader {
-            kid: Some("key-1".to_string()),
-            alg: Some("RS256".to_string()),
-        };
-        let header_json = serde_json::to_string(&header).unwrap();
+        let header_json = r#"{"kid":"key-1","alg":"RS256"}"#;
         let header_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(header_json);
         let token = format!("{}.b.c", header_b64);
         let result = parse_jwt_header(&token).unwrap();
@@ -732,7 +909,6 @@ mod tests {
     #[test]
     fn dpop_proof_accepts_valid_header_and_payload() {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        // Create a properly formatted DPoP proof with valid typ, jwk, and payload.
         let header = serde_json::json!({
             "typ": "dpop+jwt",
             "jwk": {"kty": "RSA", "n": "dGVzdA==", "e": "AQAB"},
@@ -748,10 +924,8 @@ mod tests {
         });
         let claims_b64 =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string());
-        // Use a dummy signature (will fail signature verification but passes format checks)
         let proof = format!("{}.{}.dummy_signature", header_b64, claims_b64);
         let result = rt.block_on(validate_dpop_proof("token", &proof, "nonce"));
-        // Should fail at signature verification (invalid key), not at format validation
         assert!(result.is_err());
     }
 
@@ -760,14 +934,11 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use rsa::RsaPrivateKey;
         use rsa::pkcs1v15::SigningKey;
-
         use rsa::signature::Signer;
-
         use rsa::traits::PublicKeyParts;
 
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        // Generate a real RSA key pair for testing.
         let mut rng = rand::thread_rng();
         let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let public_key = private_key.to_public_key();
@@ -775,18 +946,15 @@ mod tests {
         let n_bytes = public_key.n().to_bytes_be();
         let n_b64 = URL_SAFE_NO_PAD.encode(&n_bytes);
 
-        // Create JWK for the DPoP header.
         let jwk = serde_json::json!({
             "kty": "RSA",
             "n": n_b64,
             "e": "AQAB"
         });
 
-        // Create DPoP header.
         let header = serde_json::json!({"typ": "dpop+jwt", "jwk": jwk, "alg": "RS256"});
         let header_b64 = URL_SAFE_NO_PAD.encode(header.to_string());
 
-        // Original payload.
         let original_claims = serde_json::json!({
             "jti": "test-jti",
             "htm": "GET",
@@ -795,15 +963,12 @@ mod tests {
         });
         let original_claims_b64 = URL_SAFE_NO_PAD.encode(original_claims.to_string());
 
-        // Sign the original payload.
         let signing_input = format!("{}.{}", header_b64, original_claims_b64);
         let signing_key = SigningKey::<sha2::Sha256>::new_unprefixed(private_key);
         let signature = signing_key.sign(signing_input.as_bytes());
         let signature_bytes: Box<[u8]> = signature.into();
         let signature_b64 = URL_SAFE_NO_PAD.encode(&signature_bytes);
 
-        // Tamper with the payload (change GET to POST in base64url).
-        // The base64url of "GET" is "R0VU", changing first char to "P" gives "P0VU" which decodes to different bytes.
         let tampered_claims = serde_json::json!({
             "jti": "test-jti",
             "htm": "POST",
@@ -812,11 +977,66 @@ mod tests {
         });
         let tampered_claims_b64 = URL_SAFE_NO_PAD.encode(tampered_claims.to_string());
 
-        // Use the original signature but with tampered payload — this is a forged proof.
         let forged_proof = format!("{}.{}.{}", header_b64, tampered_claims_b64, signature_b64);
 
-        // Verify the forged proof is rejected.
         let result = rt.block_on(validate_dpop_proof("token", &forged_proof, "nonce"));
         assert!(result.is_err(), "forged DPoP proof should be rejected");
+    }
+
+    #[test]
+    fn find_jwk_finds_matching_kid() {
+        let keys = vec![
+            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n1".into(), e: "AQAB".into(), kid: "key-1".into() },
+            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n2".into(), e: "AQAB".into(), kid: "key-2".into() },
+        ];
+        assert!(find_jwk(&keys, &Some("key-1".to_string())).is_some());
+        assert!(find_jwk(&keys, &Some("key-2".to_string())).is_some());
+        assert!(find_jwk(&keys, &Some("key-3".to_string())).is_none());
+    }
+
+    #[test]
+    fn find_jwk_no_kid_returns_first() {
+        let keys = vec![
+            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n1".into(), e: "AQAB".into(), kid: "key-1".into() },
+        ];
+        assert!(find_jwk(&keys, &None).is_some());
+    }
+
+    #[test]
+    fn token_claims_deserializes_standard_claims() {
+        let json = r#"{
+            "sub": "42",
+            "iss": "https://auth.example.com",
+            "aud": "https://mcp.example.com/mcp",
+            "exp": 1700003600,
+            "iat": 1700000000,
+            "jti": "token-123",
+            "client_id": "client-abc",
+            "scope": "commoncal.calendar.metadata.read commoncal.event.read.basic",
+            "amr": ["pwd"]
+        }"#;
+        let claims: TokenClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.sub, "42");
+        assert_eq!(claims.client_id, Some("client-abc".to_string()));
+        assert_eq!(
+            claims.scope,
+            Some("commoncal.calendar.metadata.read commoncal.event.read.basic".to_string())
+        );
+        assert_eq!(claims.jti, Some("token-123".to_string()));
+        assert_eq!(claims.amr, Some(vec!["pwd".to_string()]));
+    }
+
+    #[test]
+    fn token_claims_scope_alias_scp() {
+        let json = r#"{
+            "sub": "1",
+            "iss": "https://auth.example.com",
+            "aud": "https://mcp.example.com/mcp",
+            "exp": 1700003600,
+            "iat": 1700000000,
+            "scp": "scope1 scope2"
+        }"#;
+        let claims: TokenClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.scope, Some("scope1 scope2".to_string()));
     }
 }

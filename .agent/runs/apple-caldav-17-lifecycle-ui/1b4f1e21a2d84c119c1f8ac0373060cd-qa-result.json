@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "All 3 acceptance criteria verified: secret displayed once, revoke-one preserves others + disconnect-all invalidates all, and accessible loading/connected/attention/error states are tested. All 114 frontend tests pass; typecheck and lint clean.",
+  "files_changed": [],
+  "verification_commands": [
+    "npm test -- src/settings/CalendarConnections.test.tsx",
+    "npx tsc -b --pretty false",
+    "npx eslint src/settings/CalendarConnections.tsx src/settings/CalendarConnections.test.tsx src/settings/calendarConnectionsApi.ts",
+    "npm test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Playwright caldav-account.spec.ts is a DAV API tracer, not a lifecycle UI test; the task slice doc mentions 'Playwright lifecycle with immediate DAV failure after revoke' as a verify step but it is not part of the task JSON acceptance criteria and no such Playwright test exists."
+  ]
+}

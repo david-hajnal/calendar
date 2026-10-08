@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: commoncal-auth-postgres-backup
+    spec:
+      backoffLimit: 2
+      # Jobs inherit these labels for prerequisite backup evidence.
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: commoncal-auth-postgres-backup
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+              command: [/usr/local/bin/commoncal-auth-backup]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: {drop: [ALL]}
+                readOnlyRootFilesystem: true
+              env:
+                - {name: PGHOST, value: "{{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local"}
+                - {name: PGDATABASE, value: commoncal_auth}
+                - {name: PGUSER, value: commoncal_auth}
+                - {name: PGSSLMODE, value: verify-full}
+                - {name: PGSSLROOTCERT, value: /etc/postgres-tls/ca.crt}
+                - {name: AUTH_BACKUP_RETENTION_DAYS, value: {{ .Values.backup.retentionDays | quote }}}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: {{ .Values.secrets.database }}, key: AUTH_DATABASE_PASSWORD}
+                - name: AGE_RECIPIENT
+                  valueFrom:
+                    secretKeyRef: {name: {{ .Values.secrets.backupRecipient }}, key: AGE_RECIPIENT}
+              volumeMounts:
+                - {name: backup, mountPath: /backup}
+                - {name: work, mountPath: /tmp}
+                - {name: tls, mountPath: /etc/postgres-tls, readOnly: true}
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: backup
+              persistentVolumeClaim: {claimName: {{ .Release.Name }}-backup}
+            - name: work
+              emptyDir: {medium: Memory, sizeLimit: 256Mi}
+            - name: tls
+              secret:
+                secretName: {{ .Values.secrets.tls }}
+                items:
+                  - {key: ca.crt, path: ca.crt}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-backup
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: commoncal-auth-postgres-backup
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: commoncal-auth-postgres
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - {protocol: TCP, port: 5432}

@@ -30,6 +30,7 @@ url = "2"
 num-bigint = "0.4"
 rsa = "0.9"
 rmcp = { version = "3.1.4", features = ["server", "macros", "schemars", "transport-streamable-http-server", "reqwest"] }
+schemars = "1.2"
 
 [dev-dependencies]
 wiremock = "0.6"
@@ -37,3 +38,4 @@ serial_test = "3"
 rsa = "0.9"
 rand = "0.8"
 ring = "0.17"
+libc = "0.2"

@@ -48,8 +48,23 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.name }}
                   key: {{ .Values.secrets.databaseUrlKey }}
+            - name: NODE_ENV
+              value: production
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/auth-database/ca.crt
+          volumeMounts:
+            - name: database-ca
+              mountPath: /etc/auth-database
+              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: database-ca
+          secret:
+            secretName: {{ .Values.secrets.databaseCaSecret }}
+            items:
+              - key: {{ .Values.secrets.databaseCaKey }}
+                path: ca.crt
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

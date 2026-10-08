@@ -8,6 +8,7 @@
 // - Non-empty title
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -15,18 +16,25 @@ use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSummary, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventCreateParams {
+    /// The calendar to create the event in.
     pub calendar_id: i64,
+    /// Event title.
     pub title: String,
+    /// Optional description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional location.
     #[serde(default)]
     pub location: Option<String>,
+    /// Start time (ISO 8601 or Unix epoch seconds).
     #[serde(default)]
     pub start_utc: Option<String>,
+    /// End time (ISO 8601 or Unix epoch seconds).
     #[serde(default)]
     pub end_utc: Option<String>,
+    /// Optional idempotency key for safe retries.
     #[serde(default)]
     pub operation_id: Option<String>,
 }

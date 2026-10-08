@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "T07 create-from-Apple verified: conditional PUT creates one timed event through EventService, visible in both Happening and DAV; duplicate (412), UID-conflict (409), and missing-precondition (428) creates fail safely; partial writes roll back and audit behavior is preserved. All 20 caldav_event_resource tests, 72 caldav lib tests, 11 event_api tests, and the full backend suite pass.",
+  "files_changed": [
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test --test event_api",
+    "cargo test",
+    "cargo check",
+    "cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T07 handoff asks to document normalization and transaction boundary; the create path uses a compensating delete (event_service.delete) rather than a single atomic transaction, so a failed create leaves both an event.create and an event.delete audit entry."
+  ],
+  "important_context": [
+    "The DAV PUT create path commits the event via EventService first, then writes the caldav_event_resources mapping; on mapping failure it compensates by deleting the event. This is not a single atomic transaction \u2014 there is a brief window where the event exists without a DAV mapping, and a failed create records both event.create and event.delete audit entries plus two notification replanner sends."
+  ]
+}

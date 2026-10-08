@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "Fixed empty recurrence_rule serialization bug (non-recurring events emitted invalid RRULE: line), added EXDATE processing to the recurring master update path, and replaced the outdated put_recurring_event_fails_400 test with 5 T14 acceptance tests covering series round-trip, modified/deleted occurrence persistence, unsupported RRULE rejection, and ETag determinism.",
+  "files_changed": [
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/ical.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test",
+    "cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The event_service.update method deletes all recurrence exceptions when the master is updated; this is correct when timing changes but means a client must re-send all EXDATEs and modified occurrences in the same PUT. This is consistent with RFC 4791 but worth documenting in the supported recurrence matrix (T14 handoff)."
+  ],
+  "important_context": [
+    "The recurrence_rule column can contain an empty string (not just NULL) for non-recurring events; the ical_and_etag function now filters this out. The EXDATE-on-update path uses event.version+1 as the expected_version for delete_occurrence calls, which works because event_service.update bumps the version by 1."
+  ]
+}

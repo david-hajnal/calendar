@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "summary": "Metrics classification is incomplete: 5 of 8 failure classes (malformed, oversized, not_found, precondition_failed, internal_error) are never recorded in the production request path, violating the acceptance criterion that metrics classify failures.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/caldav/http.rs:1508-1550 \u2014 dav_server_error, dav_resource_not_found, dav_calendar_not_found, dav_bad_request, and all inline 412 responses (e.g. lines 558, 947, 973, 1338, 1377) never call CaldavMetrics::record_malformed_request/record_oversized_body/record_not_found/record_precondition_failed/record_internal_error. Only auth-path metrics (record_auth_failure, record_rate_limited, record_unauthorized, record_success) are wired into the request flow. Impact: operators cannot distinguish non-auth failure types from metrics; the 5 unused counters are dead code in production, violating the acceptance criterion 'metrics classify failures'."
+  ],
+  "follow_up": [
+    "client_key_from_request (http.rs:1976) trusts x-forwarded-for without validating the proxy; acceptable behind a trusted reverse proxy but should be documented as a deployment requirement",
+    "No general DAV request rate limit for authenticated users; only auth attempts are throttled. Consider whether a per-user request rate limit is needed for resource exhaustion protection."
+  ],
+  "important_context": [
+    "CaldavMetrics is shared via Arc<CaldavMetrics> inside CaldavAccountService; the metrics() accessor (auth.rs:60) exposes it for operator scraping",
+    "The 5 unrecorded metric methods exist and are unit-tested in isolation (http.rs:4577-4602) but have no integration test verifying they fire through the request path"
+  ]
+}

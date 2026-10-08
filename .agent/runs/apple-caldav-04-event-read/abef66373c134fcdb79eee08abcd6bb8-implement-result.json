@@ -1,0 +1,32 @@
+{
+  "status": "completed",
+  "summary": "T04 first timed event resource verified complete: stable URL/UID mapping, GET returns valid canonical VCALENDAR with HEAD-matching headers, and ETag (SHA-256 of canonical content) rotates only on content change. All 9 integration + 6 unit tests pass, clippy clean, T04 files fmt-clean.",
+  "files_changed": [
+    "backend/src/caldav/ical.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/tests/caldav_event_resource.rs",
+    "backend/migrations/0024_caldav_event_resources.sql",
+    "backend/migrations/rollbacks/0024_rollback.sql",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/mod.rs",
+    "backend/src/caldav/types.rs",
+    "backend/src/caldav/auth.rs",
+    "backend/src/main.rs",
+    "backend/src/mcp_internal.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav::ical",
+    "cargo clippy --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "tests/dst_check.rs (untracked scratch file, not part of T04) fails `cargo fmt --check`; all T04 files are fmt-clean"
+  ],
+  "follow_up": [
+    "dst_check.rs scratch file needs `cargo fmt` before any repo-wide fmt gate; not a T04 deliverable"
+  ],
+  "important_context": [
+    "Implementation was already present in the worktree; I verified it rather than authoring it. ETag is a strong tag = quoted SHA-256 hex of the serialized VCALENDAR. Resource identity is a per-(calendar_id,event_id) row in caldav_event_resources with unique (calendar_id,uid) and (calendar_id,resource_name). Only timed, non-recurring events are exposed (list_exposed_event_ids)."
+  ]
+}

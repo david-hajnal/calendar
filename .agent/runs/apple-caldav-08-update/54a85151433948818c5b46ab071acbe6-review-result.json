@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "T08 conflict-safe update is correct: matching If-Match routes through EventService and rotates ETag; stale/missing precondition returns 412 without mutation via two-layer ETag+version conflict detection; unauthorized updates fail with 404 without disclosure. All 5 T08 tests plus full CalDAV and lib suites pass; cargo check and clippy clean.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource put_update",
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav::http",
+    "cargo test --lib",
+    "cargo check",
+    "cargo clippy --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "ETag is a strong tag derived from SHA-256 of canonical iCalendar content including SEQUENCE (event version), so it rotates on every update",
+    "Two-layer conflict detection: ETag precondition check (412) + atomic version check in EventService.update (412 on conflict)",
+    "The put_update_unauthorized test exercises the cross-user principal check; the role-based denial path (viewer role) is covered by the shared authorize_calendar_action logic also tested in put_viewer_role_is_404 for create"
+  ]
+}

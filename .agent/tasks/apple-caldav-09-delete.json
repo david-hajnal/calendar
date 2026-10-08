@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-09-delete",
+  "title": "Delete and tombstone \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t09--delete-and-tombstone",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-08-update"
+  ],
+  "acceptance": [
+    "conditional DELETE removes the event through EventService",
+    "stale delete returns 412 without mutation",
+    "durable tombstone and revision survive event deletion"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

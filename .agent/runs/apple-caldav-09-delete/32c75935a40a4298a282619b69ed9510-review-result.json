@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "summary": "T09 delete-and-tombstone implementation is correct: conditional DELETE routes through EventService, stale deletes return 412 without mutation, and durable tombstones survive event deletion. All 41 caldav_event_resource tests pass including 8 delete-specific tests. No actionable defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource delete",
+    "cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Tombstone-before-delete ordering is required by the FK constraint (event_id REFERENCES events(id) with foreign_keys=true); the compensation path (restore_resource) handles the error case where delete fails after tombstone is written"
+  ]
+}

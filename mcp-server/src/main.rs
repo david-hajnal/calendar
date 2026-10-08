@@ -1,17 +1,23 @@
-use mcp_server::{config, db, gateway};
+use mcp_server::{auth, config, db, gateway, mcp_service};
 
 use axum::{
     Router,
-    extract::{Request, State},
+    extract::State,
     http::{StatusCode, header::CONTENT_TYPE},
+    middleware,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
+};
+use rmcp::transport::{
+    StreamableHttpServerConfig,
+    streamable_http_server::{session::local::LocalSessionManager, tower::StreamableHttpService},
 };
 use tower_http::trace::TraceLayer;
 
 use config::Config;
 use db::{connect_and_migrate, is_ready};
 use gateway::Gateway;
+use mcp_service::CommonCalServer;
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -37,8 +43,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let db_pool = connect_and_migrate(&config.database_path).await?;
 
-    let gateway = Gateway::new(config.clone(), db_pool)
+    let gateway = Gateway::new(config.clone(), db_pool.clone())
         .map_err(|e| format!("Gateway initialization failed: {:?}", e))?;
+
+    // Build the rmcp-backed MCP service. The per-request identity is published
+    // by the auth middleware into the request's task-local; the tool handlers
+    // read it at call time, keeping concurrent sessions isolated.
+    let server = CommonCalServer::new(
+        gateway.internal_client.clone(),
+        db_pool.clone(),
+        gateway.rate_limiter.clone(),
+    );
+
+    let mcp_service: StreamableHttpService<CommonCalServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(server.clone()),
+            LocalSessionManager::default().into(),
+            StreamableHttpServerConfig::default(),
+        );
+
+    // Auth state for the bearer-token middleware. The protected-resource
+    // metadata URL is derived from MCP_PUBLIC_RESOURCE_URL (no loopback).
+    let auth_state = auth::AuthState::new(
+        config.oauth_issuer.clone(),
+        config.public_resource_url.clone(),
+    );
+
+    // The MCP endpoint is fully wrapped by bearer-token auth so the first
+    // unauthenticated `initialize` receives a standards-compliant 401 challenge.
+    let mcp_router =
+        Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(middleware::from_fn_with_state(
+                auth_state.clone(),
+                auth::auth_middleware,
+            ));
 
     let router = Router::new()
         .route("/health/live", get(health_live))
@@ -63,7 +102,7 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }),
         )
-        .route("/mcp", post(mcp_handler))
+        .merge(mcp_router)
         .with_state(gateway)
         .layer(
             TraceLayer::new_for_http()
@@ -128,42 +167,6 @@ async fn health_ready(State(gateway): State<Gateway>) -> impl IntoResponse {
     } else {
         (StatusCode::SERVICE_UNAVAILABLE, "not ready")
     }
-}
-
-async fn mcp_handler(
-    axum::extract::State(gateway): axum::extract::State<Gateway>,
-    request: Request,
-) -> Response {
-    // Extract request ID from headers or generate one
-    let request_id = request
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let start = std::time::Instant::now();
-
-    let response = gateway
-        .handle_mcp_request(request_id.clone(), request)
-        .await;
-
-    let latency = start.elapsed().as_millis() as i64;
-
-    // Log the request
-    tracing::info!(
-        request_id = %request_id,
-        method = %response.status().as_str(),
-        latency_ms = latency,
-        "mcp_request"
-    );
-
-    let mut response = response;
-    response
-        .headers_mut()
-        .insert("x-request-id", request_id.parse().unwrap());
-
-    response
 }
 
 #[cfg(test)]

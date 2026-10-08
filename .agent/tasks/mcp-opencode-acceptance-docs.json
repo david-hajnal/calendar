@@ -1,0 +1,17 @@
+{
+  "id": "mcp-opencode-acceptance-docs",
+  "title": "Phase 7: OpenCode acceptance and documentation. Depends on Phase 6 (mcp-wire-validate-deployment). Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 1,
+  "depends_on": ["mcp-wire-validate-deployment"],
+  "acceptance": [
+    "with a supported OpenCode version and clean OAuth cache: opencode mcp add commoncal-production --url https://mcal.hajnal.space/mcp, opencode mcp auth commoncal-production, opencode mcp list all succeed",
+    "browser login and consent complete; authenticated initialize negotiates a supported protocol version",
+    "tools/list returns all nine tools with schemas",
+    "calendar_list returns only calendars selected in the grant",
+    "narrowing or revoking the grant changes the next call immediately",
+    "restarting OpenCode refreshes/re-authorizes without manual token copying",
+    "docs/MCP-CONNECTION.md updated only after this proof passes, explaining the OpenCode/LM Studio/Qwen roles and not asking users for JWTs, internal API keys, pod access, or a second MCP client"
+  ],
+  "docs_required": true,
+  "status": "ready"
+}

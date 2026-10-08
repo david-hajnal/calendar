@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "T04 first timed event resource verified: stable URL/UID mapping, valid canonical VCALENDAR on GET, HEAD headers match without body, and ETag rotates only with canonical content. All 9 integration tests, 35 caldav unit tests, and the full backend suite pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test --lib ics",
+    "cargo test --lib",
+    "cargo test",
+    "cargo test --test application --test authorization --test authorization_regression --test backup --test bootstrap"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Untracked scratch test files backend/tests/scratch_axum.rs and backend/tests/scratch_ics.rs remain in the tree; they pass but are dev scratch artifacts that should be removed before merge."
+  ],
+  "important_context": [
+    "ETag is a quoted SHA-256 of the serialized VCALENDAR (ical.rs etag_for_ical); canonical content embeds event.created_at as DTSTAMP and event.version as SEQUENCE, so any domain update rotates the ETag.",
+    "Resource mapping is created lazily on first PROPFIND listing (ensure_resource) and persisted in caldav_event_resources (migration 0024) with unique (calendar_id, uid) and (calendar_id, resource_name).",
+    "GET/HEAD only expose timed, non-recurring events; all-day and recurring events return 404 by design for this slice."
+  ]
+}

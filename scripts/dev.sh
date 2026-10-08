@@ -197,6 +197,51 @@ cmd_clean() {
   log "Cleaned"
 }
 
+# Keep this fixture isolated from the application project and all production data.
+cmd_auth_check() (
+  if ! docker info >/dev/null 2>&1; then
+    if [[ "$(uname -s)" == Darwin ]]; then
+      open -a Docker
+      for _ in {1..30}; do
+        docker info >/dev/null 2>&1 && break
+        sleep 2
+      done
+    fi
+    docker info >/dev/null 2>&1 || die "Docker daemon is not available"
+  fi
+  trap 'docker compose -p happening-auth-check -f docker-compose.auth-test.yml down --volumes >/dev/null 2>&1' EXIT
+  docker compose -p happening-auth-check -f docker-compose.auth-test.yml up -d --wait postgres
+  AUTH_TEST_DATABASE_URL=postgres://auth_test:disposable-auth-check-password@127.0.0.1:55433/auth_test \
+    node slice1-lab/auth-server/tests/production-integration.mjs
+)
+
+# Unique Compose project, tmpfs databases, and temporary keys: no application
+# services or persisted production data participate in this proof.
+cmd_auth_storage_check() (
+  local storage_fixture
+  storage_fixture=$(mktemp -d)
+  export AUTH_STORAGE_FIXTURE="$storage_fixture"
+  trap 'docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml down --volumes >/dev/null 2>&1; rm -rf "$storage_fixture"' EXIT
+  docker info >/dev/null 2>&1 || die "Docker daemon is not available"
+  for name in ca renewed-ca untrusted-ca; do
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$name disposable proof" \
+      -keyout "$storage_fixture/$name.key" -out "$storage_fixture/$name.crt" >/dev/null 2>&1
+  done
+  printf '%s\n' 'subjectAltName=DNS:db,DNS:restore' 'extendedKeyUsage=serverAuth' >"$storage_fixture/leaf.ext"
+  for leaf in tls renewed; do
+    local authority=ca
+    [[ "$leaf" == renewed ]] && authority=renewed-ca
+    openssl req -new -newkey rsa:2048 -nodes -subj '/CN=db' \
+      -keyout "$storage_fixture/$leaf.key" -out "$storage_fixture/$leaf.csr" >/dev/null 2>&1
+    openssl x509 -req -in "$storage_fixture/$leaf.csr" -CA "$storage_fixture/$authority.crt" \
+      -CAkey "$storage_fixture/$authority.key" -CAcreateserial -days 1 \
+      -extfile "$storage_fixture/leaf.ext" -out "$storage_fixture/$leaf.crt" >/dev/null 2>&1
+  done
+  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml build prepare
+  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml up -d --wait db restore
+  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml run --rm --no-deps proof
+)
+
 usage() {
   cat <<EOF
 ${BLUE}happening local dev Docker orchestrator${NC}
@@ -211,6 +256,8 @@ ${YELLOW}Commands:${NC}
   seed      Run db seed command against running app container
   logs      Show recent logs (add -f to follow)
   status    Show container and volume status
+  auth-storage-check Verify TLS, restricted role, encrypted backup/restore and certificate reload
+  auth-check Run production auth proofs with a disposable PostgreSQL fixture
   clean     Stop, remove volumes, prune build cache (interactive)
 
 ${YELLOW}Ports:${NC}
@@ -229,5 +276,7 @@ case "${1:-}" in
   logs)     cmd_logs "${2:-}" ;;
   status)   cmd_status ;;
   clean)    cmd_clean ;;
+  auth-check) cmd_auth_check ;;
+  auth-storage-check) cmd_auth_storage_check ;;
   *)        usage ;;
 esac

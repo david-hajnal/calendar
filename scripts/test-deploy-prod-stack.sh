@@ -17,6 +17,7 @@ mkdir "$fixture/bin"
 : >"$fixture/openssl-config.log"
 : >"$fixture/openssl-cmd.log"
 : >"$fixture/cmd-seq.log"
+printf '%s\n' '{"keys":[{"kid":"deployment-proof","d":"private-jwks-fixture"}]}' >"$fixture/auth-jwks.json"
 
 cat >"$fixture/bin/kubectl" <<'EOF'
 #!/bin/sh
@@ -335,6 +336,7 @@ run_stack() {
     AUTH_BRIDGE_KEY=test-bridge-key \
     AUTH_COOKIE_KEYS='["test-cookie-key"]' \
     AUTH_SIGNING_KID=test-kid \
+    AUTH_JWKS_FILE="$fixture/auth-jwks.json" \
     GHCR_TOKEN="${GHCR_TOKEN_OVERRIDE-}" \
     TLS_EXISTING="${TLS_EXISTING_OVERRIDE:-0}" \
     TLS_CERT_SANS="${TLS_CERT_SANS_OVERRIDE:-DNS:calendar.example.test, DNS:mcp.example.test}" \
@@ -474,10 +476,32 @@ if [ "$pull_secret_count" -ne 3 ]; then
   failures=$((failures + 1))
 fi
 
-require_text \
-  'create secret generic commoncal-auth-secrets --from-literal=DATABASE_URL=postgresql://auth:auth@localhost:5432/commoncal_auth --from-literal=LAB_BRIDGE_KEY=test-bridge-key --from-literal=AUTH_COOKIE_KEYS=["test-cookie-key"] --from-literal=AUTH_SIGNING_KID=test-kid -n commoncal --dry-run=client -o yaml' \
-  "$fixture/kubectl.log" \
-  "deploy must create commoncal-auth-secrets from all auth secret inputs"
+# Auth credentials and private keys must travel through stdin, never argv.
+if ! python3 - "$fixture/kubectl-stdin.log" "$fixture/auth-jwks.json" "$fixture/kubectl.log" "$fixture/helm.log" <<'PY'
+import base64, json, pathlib, sys
+manifests=[]
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    try: manifest=json.loads(line)
+    except ValueError: continue
+    if manifest.get('metadata', {}).get('name') == 'commoncal-auth-secrets': manifests.append(manifest)
+assert manifests, 'auth Secret must be applied through stdin'
+expected={'DATABASE_URL':'postgresql://auth:auth@localhost:5432/commoncal_auth',
+          'AUTH_BRIDGE_KEY':'test-bridge-key', 'AUTH_COOKIE_KEYS':'["test-cookie-key"]',
+          'AUTH_SIGNING_KID':'test-kid', 'AUTH_JWKS':pathlib.Path(sys.argv[2]).read_text()}
+for manifest in manifests:
+    assert manifest['type'] == 'Opaque'
+    assert manifest['metadata']['namespace'] == 'commoncal'
+    actual={key:base64.b64decode(value).decode() for key,value in manifest['data'].items()}
+    assert actual == expected, 'auth stdin Secret must contain every expected input'
+arguments='\n'.join(pathlib.Path(path).read_text() for path in sys.argv[3:])
+for key in ['DATABASE_URL', 'AUTH_BRIDGE_KEY', 'AUTH_COOKIE_KEYS', 'AUTH_JWKS']:
+    assert expected[key] not in arguments, f'{key} must not appear in process arguments'
+assert 'private-jwks-fixture' not in arguments, 'private JWKS must not appear in process arguments'
+PY
+then
+  echo "auth runtime Secret must carry every input through stdin without credential arguments" >&2
+  failures=$((failures + 1))
+fi
 
 require_text \
   '{{- range .Values.ingress.hosts }}' \
@@ -536,9 +560,9 @@ require_text \
   "$guard_kubectl_log" \
   "Flux-owned deployment must apply the MCP runtime Secret"
 require_text \
-  'create secret generic commoncal-auth-secrets' \
+  'apply -f -' \
   "$guard_kubectl_log" \
-  "Flux-owned deployment must apply the auth runtime Secret"
+  "Flux-owned deployment must apply runtime Secrets through stdin"
 require_text \
   'rollout restart deployment commoncal-auth --namespace commoncal' \
   "$guard_kubectl_log" \

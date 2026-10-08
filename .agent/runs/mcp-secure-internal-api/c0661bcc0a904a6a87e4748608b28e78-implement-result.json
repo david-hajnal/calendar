@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "Phase 1 internal API boundary verified: API-key middleware (constant-time, fail-closed) applied to all 15 MCP internal routes, production startup fails without MCP_INTERNAL_API_KEY, route-level tests for missing/invalid/valid keys all pass; NetworkPolicy and TLS public path confirmed consistent with spec.",
+  "files_changed": [
+    "backend/src/main.rs",
+    "backend/src/mcp_internal.rs"
+  ],
+  "verification_commands": [
+    "cargo check --manifest-path backend/Cargo.toml",
+    "cargo test --manifest-path backend/Cargo.toml",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Implementation was already present as uncommitted working-tree changes; no new edits were required this session",
+    "Production secret commoncal-mcp-secrets must contain a non-empty mcp-internal-api-key before deploying this core image, or startup will fail by design"
+  ],
+  "important_context": [
+    "MCP server calls core via public HTTPS origin (MCP_INTERNAL_API_BASE=https://cal.hajnal.space), so MCP-to-core traffic flows through traefik ingress; core NetworkPolicy admits only the traefik namespace",
+    "Header contract is x-mcp-api-key on both sides (backend middleware and mcp-server/src/internal_client.rs)",
+    "Middleware fails closed: an empty configured key rejects every request, so development without the env var is safe"
+  ]
+}

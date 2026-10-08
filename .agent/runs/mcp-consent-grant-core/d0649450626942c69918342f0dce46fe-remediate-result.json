@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "Ported validate_continuation from lab reference into mcp_consent.rs and applied it to login_continue handler, rejecting external URLs, protocol-relative paths, backslashes, and control characters; falls back to / on invalid input.",
+  "files_changed": [
+    "backend/src/mcp_consent.rs"
+  ],
+  "verification_commands": [
+    "cargo test mcp_consent",
+    "cargo check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "validate_continuation enforces same-origin relative paths only; login_continue now falls back to / for any invalid continue_url"
+  ]
+}

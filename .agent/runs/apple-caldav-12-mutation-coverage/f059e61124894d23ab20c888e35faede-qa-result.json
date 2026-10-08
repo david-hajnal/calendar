@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "T12 moves and mutation coverage verified: all 60 caldav_event_resource tests pass, moves atomically emit source removal and target addition, all supported mutation paths have regression coverage, and no duplicate changes occur.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --test event_api",
+    "cargo test --test recurring_event_api",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "All T12 acceptance criteria met: moves emit atomic remove/add, all mutation paths covered, no duplicates",
+    "60 caldav_event_resource tests pass including 6 T12-specific tests",
+    "11 event_api tests pass including move_to_unauthorized_calendar_fails_atomically",
+    "11 recurring_event_api tests pass covering occurrence mutations",
+    "Full backend test suite passes with 0 failures"
+  ]
+}

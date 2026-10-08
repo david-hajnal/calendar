@@ -1,0 +1,27 @@
+{
+  "status": "completed",
+  "summary": "Phase 4 consent/grant integration verified against all six acceptance criteria. Backend and mcp-server compile, clippy is clean, and the full test suites pass (backend 29 MCP lib tests + full suite 0 failed; mcp-server 213 lib + 35 integration + 12, 0 failed).",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo check --manifest-path backend/Cargo.toml --locked",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib mcp",
+    "cargo check --manifest-path mcp-server/Cargo.toml --locked",
+    "cargo test --manifest-path mcp-server/Cargo.toml --locked",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked",
+    "cargo clippy --manifest-path mcp-server/Cargo.toml --all-targets --locked",
+    "cargo fmt --manifest-path backend/Cargo.toml --check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "cargo fmt --check reports a non-functional line-wrap in mcp_consent.rs test validate_continuation_accepts_relative_path (cosmetic only; tests pass).",
+    "The consent decision POST is gated by the shared authenticated_session CSRF middleware (requires Origin + Sec-Fetch-Site + x-csrf-token), but the server-rendered consent form in mcp_consent.rs does not carry a CSRF token, so a real browser form submission would be rejected 403. Not covered by the Phase 4 acceptance criteria (which assert session-binding, not browser form flow) and not exercised by any test, but worth confirming before the Phase 6 end-to-end gate."
+  ],
+  "important_context": [
+    "Consent routes are only mounted when AUTH_BRIDGE_URL and AUTH_BRIDGE_SECRET are both set (config.auth_bridge_enabled()); otherwise the grant-management API is the authoritative surface.",
+    "Grant upsert uses replace-not-union semantics: existing active grant for (user, oauth_client_id) is revoked then a new row inserted, so retries are idempotent and approval cannot broaden.",
+    "The consent flow stores the user's full live calendar set on the grant (matching the lab), whereas the grant-management create endpoint intersects requested calendars with the live set; both are tested.",
+    "mcp-server resolves the authoritative grant from core on every tool invocation (resolve_grant), so revocation/expiry takes effect on the next call even while the access token is valid."
+  ]
+}

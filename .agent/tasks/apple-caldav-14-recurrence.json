@@ -1,0 +1,17 @@
+{
+  "id": "apple-caldav-14-recurrence",
+  "title": "Recurring event semantics \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t14--recurrence-semantics",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-12-mutation-coverage",
+    "apple-caldav-13-all-day"
+  ],
+  "acceptance": [
+    "supported series round-trip as one UID and resource",
+    "modified and deleted occurrences persist",
+    "unsupported recurrence fails explicitly and ETags remain deterministic"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

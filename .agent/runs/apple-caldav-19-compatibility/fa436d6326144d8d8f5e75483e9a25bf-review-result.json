@@ -1,0 +1,13 @@
+{
+  "status": "completed",
+  "summary": "T19 Apple compatibility cleanup and docs verified: all 12 fixture tests pass, all 8 frontend tests pass, no legacy fake-CalDAV UI remains, traces are sanitized, and deployment docs match behavior.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test apple_calendar_fixtures",
+    "npx vitest run src/settings/CalendarConnections.test.tsx"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": []
+}

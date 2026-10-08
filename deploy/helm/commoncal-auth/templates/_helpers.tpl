@@ -53,3 +53,29 @@ app.kubernetes.io/component: authorization
 {{- define "commoncal-auth.internalServiceName" -}}
 {{- printf "%s-internal" (include "commoncal-auth.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
+
+{{- define "commoncal-auth.databaseEgress" -}}
+- to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+  ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+- to:
+    {{- if .Values.networkPolicy.postgres.cidrs }}
+    {{- range .Values.networkPolicy.postgres.cidrs }}
+    - ipBlock:
+        cidr: {{ . | quote }}
+    {{- end }}
+    {{- else }}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ required "database namespace is required" .Values.networkPolicy.postgres.namespace }}
+      podSelector:
+        matchLabels:
+          {{- toYaml .Values.networkPolicy.postgres.podLabels | nindent 10 }}
+    {{- end }}
+  ports:
+    - {protocol: TCP, port: {{ .Values.networkPolicy.postgres.port }}}
+{{- end }}

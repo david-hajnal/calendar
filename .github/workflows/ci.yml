@@ -19,7 +19,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Reject Yarn lockfiles
         run: sh scripts/check-no-yarn-lock.sh
@@ -49,11 +49,11 @@ jobs:
       - name: Run authorization regression suite
         run: cargo test --manifest-path backend/Cargo.toml --locked --test authorization_regression
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.12.3
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -74,10 +74,10 @@ jobs:
     needs: checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: v3.14.0
 
@@ -107,3 +107,35 @@ jobs:
             exit 1
           fi
         shell: bash
+
+  auth-runtime:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: auth_test
+          POSTGRES_PASSWORD: disposable-auth-check-password
+          POSTGRES_DB: auth_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U auth_test -d auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9.12.3
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: slice1-lab/auth-server
+      - run: pnpm test
+        working-directory: slice1-lab/auth-server
+      - run: node tests/production-integration.mjs
+        working-directory: slice1-lab/auth-server
+        env:
+          AUTH_TEST_DATABASE_URL: postgresql://auth_test:disposable-auth-check-password@127.0.0.1:5432/auth_test
+      - name: Verify authorization database image and recovery
+        run: ./scripts/dev.sh auth-storage-check

@@ -1,0 +1,19 @@
+{
+  "id": "apple-caldav-19-compatibility",
+  "title": "Apple compatibility cleanup and docs \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t19--apple-compatibility-cleanup-and-docs",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-12-mutation-coverage",
+    "apple-caldav-14-recurrence",
+    "apple-caldav-16-properties",
+    "apple-caldav-18-hardening"
+  ],
+  "acceptance": [
+    "current macOS and iOS clients pass connect sync CRUD and revoke checks",
+    "sanitized real-client traces become regression fixtures",
+    "legacy fake-CalDAV UI is removed and deployment/user docs match behavior"
+  ],
+  "docs_required": true,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

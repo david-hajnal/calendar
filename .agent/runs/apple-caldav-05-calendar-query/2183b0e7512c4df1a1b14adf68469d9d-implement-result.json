@@ -1,0 +1,29 @@
+{
+  "status": "completed",
+  "summary": "Implemented REPORT calendar-query with XML time-range parser, bounded range query, and deterministic error handling for malformed/unsupported/oversized requests.",
+  "files_changed": [
+    "backend/Cargo.toml",
+    "backend/Cargo.lock",
+    "backend/src/caldav/mod.rs",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/query.rs",
+    "backend/src/caldav/repository.rs"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo clippy",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T06 calendar-multiget can reuse the same auth/resolve pattern and response XML helpers",
+    "T18 should add rate-limiting middleware for REPORT endpoints"
+  ],
+  "important_context": [
+    "quick-xml 0.36.2 added as dependency",
+    "REPORT method now in DAV_ALLOW header",
+    "MAX_RESULTS=1000, MAX_BODY_BYTES=64KB, MAX_RANGE_SECONDS=366d are the enforced bounds",
+    "Parser only accepts C:time-range filter; all other filter types return 400"
+  ]
+}

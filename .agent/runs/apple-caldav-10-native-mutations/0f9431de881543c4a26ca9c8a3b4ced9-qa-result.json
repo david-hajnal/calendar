@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "All 7 T10 tests pass; native create/update/delete each record exactly one DAV change, rolled-back mutations record none, and DAV-originated mutations are not double-counted.",
+  "files_changed": [
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource -- native_create native_update native_delete rolled_back dav_create dav_delete change_log",
+    "cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "record_caldav_change is called inside the same transaction as the domain write in EventService::create (event.rs:367), EventService::update (event.rs:1138), and EventService::delete (event.rs:1183)",
+    "DAV HTTP handlers route through the same EventService methods, so DAV mutations are not double-counted",
+    "caldav_event_changes table schema: id (autoincrement), calendar_id, event_id (nullable), change_type (created/updated/deleted), created_at",
+    "list_changes_since provides the ordered change-log API for T11 sync-token paging"
+  ]
+}

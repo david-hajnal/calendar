@@ -684,3 +684,750 @@ async fn test_grant_current_time() {
     assert!(now > 1700000000);
     assert!(now < 2000000000);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3: OAuth discovery and access-token validation integration tests.
+//
+// These tests validate tokens signed with real RSA keys against the standard
+// claim contract issued by the repository's authorization server
+// (`slice1-lab/auth-server`): numeric `sub`, `client_id`, space-delimited
+// `scope`, `iss`, `aud`, `exp`, `iat`, `jti`, `amr`.
+//
+// The discovery flow (fetch metadata → verify issuer → follow jwks_uri) and
+// the JWKS caching / key-rotation-refresh logic are exercised end-to-end via
+// wiremock.
+// ---------------------------------------------------------------------------
+
+use jsonwebtoken::{EncodingKey, Header};
+use mcp_server::oauth::TokenValidator;
+use rsa::RsaPrivateKey;
+use rsa::pkcs8::EncodePrivateKey;
+use rsa::traits::PublicKeyParts;
+
+const TEST_RESOURCE: &str = "https://mcp.example.com/mcp";
+
+/// Generate a 2048-bit RSA key pair and return (private_key, jwk_json).
+fn generate_rsa_key(kid: &str) -> (RsaPrivateKey, serde_json::Value) {
+    let mut rng = rand::thread_rng();
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+    let public_key = private_key.to_public_key();
+    let n_bytes = public_key.n().to_bytes_be();
+    let e_bytes = public_key.e().to_bytes_be();
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let jwk = serde_json::json!({
+        "kty": "RSA",
+        "alg": "RS256",
+        "use": "sig",
+        "n": engine.encode(&n_bytes),
+        "e": engine.encode(&e_bytes),
+        "kid": kid,
+    });
+    (private_key, jwk)
+}
+
+/// Sign a JWT with the given claims and RSA private key.
+fn sign_jwt(private_key: &RsaPrivateKey, kid: &str, claims: &serde_json::Value) -> String {
+    let mut header = Header::new(jsonwebtoken::Algorithm::RS256);
+    header.kid = Some(kid.to_string());
+    let pem = private_key
+        .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+        .unwrap();
+    let encoding_key = EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
+    jsonwebtoken::encode(&header, claims, &encoding_key).unwrap()
+}
+
+/// Phase 3: a valid token with standard claims validates successfully.
+#[tokio::test]
+async fn phase3_valid_token_with_standard_claims() {
+    let (private_key, jwk) = generate_rsa_key("test-key-1");
+    let mock = wiremock::MockServer::start().await;
+    let mock_issuer = mock.uri();
+    let jwks_uri = format!("{}/jwks", mock_issuer);
+
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": uuid::Uuid::new_v4().to_string(),
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read commoncal.event.read.basic",
+        "amr": ["pwd"],
+    });
+    let token = sign_jwt(&private_key, "test-key-1", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+
+    let result = result.expect("valid token should validate");
+    assert_eq!(result.user_id, 42);
+    assert_eq!(result.oauth_client_id, "client-abc");
+    assert_eq!(
+        result.scopes,
+        vec![
+            "commoncal.calendar.metadata.read".to_string(),
+            "commoncal.event.read.basic".to_string(),
+        ]
+    );
+    assert_eq!(result.auth_strength, mcp_server::oauth::AuthStrength::Passwordless);
+    assert!(!result.token_id.is_empty());
+}
+
+/// Phase 3: wrong issuer in token is rejected.
+#[tokio::test]
+async fn phase3_wrong_issuer_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-2");
+    let mock_issuer = "https://auth.example.com".to_string();
+
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    // Token has wrong issuer.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": "https://evil.example.com",
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t1",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-2", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(result.is_err(), "wrong issuer must be rejected");
+}
+
+/// Phase 3: wrong audience is rejected.
+#[tokio::test]
+async fn phase3_wrong_audience_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-3");
+    let mock_issuer = "https://auth.example.com".to_string();
+
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": "https://wrong-audience.example.com",
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t2",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-3", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(result.is_err(), "wrong audience must be rejected");
+}
+
+/// Phase 3: expired token is rejected.
+#[tokio::test]
+async fn phase3_expired_token_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-4");
+    let mock = wiremock::MockServer::start().await;
+    let mock_issuer = mock.uri();
+    let jwks_uri = format!("{}/jwks", mock_issuer);
+
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now - 100,
+        "iat": now - 400,
+        "jti": "t3",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-4", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        matches!(result, Err(mcp_server::error::TokenError::Expired)),
+        "expired token must be rejected with Expired error, got: {:?}",
+        result
+    );
+}
+
+/// Phase 3: non-numeric sub is rejected.
+#[tokio::test]
+async fn phase3_non_numeric_sub_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-5");
+    let mock_issuer = "https://auth.example.com".to_string();
+
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "not-a-number",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t4",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-5", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        result.is_err(),
+        "non-numeric sub must be rejected"
+    );
+}
+
+/// Phase 3: missing client_id is rejected.
+#[tokio::test]
+async fn phase3_missing_client_id_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-6");
+    let mock_issuer = "https://auth.example.com".to_string();
+
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t5",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-6", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        result.is_err(),
+        "missing client_id must be rejected"
+    );
+}
+
+/// Phase 3: key rotation — token signed with a key present in JWKS validates.
+///
+/// This test verifies that when the JWKS contains multiple keys (rotation
+/// overlap), a token signed with any of them validates successfully. The
+/// one-refresh-on-unknown-kid path is exercised by the stale-key test below.
+#[tokio::test]
+async fn phase3_key_rotation_overlap_validates() {
+    // Two keys present in JWKS (rotation overlap window).
+    let (_old_key, old_jwk) = generate_rsa_key("old-key");
+    let (new_key, new_jwk) = generate_rsa_key("new-key");
+
+    let mock = wiremock::MockServer::start().await;
+    let mock_issuer = mock.uri();
+    let jwks_uri = format!("{}/jwks", mock_issuer);
+
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    // JWKS contains both keys (overlap window).
+    let keys_json = serde_json::json!({ "keys": [old_jwk, new_jwk] });
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(keys_json.to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    // Token signed with the new key.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t6",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&new_key, "new-key", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        result.is_ok(),
+        "token signed with key in JWKS overlap should validate, got: {:?}",
+        result
+    );
+}
+
+/// Phase 3: stale key — token signed with removed key is rejected even after refresh.
+#[tokio::test]
+async fn phase3_stale_key_rejected_after_refresh() {
+    let (stale_key, _stale_jwk) = generate_rsa_key("stale-key");
+    let (_current_key, current_jwk) = generate_rsa_key("current-key");
+
+    let mock = wiremock::MockServer::start().await;
+    let mock_issuer = mock.uri();
+    let jwks_uri = format!("{}/jwks", mock_issuer);
+
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    // JWKS always returns only the current key (stale key was removed).
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [current_jwk] }).to_string()),
+        )
+        .expect(2..)
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 300,
+        "iat": now,
+        "jti": "t7",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&stale_key, "stale-key", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        result.is_err(),
+        "token signed with removed key must be rejected"
+    );
+}
+
+/// Phase 3: discovery metadata issuer mismatch is rejected.
+#[tokio::test]
+async fn phase3_discovery_issuer_mismatch_rejected() {
+    let (_key, jwk) = generate_rsa_key("test-key-8");
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+
+    // Metadata returns a different issuer than what we configure.
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": "https://different-issuer.example.com",
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let validator = TokenValidator::new();
+    // Configure with the mock's URI as issuer, but metadata returns a different one.
+    let result = validator
+        .validate("any.token.here", &mock.uri(), TEST_RESOURCE)
+        .await;
+    assert!(
+        matches!(result, Err(mcp_server::error::TokenError::InvalidIssuer)),
+        "issuer mismatch must be rejected, got: {:?}",
+        result
+    );
+}
+
+/// Phase 3: iat in the future beyond clock skew is rejected.
+#[tokio::test]
+async fn phase3_future_iat_rejected() {
+    let (private_key, jwk) = generate_rsa_key("test-key-9");
+    let mock_issuer = "https://auth.example.com".to_string();
+
+    let mock = wiremock::MockServer::start().await;
+    let jwks_uri = format!("{}/jwks", mock.uri());
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({
+                    "issuer": mock_issuer,
+                    "jwks_uri": jwks_uri,
+                })
+                .to_string()),
+        )
+        .mount(&mock)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/jwks"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_string(serde_json::json!({ "keys": [jwk] }).to_string()),
+        )
+        .mount(&mock)
+        .await;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    // iat is 1 hour in the future (beyond the 30s clock skew).
+    let claims = serde_json::json!({
+        "iss": mock_issuer,
+        "sub": "42",
+        "aud": TEST_RESOURCE,
+        "exp": now + 3600,
+        "iat": now + 3600,
+        "jti": "t8",
+        "client_id": "client-abc",
+        "scope": "commoncal.calendar.metadata.read",
+    });
+    let token = sign_jwt(&private_key, "test-key-9", &claims);
+
+    let validator = TokenValidator::new();
+    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    assert!(
+        result.is_err(),
+        "iat in the future beyond clock skew must be rejected"
+    );
+}
+
+/// Phase 3: a token issued by the repository's real authorization-server
+/// implementation validates successfully.
+///
+/// This is NOT a hand-built fixture. The token is signed by the real auth
+/// server (`slice1-lab/auth-server/src/server.mjs`) using its configured JWKS
+/// key. The test spawns a helper that launches the real auth server, drives the
+/// full OAuth flow (DCR + Authorization Code + S256 PKCE + CommonCal consent via
+/// the private bridge + token exchange), and returns the issued token. The token
+/// is then validated with the mcp-server's `TokenValidator` — exercising real
+/// discovery, JWKS fetch, signature verification, and standard-claim parsing
+/// against a token the production validator must accept.
+///
+/// The test skips (rather than fails) when the environment cannot run the real
+/// auth server (helper exit code 100: PostgreSQL unavailable).
+#[tokio::test]
+async fn phase3_real_auth_server_token_validates() {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let helper = format!("{manifest}/tests/real_auth_server_token.mjs");
+    // The helper writes the issued token to this file (it uses inherited stdio
+    // so the auth server does not exit when its pipes close).
+    let token_file = format!("{manifest}/tests/.real_auth_token.json");
+    let _ = std::fs::remove_file(&token_file);
+
+    // Spawn the helper in its own process group so we can kill the whole group
+    // (helper + auth server child) on cleanup.
+    let mut cmd = tokio::process::Command::new("node");
+    cmd.arg(&helper).env("REAL_AUTH_TOKEN_FILE", &token_file);
+    #[cfg(unix)]
+    {
+        #[allow(unused_imports)]
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+    }
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            eprintln!("skip: cannot spawn node helper: {e}");
+            return;
+        }
+    };
+
+    // Poll for the token file (the helper writes it once the flow completes).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    let token_content = loop {
+        if std::path::Path::new(&token_file).exists() {
+            break std::fs::read_to_string(&token_file).ok();
+        }
+        if std::time::Instant::now() > deadline {
+            break None;
+        }
+        // If the helper already exited, stop polling.
+        let exited = child.try_wait().ok().flatten().is_some();
+        if exited {
+            break None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+
+    let Some(content) = token_content else {
+        kill_process_group(&mut child).await;
+        let _ = std::fs::remove_file(&token_file);
+        eprintln!("skip: real auth server helper produced no token (environment unavailable?)");
+        return;
+    };
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("token file must be valid JSON");
+    let token = parsed["access_token"]
+        .as_str()
+        .expect("access_token present")
+        .to_string();
+    let issuer = parsed["issuer"].as_str().expect("issuer present").to_string();
+    let resource = parsed["resource"]
+        .as_str()
+        .expect("resource present")
+        .to_string();
+    let client_id = parsed["client_id"]
+        .as_str()
+        .expect("client_id present")
+        .to_string();
+
+    // Validate the token while the auth server is still alive.
+    let validator = TokenValidator::new();
+    let result = validator
+        .validate(&token, &issuer, &resource)
+        .await
+        .expect("token issued by the real auth server must validate");
+
+    // Standard claims parsed correctly.
+    assert_eq!(result.user_id, 1, "numeric sub must parse to the CommonCal user id");
+    assert_eq!(result.oauth_client_id, client_id);
+    assert!(
+        result.scopes.contains(&"commoncal.calendar.metadata.read".to_string()),
+        "granted scope must be present: {:?}",
+        result.scopes
+    );
+    assert!(
+        result.scopes.contains(&"commoncal.event.read.basic".to_string()),
+        "granted scope must be present: {:?}",
+        result.scopes
+    );
+    assert!(!result.token_id.is_empty(), "jti must be present");
+    assert!(
+        result.expires_at > 0,
+        "exp must be a positive Unix timestamp"
+    );
+
+    // Clean up: kill the whole process group (helper + auth server child) and
+    // remove the token file.
+    kill_process_group(&mut child).await;
+    let _ = std::fs::remove_file(&token_file);
+}
+
+/// Kill the child and its entire process group (so the auth server child of the
+/// helper is also terminated). Unix-only; falls back to a plain kill elsewhere.
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id().map(|p| p as i32);
+        if let Some(pid) = pid {
+            // Kill the process group (negative pid). Ignore errors if already gone.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}

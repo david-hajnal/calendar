@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "Phase 4 consent and grant integration verified against all 6 acceptance criteria. Bridge client, session-protected consent endpoints, grant upsert with live-calendar intersection, denial/idempotency/no-broadening semantics, session-bound ownership-checked routes, and per-invocation grant resolution all confirmed. All 461 backend+mcp-server tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cd backend && cargo test --lib",
+    "cd backend && cargo test",
+    "cd mcp-server && cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "record_idempotency in backend/src/mcp_internal.rs:822 binds user_id=0 as a placeholder; not a list/narrow/revoke route and no test exercises it, but a later stage should thread the real user_id through RecordIdempotencyPayload"
+  ],
+  "important_context": [
+    "Consent router only mounts when AUTH_BRIDGE_URL and AUTH_BRIDGE_SECRET are both non-empty (main.rs:281)",
+    "Grant-first ordering: upsert_grant runs before bridge decide_interaction so a bridge timeout leaves a valid grant the user can revoke",
+    "mcp_grant_management update_mcp_grant enforces no-broadening by requiring every requested calendar to already be in the grant (mcp_grant_management.rs:216-223)",
+    "mcp_service.resolve_grant fetches the authoritative grant from core on every tool call (mcp_service.rs:82-100), so revocation takes effect on the next invocation"
+  ]
+}

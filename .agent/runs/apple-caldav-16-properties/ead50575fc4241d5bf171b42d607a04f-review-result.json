@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T16 client-property preservation is correctly implemented: allowlisted metadata (categories, URL, TRANSP, alarms, X-properties) is stored in a dedicated table, survives unrelated edits, explicit removals persist, scheduling/unsupported components are rejected, and ETags are deterministic.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test --test caldav_event_resource t16",
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib ics"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Client properties are stored in caldav_event_properties keyed by event_id with ON DELETE CASCADE",
+    "The incoming PUT body is the source of truth: absent properties are removed (full-replacement semantics)",
+    "ALLOWED_X_PROPERTIES is limited to X-APPLE-CEVENT-CATEGORY, X-APPLE-STRUCTURED-LOCATION, X-APPLE-FALLBACK-ALARM-UID",
+    "Only DISPLAY and AUDIO alarms with a TRIGGER are preserved"
+  ]
+}

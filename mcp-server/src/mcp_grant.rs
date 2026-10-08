@@ -84,6 +84,10 @@ pub fn check_tool_permission(grant: &McpGrant, tool_name: &str) -> bool {
     }
     match tool_name {
         "availability_find" | "availability_get" => grant.allow_availability,
+        // calendar_list is a calendar-metadata read; it is gated by the
+        // availability/metadata capability, distinct from the availability_find
+        // tool capability.
+        "calendar_list" => grant.allow_availability,
         "event_get" | "event_search" => grant.allow_event_titles,
         "event_create" => grant.allow_create,
         "event_update" => grant.allow_update,
@@ -191,6 +195,19 @@ mod tests {
     fn availability_find_permitted() {
         let grant = mock_grant();
         assert!(check_tool_permission(&grant, "availability_find"));
+    }
+
+    #[test]
+    fn calendar_list_permitted_when_availability_allowed() {
+        let grant = mock_grant();
+        assert!(check_tool_permission(&grant, "calendar_list"));
+    }
+
+    #[test]
+    fn calendar_list_denied_when_availability_disallowed() {
+        let mut grant = mock_grant();
+        grant.allow_availability = false;
+        assert!(!check_tool_permission(&grant, "calendar_list"));
     }
 
     #[test]

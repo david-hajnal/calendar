@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "T03 calendar collections meets all acceptance criteria: active authorized calendars appear with stable paths/names/colors, archived/revoked/foreign are hidden, cross-user is 404, and privileges derive from the Happening role matrix. All tests pass and clippy is clean. One minor semantic mismatch noted as follow-up.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "backend/src/caldav/http.rs:358-360 \u2014 DAV:calendar-write-freebusy (a write privilege per RFC 4791) is granted to all roles based on ReadFreeBusy, including read-only Viewer and FreeBusyViewer. Consider restricting it to writable roles before the privilege mapping is frozen for T04/T15."
+  ],
+  "important_context": [
+    "The T03 handoff freezes the privilege mapping for T04/T15; the freebusy privilege mapping should be reviewed before freezing.",
+    "The mcp_internal.rs and main.rs changes in the worktree are unrelated to T03 (mcp-secure-internal-api task) and should be preserved."
+  ]
+}

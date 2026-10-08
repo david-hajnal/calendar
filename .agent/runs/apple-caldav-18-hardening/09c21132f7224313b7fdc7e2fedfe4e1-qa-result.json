@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "All three T18 acceptance criteria verified: malformed/oversized/throttled requests fail before writes (11 T18 tests pass), no credentials or calendar bodies in logs (zero tracing calls in caldav module), and insecure production transport fails closed with metrics classifying failures (config + metrics tests pass). Full backend suite: 169 lib + all integration tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test --lib -- dav_auth_rate_limiter dav_metrics dav_oversized dav_malformed production_config caldav_metrics",
+    "cargo test --lib",
+    "cargo test --test caldav_event_resource",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "CaldavMetrics defines record_malformed_request, record_oversized_body, record_not_found, record_precondition_failed, record_internal_error but none are called in the production request path (http.rs); only record_unauthorized, record_rate_limited, record_auth_failure, record_success are wired. Consider wiring the remaining counters for complete failure classification."
+  ],
+  "important_context": [
+    "DAV auth rate limiter is 10 attempts/60s per client key (x-forwarded-for or unknown), checked before every authenticated DAV request including successful ones.",
+    "MAX_BODY_BYTES is 64KB enforced via axum::body::to_bytes limit in REPORT and PUT handlers.",
+    "CALDAV_PUBLIC_ORIGIN must be https in production; validated in config.rs::validate_caldav_public_origin."
+  ]
+}

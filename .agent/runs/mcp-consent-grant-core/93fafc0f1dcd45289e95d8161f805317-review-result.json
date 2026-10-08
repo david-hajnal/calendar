@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "Phase 4 consent/grant integration is correctly implemented. All six acceptance criteria are met: bridge client with config, session-bound consent with subject verification, atomic grant upsert with narrowing-only semantics, idempotent retries via hashed receipts, ownership-checked management routes, and per-invocation live grant+membership checks. No actionable defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib (backend: 227 passed)",
+    "cargo test (mcp-server: 36+35 passed)",
+    "npm test (frontend: 138 passed)",
+    "cargo clippy --lib (backend: clean)",
+    "cargo clippy (mcp-server: clean)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Consent routes only mount when both AUTH_BRIDGE_URL and AUTH_BRIDGE_SECRET are set (main.rs:281)",
+    "Receipt table (0030_mcp_consent_receipt.sql) stores SHA-256 of handoff token, not the token itself",
+    "Grant narrowing is enforced in upsert_in_transaction by ANDing flags and intersecting calendar IDs with the previous grant",
+    "get_mcp_grants intersects allowed_calendar_ids with live unarchived membership on every lookup (mcp_internal.rs:755-761)"
+  ]
+}

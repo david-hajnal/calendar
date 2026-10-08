@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "Phase 0 MCP acceptance harness is correct and complete. All four verify scripts pass (both PASS and FAIL paths). The harness is a pure HTTP client reusing slice1-lab fixture shapes, not the lab binary. All acceptance criteria (A1-A4, L1-L7, S1-S9) are covered. The harness correctly fails against the real production endpoint with the expected Phase 0 baseline violations. No actionable defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/verify-security-isolation.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "S9 concurrency-isolation test asserts no calendar-ID overlap between two concurrent clients but does not verify each client sees its own calendars; a server returning empty calendars to both would pass vacuously. Consider asserting each client sees its own subject-bound calendars.",
+    "assertNoCalendarLeak (security-isolation.js:285-297) uses a string-matching heuristic (checks for literal \"calendars\" or \"calendar_id\" in the body); a production server returning calendar data in a different shape could evade the check. Consider parsing the response body and checking for calendar objects."
+  ],
+  "important_context": [
+    "The harness is a regression gate: it stays red (exit 1) against the current production component until later phases implement the MCP lifecycle, public 401 challenge, and authorization-server metadata.",
+    "The harness (harness.js/discovery.js/oauth-lifecycle.js/security-isolation.js/lib.js) is a pure HTTP client using only Node built-ins; it does not launch or import the slice1-lab binaries.",
+    "The mock servers (mock/server.js, mock/lifecycle-server.js, mock/oauth-provider.js) are verification-only and are not release artifacts.",
+    "The Phase 0.4 security harness uses verification-only /_test/* hooks (token mint, grant set/revoke/broaden/reset/delete) on the mock to drive negative-token and grant-state cases in isolation.",
+    "The calendar_list permission mapping bug (mcp-server/src/tools/calendar_list.rs:38 checks availability_find instead of calendar_list) is a known Phase 2 fix, not a Phase 0 harness defect."
+  ]
+}

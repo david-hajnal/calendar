@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "Phase 1 MCP internal API boundary is correctly implemented and fully tested: all 15 protected routes enforce the x-mcp-api-key via constant-time comparison, fail closed on empty/missing/invalid keys, production startup fails without the key, and no secret values are logged. All backend tests and clippy pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --lib mcp_internal",
+    "cargo test --manifest-path backend/Cargo.toml --lib",
+    "cargo test --manifest-path backend/Cargo.toml",
+    "cargo clippy --manifest-path backend/Cargo.toml --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Production startup guard (backend/src/main.rs:227-230) verified by code inspection; it lives in the binary main() so has no direct unit test, but the fail-closed empty-key behavior is covered by mcp_internal::tests::empty_configured_key_rejects_all_requests."
+  ],
+  "important_context": [
+    "All 15 MCP-internal routes (incl. /internal/token-exchange and /api/v1/calendars/:calendar_id/reminders) are protected by the x-mcp-api-key middleware; the MCP server's InternalClient (mcp-server/src/internal_client.rs) calls exactly these routes and sends the header.",
+    "NetworkPolicy: core ingress is restricted to the traefik namespace (denies unrelated pods); MCP reaches core via the public HTTPS origin (MCP_INTERNAL_API_BASE=https://cal.hajnal.space) through traefik, with TLS retained on the websecure entrypoint.",
+    "The frontend-facing /api/v1/mcp-grants routes (mcp_grant_management) are intentionally NOT behind the API-key middleware \u2014 they are browser/session-bound and in scope for Phase 4, not Phase 1."
+  ]
+}

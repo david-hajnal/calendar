@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-16-properties",
+  "title": "Safe client-property preservation \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t16--safe-client-property-preservation",
+  "priority": 2,
+  "depends_on": [
+    "apple-caldav-14-recurrence"
+  ],
+  "acceptance": [
+    "allowlisted metadata survives unrelated edits",
+    "explicit removals stay removed",
+    "scheduling and unsupported components fail without nondeterministic ETags"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

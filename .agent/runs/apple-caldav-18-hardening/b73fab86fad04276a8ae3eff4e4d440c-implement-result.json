@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "Added DAV auth rate limiting (10 attempts/60s per client IP), CaldavMetrics failure-classification counters, and 11 adversarial tests covering throttling, oversized/malformed body rejection before writes, log redaction, production HTTPS enforcement, and metrics classification.",
+  "files_changed": [
+    "backend/src/caldav/types.rs",
+    "backend/src/caldav/auth.rs",
+    "backend/src/caldav/http.rs"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test --lib caldav",
+    "cargo test --lib",
+    "cargo test --test caldav_event_resource",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Rate limiter is in-memory; a multi-instance deployment would need a shared store (e.g. Redis) for consistent throttling across replicas."
+  ],
+  "important_context": [
+    "DAV_AUTH_MAX_ATTEMPTS=10 and DAV_AUTH_WINDOW_SECONDS=60 are constants in caldav/auth.rs; tune via config if needed.",
+    "CaldavMetrics is Arc-shared and thread-safe; scrape via accounts.metrics() for operator monitoring.",
+    "authenticate_dav_request helper in http.rs is the single entry point for all DAV auth; rate limit is checked before any DB lookup."
+  ]
+}

@@ -24,6 +24,17 @@
         "dcrRateLimit": {
           "type": "integer",
           "minimum": 1
+        },
+        "dcrLoopbackHosts": {
+          "type": "string",
+          "pattern": "^(127\\.0\\.0\\.1|\\[::1\\])(,(127\\.0\\.0\\.1|\\[::1\\]))*$"
+        },
+        "dcrCallbackPath": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9/_-]+$"
+        },
+        "trustProxy": {
+          "const": true
         }
       },
       "additionalProperties": false
@@ -31,12 +42,38 @@
     "secrets": {
       "type": "object",
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "databaseUrlKey": { "type": "string", "minLength": 1 },
-        "bridgeKeyKey": { "type": "string", "minLength": 1 },
-        "cookieKeysKey": { "type": "string", "minLength": 1 },
-        "jwksKey": { "type": "string", "minLength": 1 },
-        "signingKidKey": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "databaseUrlKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bridgeKeyKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cookieKeysKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "jwksKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signingKidKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "databaseCaSecret": {
+          "type": "string",
+          "minLength": 1
+        },
+        "databaseCaKey": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     }

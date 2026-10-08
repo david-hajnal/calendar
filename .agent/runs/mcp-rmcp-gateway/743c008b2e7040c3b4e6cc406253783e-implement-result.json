@@ -1,0 +1,42 @@
+{
+  "status": "completed",
+  "summary": "Verified the Phase 2 rmcp gateway replacement is complete: rmcp Streamable HTTP service mounted at /mcp implementing ServerHandler, bearer-token auth wrapping the full service (401 challenge with public resource_metadata), all nine tools ported to typed SDK handlers, calendar_list permission mapping corrected, loopback constants removed, and the custom dispatcher retired to test-only use. All 249 tests pass with a clean compile.",
+  "files_changed": [
+    "mcp-server/src/auth.rs",
+    "mcp-server/src/identity.rs",
+    "mcp-server/src/mcp_service.rs",
+    "mcp-server/src/gateway.rs",
+    "mcp-server/src/lib.rs",
+    "mcp-server/src/main.rs",
+    "mcp-server/src/mcp_grant.rs",
+    "mcp-server/src/output_schema.rs",
+    "mcp-server/src/tools/availability_find.rs",
+    "mcp-server/src/tools/calendar_list.rs",
+    "mcp-server/src/tools/event_create.rs",
+    "mcp-server/src/tools/event_delete_commit.rs",
+    "mcp-server/src/tools/event_delete_prepare.rs",
+    "mcp-server/src/tools/event_get.rs",
+    "mcp-server/src/tools/event_search.rs",
+    "mcp-server/src/tools/event_update.rs",
+    "mcp-server/src/tools/reminder_set.rs",
+    "mcp-server/Cargo.toml",
+    "mcp-server/Cargo.lock"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "A concurrent process (prior session) was still modifying mcp-server files during verification (gateway.rs dead-code removal, output_schema.rs, and caldav worktree changes were reverted). State was confirmed stable before final verification, but a later stage should re-run cargo test to confirm no further drift.",
+    "Rate limiter (rate_limiter.rs) is a stub that always allows; real rate limiting is deferred to Slice 14 per the in-code note.",
+    "The retired custom dispatcher (Gateway::handle_authorized_tool_call) is retained solely to exercise audit-recording integration tests; if the dispatcher is later deleted, those three audit tests in tests/integration.rs must be re-pointed at the rmcp path."
+  ],
+  "important_context": [
+    "Phase 2 was largely implemented by a prior session; this stage verified compile + tests + acceptance criteria rather than authoring the change.",
+    "Validated identity is carried via a tokio task-local (identity::IDENTITY) set by auth middleware and read by rmcp tool handlers; this is the concurrency-isolation mechanism.",
+    "calendar_list is gated by grant.allow_availability via its own check_tool_permission('calendar_list') entry, distinct from availability_find.",
+    "Production route is rmcp StreamableHttpService at /mcp wrapped by auth::auth_middleware; the old JSON-RPC dispatcher in gateway.rs is no longer wired into main.rs."
+  ]
+}

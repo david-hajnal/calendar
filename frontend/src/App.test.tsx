@@ -22,6 +22,24 @@ afterEach(() => {
 });
 
 describe("authentication pages", () => {
+  it("preserves a consent continuation in the emailed login request", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    renderAt("/login?redirect=%2Fconsent%3Fhandoff%3Dabc", fetcher);
+    fireEvent.change(screen.getByLabelText(/Email address/), { target: { value: "person@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
+    await screen.findByRole("status");
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/login-links", expect.objectContaining({ body: JSON.stringify({ email: "person@example.test", redirect: "/consent?handoff=abc" }) }));
+  });
+
+  it("ignores an external continuation in the emailed login request", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    renderAt("/login?redirect=https%3A%2F%2Fevil.example", fetcher);
+    fireEvent.change(screen.getByLabelText(/Email address/), { target: { value: "person@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
+    await screen.findByRole("status");
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/login-links", expect.objectContaining({ body: JSON.stringify({ email: "person@example.test" }) }));
+  });
+
   it("password login exposes the exact password label without its decorative icon", () => {
     renderAt("/login", vi.fn());
     fireEvent.click(screen.getByRole("button", { name: "Password" }));

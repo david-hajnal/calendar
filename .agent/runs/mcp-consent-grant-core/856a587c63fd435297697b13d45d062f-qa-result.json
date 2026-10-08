@@ -1,0 +1,27 @@
+{
+  "status": "completed",
+  "summary": "Phase 4 consent/grant integration verified against all six acceptance criteria. Bridge client, session-bound consent UI, idempotent non-broadening grant upsert, ownership-checked management routes, and per-call revocation all implemented and covered by passing tests.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib mcp_consent::tests",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib mcp_bridge::tests",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib mcp_grant_management::tests",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib mcp_internal::tests",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "cargo test --manifest-path mcp-server/Cargo.toml --locked",
+    "cd frontend && npm test",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo clippy --manifest-path backend/Cargo.toml --locked --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Deployed browser OAuth acceptance and public-ingress proof remain in Phases 6-7 per the plan; this verification is local component proof only."
+  ],
+  "important_context": [
+    "Consent routes mount only when both AUTH_BRIDGE_URL and AUTH_BRIDGE_SECRET are set (config.auth_bridge_enabled); grant-management API remains the authoritative surface when the bridge is disabled.",
+    "Grant upsert intersects requested calendars/scopes with live unarchived membership and can only narrow an existing active grant; broadening requires revoke + re-authorize.",
+    "mcp_consent_receipt stores a SHA-256 digest of the handoff token (not the token) to make retries idempotent and block cross-user/decision mismatch and revoked-grant recreation."
+  ]
+}

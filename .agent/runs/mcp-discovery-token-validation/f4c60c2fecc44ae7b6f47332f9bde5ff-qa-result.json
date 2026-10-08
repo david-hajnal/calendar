@@ -1,0 +1,21 @@
+{
+  "status": "failed",
+  "summary": "Criteria 1-4 satisfied (discovery, claims validation, caching/rotation, grant lookup). Criterion 5 NOT satisfied: Phase 3 integration tests use hand-built fixtures (generate_rsa_key + sign_jwt), not tokens issued by the repository's real authorization-server implementation (slice1-lab/auth-server/src/server.mjs).",
+  "files_changed": [],
+  "verification_commands": [
+    "cd mcp-server && cargo test",
+    "cd mcp-server && cargo clippy --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "Criterion 5 violated: Phase 3 integration tests in mcp-server/tests/integration.rs (lines 709-1298) use hand-built fixtures via generate_rsa_key() and sign_jwt() to create tokens. No test validates tokens issued by the repository's real authorization-server implementation (slice1-lab/auth-server/src/server.mjs). The acceptance criterion requires 'integration tests validate tokens issued by the repository's real authorization-server implementation, not hand-built fixtures only'. Observed: all 10 phase3_* tests construct tokens locally with generate_rsa_key + sign_jwt; grep confirms no test references or launches the real auth server."
+  ],
+  "follow_up": [
+    "A test that launches slice1-lab/auth-server (requires PostgreSQL + Node.js) and validates a token issued through its full OAuth flow (DCR + authorization + token exchange) against the mcp-server TokenValidator would satisfy criterion 5."
+  ],
+  "important_context": [
+    "The real authorization server is slice1-lab/auth-server/src/server.mjs (Node.js, oidc-provider, PostgreSQL). It issues tokens with standard claims: iss, numeric sub, aud, exp, iat, client_id, scope, jti, amr.",
+    "The mcp-acceptance harness (mcp-acceptance/) uses a mock OAuth provider (mcp-acceptance/mock/oauth-provider.js), which is explicitly NOT the real authorization server.",
+    "All 213 unit tests, 4 main tests, 12 e2e tests, and 34 integration tests pass. Clippy is clean."
+  ]
+}

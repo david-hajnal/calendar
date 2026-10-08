@@ -1,0 +1,93 @@
+# Dormant and suspended: replace all candidate image tags with published build SHAs before operator activation.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: commoncal
+  namespace: flux-system
+spec:
+  releaseName: commoncal
+  targetNamespace: commoncal
+  chart:
+    spec:
+      chart: ./deploy/helm/commoncal
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+      interval: 10m
+  interval: 10m
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  rollback:
+    timeout: 5m0s
+  uninstall:
+    keepHistory: false
+  values:
+    replicaCount: 1
+    domain: cal.hajnal.space
+    image:
+      repository: ghcr.io/david-hajnal/calendar-core
+      tag: sha-a52bbc8b75ff93a7a7990234a1473d55190c57f4
+      pullPolicy: IfNotPresent
+    ingress:
+      enabled: true
+      className: traefik
+      annotations:
+        traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      hosts:
+      - host: cal.hajnal.space
+        paths:
+        - path: /
+          pathType: Prefix
+      tls:
+      - secretName: commoncal-tls
+        hosts:
+        - cal.hajnal.space
+        - mcal.hajnal.space
+    persistence:
+      size: 10Gi
+      accessModes:
+      - ReadWriteOnce
+    config:
+      appOrigin: https://cal.hajnal.space
+      caldavPublicOrigin: https://cal.hajnal.space
+    env:
+      TZ: Europe/Budapest
+    existingSecret:
+      name: commoncal-session
+      sessionSecretKey: SESSION_SECRET
+    mcpInternalApiSecret:
+      name: commoncal-mcp-secrets
+      key: mcp-internal-api-key
+    backup:
+      enabled: true
+      schedule: 0 2 * * *
+      persistence:
+        size: 5Gi
+    networkPolicy:
+      enabled: true
+      ingress:
+        from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+    authBridge:
+      enabled: true
+      url: http://commoncal-auth-internal.commoncal.svc:80
+      timeoutSecs: 5
+      secretName: commoncal-auth-secrets
+      secretKey: AUTH_BRIDGE_KEY
+  dependsOn:
+  - name: commoncal-auth
+  suspend: true

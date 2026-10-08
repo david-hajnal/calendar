@@ -1,0 +1,33 @@
+{
+  "status": "completed",
+  "summary": "Created sanitized real-client trace regression fixtures (5 ICS + 7 HTTP traces) with a 12-test verification suite, and added CalDAV/Apple Calendar deployment and user-setup documentation to docs/DEPLOYMENT.md.",
+  "files_changed": [
+    "backend/tests/apple_calendar_fixtures.rs",
+    "backend/tests/fixtures/apple-calendar/README.md",
+    "backend/tests/fixtures/apple-calendar/ics/timed-event.fixture.ics",
+    "backend/tests/fixtures/apple-calendar/ics/all-day-event.fixture.ics",
+    "backend/tests/fixtures/apple-calendar/ics/recurring-series.fixture.ics",
+    "backend/tests/fixtures/apple-calendar/ics/modified-occurrence.fixture.ics",
+    "backend/tests/fixtures/apple-calendar/ics/client-properties.fixture.ics",
+    "backend/tests/fixtures/apple-calendar/traces/connect.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/sync-initial.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/sync-incremental.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/crud-create.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/crud-update.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/crud-delete.trace.json",
+    "backend/tests/fixtures/apple-calendar/traces/revoke.trace.json",
+    "docs/DEPLOYMENT.md"
+  ],
+  "verification_commands": [
+    "cargo test --test apple_calendar_fixtures",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Fixtures are sanitized: no real credentials, principal/calendar IDs replaced with placeholders, UIDs use @example.test domain.",
+    "The 12-test suite in apple_calendar_fixtures.rs loads every fixture and asserts ICS round-trip + trace well-formedness/sanitization.",
+    "docs/DEPLOYMENT.md now has a 'Connect an Apple Calendar client' section and an Architecture note referencing the CalDAV surface."
+  ]
+}

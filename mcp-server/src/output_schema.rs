@@ -3,14 +3,14 @@
 // All output is JSON-schema-valid structured data.
 // Event descriptions are tagged as untrusted user-supplied data.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolOutput {
     pub content: Vec<ContentBlock>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum ContentBlock {
     Text { text: String },
     Image { data: String, mime_type: String },

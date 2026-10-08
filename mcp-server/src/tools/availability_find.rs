@@ -8,6 +8,7 @@
 
 use axum::http::{Response, StatusCode};
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ToolError;
@@ -18,10 +19,13 @@ use crate::tools::AuthorizedToolContext;
 /// Maximum allowed time range in days.
 const MAX_RANGE_DAYS: i64 = 31;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct AvailabilityFindParams {
+    /// Calendar IDs to check availability for.
     pub calendar_ids: Vec<i64>,
+    /// Start of the time range (ISO 8601 or Unix epoch seconds).
     pub from: String,
+    /// End of the time range (ISO 8601 or Unix epoch seconds).
     pub to: String,
 }
 

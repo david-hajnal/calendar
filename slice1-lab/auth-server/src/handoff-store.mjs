@@ -35,7 +35,7 @@ export class HandoffStore {
       `UPDATE interaction_handoff
           SET decision = $2::jsonb
         WHERE token_hash = $1 AND expires_at > NOW()
-          AND consumed_at IS NULL AND decision IS NULL
+          AND consumed_at IS NULL AND (decision IS NULL OR decision = $2::jsonb)
       RETURNING interaction_uid`,
       [digest(token), JSON.stringify(decision)],
     );

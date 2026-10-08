@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "summary": "Found one protocol mismatch: the crud-delete regression fixture expects HTTP 200 for a successful DELETE, but the server implementation returns 204 No Content. All other fixtures match their implementation status codes.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test apple_calendar_fixtures",
+    "npx vitest run --reporter=verbose"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/caldav/http.rs:1566 \u2014 handle_delete_event_resource returns StatusCode::NO_CONTENT (204), but backend/tests/fixtures/apple-calendar/traces/crud-delete.trace.json:17 expects status 200. The fixture README states these traces encode 'the responses it must return,' so the server and its own regression fixture disagree on the DELETE success status. If the real Apple Calendar client expects 200 (as the fixture records), the 204 response is a compatibility failure; if the client accepts 204, the fixture is inaccurate and fails to serve as a valid regression guard."
+  ],
+  "follow_up": [
+    "The crud-delete fixture and the DELETE handler must agree on the success status code (200 vs 204). RFC 4916 permits both, but the fixture is the source of truth for client expectations per the T19 acceptance criteria."
+  ],
+  "important_context": [
+    "All 12 backend fixture tests and all 114 frontend tests pass. The only defect is the DELETE status code mismatch between fixture (200) and implementation (204)."
+  ]
+}

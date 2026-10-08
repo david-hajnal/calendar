@@ -21,6 +21,8 @@ pub mod ics_import;
 pub mod identity;
 pub mod invitations;
 pub mod login;
+pub mod mcp_bridge;
+pub mod mcp_consent;
 pub mod mcp_grant_management;
 pub mod mcp_internal;
 pub mod notification;

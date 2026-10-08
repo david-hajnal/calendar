@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "All T15 acceptance criteria verified: role matrix enforced across discovery/reads/reports/PUT/DELETE, revocation immediate with 404 hiding existence, imported events reject mutation. 125 tests pass across 4 suites.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test --test caldav_event_resource",
+    "cargo test --test authorization",
+    "cargo test --test authorization_regression"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Authorization projection uses single authorize_calendar_action function in src/authorization.rs:98",
+    "Free-busy placeholder omits SUMMARY/DESCRIPTION/LOCATION/STATUS but preserves DTSTART/DTEND",
+    "Imported detection via external_event_mapping table check in http.rs:81",
+    "All denials return 404 with empty body to prevent existence leakage"
+  ]
+}

@@ -187,18 +187,18 @@ helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --
   --set authBridge.enabled=true \
   --set authBridge.url=http://commoncal-auth-internal.commoncal.svc:80 \
   --set authBridge.secretName=commoncal-auth-secrets \
-  --set authBridge.secretKey=LAB_BRIDGE_KEY \
+  --set authBridge.secretKey=AUTH_BRIDGE_KEY \
   > "$bridge_rendered"
 
 # Bridge key must be a Secret reference.
-grep -q 'name: AUTH_BRIDGE_KEY' "$bridge_rendered"
+grep -q 'name: AUTH_BRIDGE_SECRET' "$bridge_rendered"
 if ! awk '
-  /- name: AUTH_BRIDGE_KEY/ { in_bridge=1; next }
+  /- name: AUTH_BRIDGE_SECRET/ { in_bridge=1; next }
   in_bridge && /valueFrom:/ { has_reference=1 }
   in_bridge && /^[[:space:]]+- name:/ { in_bridge=0 }
   END { exit has_reference ? 0 : 1 }
 ' "$bridge_rendered"; then
-  echo 'AUTH_BRIDGE_KEY must be supplied by a Secret reference' >&2
+  echo 'AUTH_BRIDGE_SECRET must be supplied by a Secret reference' >&2
   exit 1
 fi
 
@@ -222,8 +222,8 @@ helm template commoncal "$chart_dir" --set-string mail.host=smtp.example.test --
   --set image.tag=test-image-tag \
   --set config.appOrigin=https://cal.example.test \
   > "$default_rendered"
-if grep -q 'name: AUTH_BRIDGE_KEY' "$default_rendered"; then
-  echo 'AUTH_BRIDGE_KEY must not be rendered when authBridge.enabled is false' >&2
+if grep -q 'name: AUTH_BRIDGE_SECRET' "$default_rendered"; then
+  echo 'AUTH_BRIDGE_SECRET must not be rendered when authBridge.enabled is false' >&2
   exit 1
 fi
 

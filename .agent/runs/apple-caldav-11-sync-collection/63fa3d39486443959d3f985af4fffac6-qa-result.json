@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "summary": "All 6 T11 sync-collection tests pass and the full backend test suite (300+ tests) passes with zero failures. Opaque tokens correctly return only later ordered changes, deletions are represented per RFC 6578, invalid tokens fail safely with 400, and pagination cannot skip changes.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource sync_collection",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "T11 implementation is complete and verified. The sync-collection REPORT handler in backend/src/caldav/http.rs:1245 uses HMAC-signed opaque tokens (encode/decode in auth.rs:509-535), pages the change log via repository.list_changes_since (repository.rs:275), and emits RFC 6578 deleted-resource responses (http.rs:1412)."
+  ]
+}

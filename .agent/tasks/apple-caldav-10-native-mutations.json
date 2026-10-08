@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-10-native-mutations",
+  "title": "Record native Happening mutations \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t10--record-native-happening-mutations",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-09-delete"
+  ],
+  "acceptance": [
+    "browser and MCP base mutations each record one DAV change",
+    "rolled-back mutations record no DAV change",
+    "DAV-originated mutations are not double-counted"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

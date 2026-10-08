@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.4 security-isolation harness correctly implements fail-closed token validation, grant enforcement, and concurrency isolation acceptance cases. All five acceptance criteria are satisfied. The verifier passes on both FAIL and PASS paths. No concrete defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify-security-isolation.js",
+    "node --check mcp-acceptance/security-isolation.js",
+    "node --check mcp-acceptance/lib.js",
+    "node --check mcp-acceptance/mock/lifecycle-server.js",
+    "node --check mcp-acceptance/mock/oauth-provider.js",
+    "node --check mcp-acceptance/verify-security-isolation.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The S9 concurrency isolation test only checks calendar ID overlap, not identity/session/grant state isolation. This is a test-strength consideration, not a correctness defect.",
+    "The S8 broadened grant test correctly asserts that unauthorized calendars (999/998) are not disclosed, which is the key security property. The mock returns authorized calendars (101/102), which is a reasonable interpretation of the acceptance criteria."
+  ]
+}

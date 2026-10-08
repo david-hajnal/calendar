@@ -7,6 +7,7 @@
 // - Calendar ID in grant's allowed_calendar_ids
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -14,10 +15,13 @@ use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, ReminderOutput, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReminderSetParams {
+    /// The calendar the event belongs to.
     pub calendar_id: i64,
+    /// The event to set a reminder on.
     pub event_id: i64,
+    /// Minutes before the event to fire the reminder.
     pub reminder_minutes: i64,
 }
 

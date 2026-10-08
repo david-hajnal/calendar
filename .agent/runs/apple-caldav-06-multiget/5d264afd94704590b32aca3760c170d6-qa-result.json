@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T06 calendar-multiget implementation verified: all 3 acceptance criteria met by passing tests (data+ETags for authorized hrefs, per-item 404 for missing/foreign hrefs without failing the 207 report, href count bounded at 1000). Full backend suite, fmt, and clippy all pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked caldav::http",
+    "cargo test --manifest-path backend/Cargo.toml --locked caldav::query",
+    "cargo test --manifest-path backend/Cargo.toml --locked --test caldav_event_resource",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Multiget only exposes timed non-recurring events; all-day (T13) and recurring (T14) events return per-item 404 by design.",
+    "href_within_collection enforces same-collection scoping; cross-user calendar access is blocked at the dav_calendar handler before multiget runs."
+  ]
+}

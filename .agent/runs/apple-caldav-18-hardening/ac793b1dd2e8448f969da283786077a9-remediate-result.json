@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "Wired all 5 unused CaldavMetrics counters (record_malformed_request, record_oversized_body, record_not_found, record_precondition_failed, record_internal_error) into the DAV HTTP error response path by adding a &CaldavMetrics parameter to each error helper function and recording the appropriate metric before returning the response.",
+  "files_changed": [
+    "backend/src/caldav/http.rs"
+  ],
+  "verification_commands": [
+    "cd backend && cargo check",
+    "cd backend && cargo test --lib",
+    "cd backend && cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Added new dav_oversized_body() helper that records record_oversized_body() for the 3 'request body too large' call sites, distinguishing them from generic malformed requests"
+  ]
+}

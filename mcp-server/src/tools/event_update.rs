@@ -8,6 +8,7 @@
 // - Event version for optimistic concurrency
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -15,21 +16,30 @@ use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSummary, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventUpdateParams {
+    /// The calendar the event belongs to.
     pub calendar_id: i64,
+    /// The event ID to update.
     pub event_id: i64,
+    /// New title (omit to keep current).
     #[serde(default)]
     pub title: Option<String>,
+    /// New description (omit to keep current; null to clear).
     #[serde(default)]
     pub description: Option<Option<String>>,
+    /// New location (omit to keep current; null to clear).
     #[serde(default)]
     pub location: Option<Option<String>>,
+    /// New start time (omit to keep current; null to clear).
     #[serde(default)]
     pub start_utc: Option<Option<String>>,
+    /// New end time (omit to keep current; null to clear).
     #[serde(default)]
     pub end_utc: Option<Option<String>>,
+    /// The expected current version (optimistic concurrency).
     pub version: i64,
+    /// Optional idempotency key for safe retries.
     #[serde(default)]
     pub operation_id: Option<String>,
 }

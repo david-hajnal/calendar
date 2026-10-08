@@ -1,0 +1,20 @@
+{
+  "id": "mcp-rmcp-gateway",
+  "title": "Phase 2: replace the custom MCP gateway with rmcp. Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 2,
+  "depends_on": [
+    "mcp-acceptance-security-isolation"
+  ],
+  "acceptance": [
+    "rmcp Streamable HTTP service mounted at /mcp implementing ServerHandler",
+    "bearer-token auth around the complete MCP service so the first unauthenticated initialize gets a standards-compliant 401 challenge",
+    "resource_metadata derived from MCP_PUBLIC_RESOURCE_URL; all loopback constants removed",
+    "all nine tools ported to typed SDK handlers with descriptions, complete input schemas, MCP content blocks, request ids, and protocol error mapping",
+    "existing domain behavior preserved: live grant lookup, authorization, audit, rate limits, idempotency, confirmation semantics",
+    "validated identity stored in request/session-safe context with a concurrency isolation test",
+    "calendar_list permission mapping corrected (currently checks availability_find)",
+    "custom dispatcher removed or retired after parity tests pass"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

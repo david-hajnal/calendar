@@ -1,0 +1,29 @@
+{
+  "status": "completed",
+  "summary": "Implemented bounded REPORT calendar-multiget within one authorized collection: parses hrefs, bulk-resolves resources, and returns per-resource DAV statuses (200 with calendar-data/ETag, per-item 404 for missing or foreign hrefs).",
+  "files_changed": [
+    "backend/src/caldav/query.rs",
+    "backend/src/caldav/http.rs",
+    "backend/tests/dst_check.rs"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test --lib caldav",
+    "cargo test --lib",
+    "cargo test --test caldav_event_resource",
+    "cargo clippy --lib --tests",
+    "cargo fmt --check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Recurring/all-day events return per-item 404 in multiget (consistent with T04/T05 exposure); T13/T14 will need to extend ical_and_etag and the recurring check.",
+    "Per-href recurring check issues one extra EXISTS query; bounded by MAX_MULTIGET_HREFS=1000."
+  ],
+  "important_context": [
+    "REPORT handler now dispatches via query::parse_calendar_report (shared with calendar-query).",
+    "Exposure rules unchanged: only timed, non-recurring events hydrate; hrefs must be within the authorized collection (href_within_collection rejects foreign/traversal paths before any cross-calendar lookup).",
+    "Bounds: MAX_MULTIGET_HREFS=1000, body MAX_BODY_BYTES=64KB.",
+    "dst_check.rs was whitespace-reformatted only by the project cargo fmt lint gate (no behavior change)."
+  ]
+}

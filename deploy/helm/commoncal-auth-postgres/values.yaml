@@ -1,0 +1,22 @@
+image:
+  repository: ghcr.io/david-hajnal/calendar-auth-postgres
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+secrets:
+  database: commoncal-auth-postgres-secrets
+  tls: commoncal-auth-postgres-tls
+  backupRecipient: commoncal-auth-postgres-backup
+storage:
+  size: 10Gi
+  backupSize: 10Gi
+  storageClassName: ""
+backup:
+  schedule: "15 2 * * *"
+  retentionDays: 14
+networkPolicy:
+  authPodLabels:
+    app.kubernetes.io/name: commoncal-auth
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: "1", memory: 1Gi}

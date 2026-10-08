@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "summary": "Protocol-level tests all pass (82 backend + 114 frontend), but two acceptance criteria are unmet: no sanitized real-client trace regression fixtures exist, and deployment/user docs do not document the Apple Calendar feature.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "npm test --prefix frontend"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "No sanitized real-client trace regression fixtures exist in the repository. `glob **/*fixture*` and `glob **/*trace*` return no files. Acceptance criterion 'sanitized real-client traces become regression fixtures' is not met.",
+    "Deployment docs (docs/DEPLOYMENT.md) contain no mention of CalDAV or Apple Calendar. No user-facing setup docs exist. Task manifest has docs_required=true. Acceptance criterion 'deployment/user docs match behavior' is not met."
+  ],
+  "follow_up": [
+    "Real-device testing on current macOS and iOS clients cannot be verified in this environment; protocol-level tests pass but the acceptance criterion explicitly requires real client validation."
+  ],
+  "important_context": [
+    "All 82 CalDAV event-resource tests and 114 frontend tests pass. The CalDAV implementation covers connect, sync-collection, CRUD, all-day, recurrence, permissions, and client-property preservation. The gap is in T19-specific deliverables: real-client trace fixtures and user/deployment documentation."
+  ]
+}

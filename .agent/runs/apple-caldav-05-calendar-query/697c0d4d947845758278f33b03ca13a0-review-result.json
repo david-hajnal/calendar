@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "T05 bounded calendar-query meets all three acceptance criteria: authorization via ACL resolve_calendar, deterministic 400 failures for malformed/unsupported queries, and enforced body/result/range limits. 48 caldav tests plus full 128-test lib suite pass; clippy clean. No actionable defect found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --lib caldav::query",
+    "cargo test --manifest-path backend/Cargo.toml --lib caldav::http",
+    "cargo test --manifest-path backend/Cargo.toml --test caldav_event_resource",
+    "cargo test --manifest-path backend/Cargo.toml --lib",
+    "cargo clippy --manifest-path backend/Cargo.toml --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Role/privilege granularity (free-busy-only viewers) is not enforced on REPORT; deferred to T15 per plan.",
+    "ensure_resource creates DAV mappings as a side effect of REPORT reads; consistent with PROPFIND first-exposure but worth noting for T18 hardening."
+  ],
+  "important_context": [
+    "calendar-query only exposes timed, non-recurring events (event_kind=timed, recurrence_rule IS NULL); all-day (T13) and recurrence (T14) are out of scope.",
+    "Limits: MAX_BODY_BYTES=64KB, MAX_RESULTS=1000, MAX_RANGE_SECONDS=366d.",
+    "Authorization is ACL-presence based (any role), not role-specific; T15 owns the access matrix."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.2 discovery harness correctly asserts A1-A4; current production behavior captured as focused failing assertions (A1/A2/A4 red, A3 green) without modifying production behavior.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify-discovery.js --port 4001",
+    "node mcp-acceptance/verify.js --port 4010"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Harness is a black-box HTTP client; it does not modify production behavior.",
+    "Current production state: initialize returns 400/-32601 (no 401 challenge), no WWW-Authenticate header, protected-resource metadata is valid JSON naming cal.hajnal.space, authorization-server metadata returns SPA HTML.",
+    "The harness exits 1 against current production (intentional baseline) and 0 against compliant behavior.",
+    "Ran discovery.js against https://mcal.hajnal.space/mcp: A1/A2/A4 fail as expected, A3 passes. This is the intentional Phase 0.2 baseline."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-06-multiget",
+  "title": "Calendar multiget \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t06--calendar-multiget",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-05-calendar-query"
+  ],
+  "acceptance": [
+    "authorized hrefs return calendar data and ETags",
+    "missing hrefs return per-item 404 without failing the report",
+    "foreign paths leak no existence and href count is bounded"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

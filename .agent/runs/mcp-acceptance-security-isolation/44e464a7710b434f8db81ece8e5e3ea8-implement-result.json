@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.4 security-isolation harness (security-isolation.js + verify-security-isolation.js) already implemented in a prior session; all acceptance criteria verified: S1-S5 fail closed, S6-S8 deny without calendar leak, S9 concurrent isolation holds, fixtures are production-component (no lab-binary dependency), and the full Phase 0 suite is red against current production with a phase map naming the fix phase per case.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify-security-isolation.js",
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/security-isolation.js --timeout-ms 8000"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Task manifest .agent/tasks/mcp-acceptance-security-isolation.json still has status 'ready' \u2014 orchestrator should mark it 'done'."
+  ],
+  "important_context": [
+    "Phase 0.4 harness was completed in a prior session (4 run events in .agent/runs/mcp-acceptance-security-isolation/); no changes were made in this run.",
+    "All four Phase 0 verifiers pass: FAIL path exits 1 against current-production behavior, PASS path exits 0 against compliant behavior.",
+    "Harness is red against live production (exit 1, S0: OAuth flow did not complete) and reports S1-S5\u2192Phase 3, S6-S8\u2192Phase 4, S9\u2192Phase 2 as the fix phases."
+  ]
+}

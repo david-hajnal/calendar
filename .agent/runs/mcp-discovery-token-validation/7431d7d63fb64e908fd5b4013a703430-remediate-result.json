@@ -1,0 +1,28 @@
+{
+  "status": "completed",
+  "summary": "Added phase3_real_auth_server_token_validates integration test that validates a token issued by the repository's real authorization-server implementation (slice1-lab/auth-server) via a helper that drives the full OAuth flow (DCR + auth code + S256 PKCE + CommonCal consent + token exchange), then validates it with the mcp-server's TokenValidator. Made the auth server's callback-server binding non-fatal so it can start when port 8321 is occupied.",
+  "files_changed": [
+    "mcp-server/tests/integration.rs",
+    "mcp-server/tests/real_auth_server_token.mjs",
+    "mcp-server/Cargo.toml",
+    "mcp-server/Cargo.lock",
+    "slice1-lab/auth-server/src/server.mjs"
+  ],
+  "verification_commands": [
+    "cargo test --test integration phase3_real_auth_server_token_validates",
+    "cargo test --test integration",
+    "cargo test --lib",
+    "cargo clippy --tests"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The new test requires PostgreSQL (port 5432) and Node.js; it skips gracefully (exit code 100) when the environment is unavailable.",
+    "The slice1-lab/auth-server callback-server binding was made non-fatal (EADDRINUSE tolerated) to allow the issuer to start when port 8321 is held by another local tool; token issuance is unaffected."
+  ],
+  "important_context": [
+    "The real auth server (slice1-lab/auth-server/src/server.mjs) requires PostgreSQL at postgres://oidc:oidc-lab-only@127.0.0.1:5432/oidc and Node.js >=22.",
+    "The test helper (mcp-server/tests/real_auth_server_token.mjs) uses inherited stdio because Node exits a child when its stdout/stderr pipes close; the token is delivered via a file (REAL_AUTH_TOKEN_FILE) rather than stdout.",
+    "The Rust test kills the helper's whole process group (libc::setpgid + kill(-pid, SIGKILL)) to avoid orphaning the auth-server child."
+  ]
+}

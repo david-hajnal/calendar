@@ -1,0 +1,32 @@
+{
+  "status": "completed",
+  "summary": "Promoted consent and grant integration into core: added bridge client (AUTH_BRIDGE_URL/timeout/secret), session-protected consent endpoints with grant-first upsert, replaced user_id=0/empty-list placeholders with session-bound ownership-checked handlers, and made get_mcp_grants return only the active grant for immediate revocation.",
+  "files_changed": [
+    "backend/Cargo.toml",
+    "backend/src/config.rs",
+    "backend/src/lib.rs",
+    "backend/src/main.rs",
+    "backend/src/mcp_bridge.rs",
+    "backend/src/mcp_consent.rs",
+    "backend/src/mcp_grant_management.rs",
+    "backend/src/mcp_internal.rs",
+    "backend/tests/superadmin_user_management.rs"
+  ],
+  "verification_commands": [
+    "cargo check --manifest-path backend/Cargo.toml",
+    "cargo test --manifest-path backend/Cargo.toml",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets",
+    "cargo fmt --manifest-path backend/Cargo.toml"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The consent flow is only mounted when AUTH_BRIDGE_URL and AUTH_BRIDGE_SECRET are configured; the grant management API remains the authoritative surface when the bridge is disabled.",
+    "The login-continue endpoint is a stub that redirects to the continue URL; a real login form integration would be needed for the full OAuth flow."
+  ],
+  "important_context": [
+    "The get_mcp_grants internal API now returns only the active grant (revoked_at IS NULL and not expired), which the mcp-server relies on to resolve at most one grant per (user, client) pair.",
+    "The consent flow uses grant-first ordering: the grant is upserted before the bridge decide call, so a bridge failure after grant write leaves a valid grant (safe, user can revoke).",
+    "The upsert_grant function uses replace-not-union semantics: re-approving the same (user, client) yields exactly one active grant, preventing accidental broadening."
+  ]
+}

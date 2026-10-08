@@ -8,6 +8,7 @@
 // - Max 100 events returned
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -21,11 +22,15 @@ use crate::tools::AuthorizedToolContext;
 /// Maximum number of events to return.
 const MAX_EVENTS: usize = 100;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventSearchParams {
+    /// The calendar to search in.
     pub calendar_id: i64,
+    /// Start of the time range (ISO 8601 or Unix epoch seconds).
     pub from: String,
+    /// End of the time range (ISO 8601 or Unix epoch seconds).
     pub to: String,
+    /// Optional text query to filter events by title/description.
     pub query: Option<String>,
 }
 

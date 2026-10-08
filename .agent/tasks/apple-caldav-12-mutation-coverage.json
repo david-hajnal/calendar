@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-12-mutation-coverage",
+  "title": "Moves and complete mutation coverage \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t12--moves-and-complete-mutation-coverage",
+  "priority": 2,
+  "depends_on": [
+    "apple-caldav-11-sync-collection"
+  ],
+  "acceptance": [
+    "calendar moves atomically emit source removal and target addition",
+    "every supported mutation path has regression coverage",
+    "unsupported imported writes fail and no duplicate changes occur"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

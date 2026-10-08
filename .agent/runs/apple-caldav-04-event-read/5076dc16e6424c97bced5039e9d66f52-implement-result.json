@@ -1,0 +1,25 @@
+{
+  "status": "completed",
+  "summary": "T04 first timed event resource was already implemented in the worktree (migration 0024, repository, ical serializer, GET/HEAD routes, tests); I verified all acceptance criteria pass and fixed one clippy defect (collapsible if) in the iCalendar serializer.",
+  "files_changed": [
+    "backend/src/caldav/ical.rs"
+  ],
+  "verification_commands": [
+    "cargo check --all-targets",
+    "cargo test --lib caldav",
+    "cargo test --test caldav_event_resource",
+    "cargo test --locked",
+    "cargo fmt --check",
+    "cargo clippy --all-targets --locked -- -D warnings"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Unrelated worktree changes (main.rs, mcp_internal.rs MCP-internal-API-key work, scratch_*.rs, docs/MCP-*.md) were preserved and not touched; they are not part of T04."
+  ],
+  "important_context": [
+    "The full T04 change set was pre-staged uncommitted in the worktree from a prior session: backend/src/caldav/{ical,repository,http,types,auth,mod}.rs, backend/migrations/0024_caldav_event_resources.sql, backend/migrations/rollbacks/0024_rollback.sql, backend/tests/caldav_event_resource.rs. I verified these end-to-end; my only code edit was the clippy fix in ical.rs (timed_lines now uses a let-chain condition, edition 2024).",
+    "ETag is a strong tag = quoted SHA-256 of the canonical serialized VCALENDAR; it is recomputed per request from event fields, so it is stable while content is unchanged and rotates on any canonical change.",
+    "Resource name and UID are random UUIDs persisted in caldav_event_resources on first exposure (ensure_resource), giving stable URLs; recurring and all-day events are intentionally excluded in this slice (return 404 / not listed)."
+  ]
+}

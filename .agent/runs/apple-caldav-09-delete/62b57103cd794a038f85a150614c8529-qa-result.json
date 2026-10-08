@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "summary": "All 6 T09 delete tests pass; conditional DELETE routes through EventService, stale deletes return 412 without mutation, and durable tombstones with revision timestamps survive event deletion.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource -- delete",
+    "cargo test --test caldav_event_resource"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Tombstone is implemented as event_id=NULL + deleted_at stamp on caldav_event_resources row; updated_at serves as the revision marker",
+    "Repeated delete returns 404 (resource gone) not 412, which is deterministic per acceptance criteria"
+  ]
+}

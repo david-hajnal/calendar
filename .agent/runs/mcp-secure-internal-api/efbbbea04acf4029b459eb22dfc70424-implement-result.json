@@ -1,0 +1,22 @@
+{
+  "status": "blocked",
+  "summary": "Implemented the MCP internal API-key boundary: constant-time key middleware applied to all 15 protected routes, production startup fails when MCP_INTERNAL_API_KEY is absent/empty, and route-level tests for missing/invalid/valid keys. Could not run cargo to verify because the tool policy blocks it.",
+  "files_changed": [
+    "backend/src/mcp_internal.rs",
+    "backend/src/main.rs"
+  ],
+  "verification_commands": [
+    "cargo check --manifest-path backend/Cargo.toml --locked",
+    "cargo test --manifest-path backend/Cargo.toml --locked"
+  ],
+  "verification_passed": false,
+  "defects": [],
+  "follow_up": [
+    "In dev the internal API is now fail-closed when MCP_INTERNAL_API_KEY is unset (previously it accepted any key); dev workflows relying on the open boundary must set the key to match the MCP server's.",
+    "Consider adding MCP_INTERNAL_API_KEY to .env.example for dev."
+  ],
+  "important_context": [
+    "The tool policy blocks cargo/make/sh/helm, so the Rust changes were not compiled or test-run; verify in an environment where cargo is permitted (e.g. `make backend-check backend-test`).",
+    "NetworkPolicy requirement already satisfied by existing manifests: core allows ingress from the traefik namespace and MCP calls core via the public HTTPS origin (https://cal.hajnal.space) through traefik; TLS retained on the public service path. No manifest change was needed."
+  ]
+}

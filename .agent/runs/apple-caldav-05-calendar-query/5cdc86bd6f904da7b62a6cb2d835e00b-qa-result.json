@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T05 bounded calendar query verified: all 3 acceptance criteria met. 13 parser tests, 8 HTTP tests, 56 caldav unit tests, and 9 integration tests all pass. Code compiles cleanly.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test caldav::query",
+    "cargo test caldav::http::tests::report_calendar_query",
+    "cargo test caldav",
+    "cargo test --test caldav_event_resource",
+    "cargo check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "MAX_RESULTS (1000) is enforced via SQL LIMIT in list_events_in_range but has no dedicated test creating >1000 events",
+    "Parser takes first time-range element when multiple are present (deterministic via .or())",
+    "prop element is accepted but not validated \u2014 implementation always returns href, ETag, calendar-data"
+  ]
+}

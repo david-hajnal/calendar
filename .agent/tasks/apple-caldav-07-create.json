@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-07-create",
+  "title": "Create event from Apple \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t07--create-from-apple",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-06-multiget"
+  ],
+  "acceptance": [
+    "conditional PUT creates one supported event through EventService",
+    "created event is immediately readable in Happening and DAV",
+    "duplicates and partial writes fail safely while audit behavior remains"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

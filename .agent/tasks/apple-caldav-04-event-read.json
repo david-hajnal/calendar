@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-04-event-read",
+  "title": "First timed event resource \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t04--first-timed-event-resource",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-03-collections"
+  ],
+  "acceptance": [
+    "resource URL and UID are stable",
+    "GET returns valid canonical VCALENDAR and HEAD matches headers",
+    "ETag changes only with canonical resource content"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

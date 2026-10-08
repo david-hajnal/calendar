@@ -1,0 +1,31 @@
+{
+  "status": "completed",
+  "summary": "Applied one authorization projection across DAV discovery/reads/reports/writes: free-busy viewers now receive busy placeholders (no private fields) on GET/query/multiget, and imported external-feed events reject PUT/DELETE with 404 while remaining readable.",
+  "files_changed": [
+    "backend/src/caldav/ical.rs",
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs",
+    "backend/tests/scratch_ics.rs",
+    "backend/tests/dst_check.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test --test external_feed",
+    "cargo test --test authorization",
+    "cargo test --test event_api",
+    "cargo clippy --all-targets",
+    "cargo fmt"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "event_is_imported uses unwrap_or(false) on DB error; the domain ensure_not_imported provides defense-in-depth, but the DAV pre-check could propagate the error for stricter fail-closed behavior",
+    "manager role is not explicitly tested (same permission class as editor, covered by the same code paths)"
+  ],
+  "important_context": [
+    "Free-busy representation omits SUMMARY/DESCRIPTION/LOCATION/STATUS, exposing only DTSTART/DTEND, matching the domain EventAccess::FreeBusy projection",
+    "Imported = event has a row in external_event_mapping; DAV PUT/DELETE on them returns 404 (empty body) consistent with the DAV denial convention of hiding existence",
+    "Denial code for role-based and imported write rejections is 404 Not Found with empty body, matching existing DAV denial tests"
+  ]
+}

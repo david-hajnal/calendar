@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "Fixed multiple-EXDATE PUT conflict by tracking expected_version locally across loop iterations, and added ORDER BY recurrence_id, recurrence_date to fetch_recurring_exceptions for deterministic ETags.",
+  "files_changed": [
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource put_recurring_multiple_exdates_in_one_put",
+    "cargo test --test caldav_event_resource",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "EXDATE serialization joins all values on one line with commas (EXDATE:val1,val2), not separate lines"
+  ]
+}

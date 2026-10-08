@@ -1,0 +1,26 @@
+{
+  "status": "failed",
+  "summary": "Review found 3 actionable defects: custom dispatcher not retired, integration tests exercise the old code path instead of the new rmcp service, and the calendar_list permission mapping correction is a no-op that does not change behavior.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo check --manifest-path mcp-server/Cargo.toml",
+    "cargo test --manifest-path mcp-server/Cargo.toml",
+    "cargo clippy --manifest-path mcp-server/Cargo.toml"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "mcp-server/src/gateway.rs:56, mcp-server/src/tools/mod.rs:40, mcp-server/src/tools/mod.rs:104 \u2014 Custom dispatcher not retired. Acceptance criteria requires \"custom dispatcher removed or retired after parity tests pass.\" Gateway::handle_authorized_tool_call, tools::dispatch, and tools::list_tools remain as dead code \u2014 not removed, not marked deprecated. Impact: dead code that could be accidentally re-wired; violates explicit acceptance criterion.",
+    "mcp-server/tests/integration.rs:217,272,342 \u2014 Integration tests exercise the retired code path, not the new rmcp service. The audit/authorization integration tests call Gateway::handle_authorized_tool_call (old dispatcher). The new mcp_service.rs path (identity task-local, resolve_grant, run_domain_tool, to_call_tool_result) has no integration coverage. Impact: the \"parity tests\" do not verify the production code path; the new rmcp service is untested at the integration level.",
+    "mcp-server/src/mcp_grant.rs:90, mcp-server/src/tools/calendar_list.rs:45 \u2014 calendar_list permission mapping correction is a no-op. The fix adds \"calendar_list\" => grant.allow_availability, which is the identical field availability_find already maps to (mcp_grant.rs:86). The comment claims it is \"distinct from the availability_find tool capability\" but both arms resolve to the same boolean. Impact: the stated bug (calendar_list checking the wrong capability) is not actually fixed \u2014 behavior is unchanged from before the fix."
+  ],
+  "follow_up": [
+    "The new rmcp service path (mcp_service.rs) needs integration tests that exercise the full request lifecycle: auth middleware -> identity task-local -> resolve_grant -> tool handler -> audit -> result conversion.",
+    "Consider whether calendar_list should map to a distinct grant field (e.g., a dedicated calendar-metadata-read capability) to make the permission mapping meaningful."
+  ],
+  "important_context": [
+    "The rmcp Streamable HTTP service is mounted at /mcp with bearer-token auth middleware wrapping the complete service (main.rs:74-80).",
+    "Validated identity is stored in a tokio task-local (identity.rs:44-47) for concurrency isolation; a concurrency test exists (identity.rs:108-155).",
+    "resource_metadata is derived from MCP_PUBLIC_RESOURCE_URL via AuthState::resource_metadata_url (auth.rs:36-45); all loopback constants from the old gateway have been removed.",
+    "The old gateway's 401 builders that hard-coded http://127.0.0.1:3001 have been removed (gateway.rs diff)."
+  ]
+}

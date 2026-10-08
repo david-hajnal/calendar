@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "All T12 acceptance criteria verified: moves atomically emit source-deleted/target-created in one transaction, every DAV-relevant mutation path has regression coverage, imported writes are rejected, and no duplicate changes occur. Full backend test suite passes with zero failures.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Recurring/occurrence mutation paths (create_recurring, update_occurrence, delete_occurrence, update_all_day_occurrence, delete_all_day_occurrence) intentionally do not record DAV changes because the DAV layer only exposes non-recurring timed events (list_exposed_event_ids filters recurrence_rule IS NULL). Recurrence DAV sync is T14 scope."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "Implemented T07 Create from Apple: conditional PUT with If-None-Match creates one timed non-recurring event through EventService, persists DAV resource mapping with client-supplied UID, returns 201 with Location/ETag. Duplicate create fails 412, UID conflict fails 409, missing precondition fails 428, unsupported events fail 400, cross-user/viewer denied 404. Partial writes roll back via compensating delete.",
+  "files_changed": [
+    "backend/src/caldav/types.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo clippy",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Transaction boundary uses compensating delete (saga) rather than a single atomic transaction because EventService.create() commits its own transaction. A server crash between event creation and resource mapping could leave an orphaned event. T08/T09 should consider consolidating into a single transaction boundary."
+  ],
+  "important_context": [
+    "CaldavAuthError gained ResourceExists and UidConflict variants. map_caldav_error maps them to ApiError::internal() as a fallback since they only occur in the DAV PUT handler which constructs Response directly.",
+    "create_resource in CaldavRepository checks resource_name and UID uniqueness before insert. The DAV PUT handler calls EventService.create() first, then create_resource, then compensates with EventService.delete() on failure.",
+    "The PUT handler requires If-None-Match: *, validates exactly one VEVENT, rejects all-day/recurring events, and checks CreateEvent authorization via CalendarRole."
+  ]
+}

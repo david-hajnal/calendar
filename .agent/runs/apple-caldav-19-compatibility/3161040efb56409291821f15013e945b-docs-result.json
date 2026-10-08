@@ -1,0 +1,27 @@
+{
+  "status": "completed",
+  "summary": "Updated 00-status.md (Gate 4 approved, T03-T18 complete, T19 in progress), 04-task-slices.md (header and summary reflect 18 complete), README.md (added Apple Calendar feature, API endpoints), and .agent/PLAN.md (status from awaiting-approval to approved).",
+  "files_changed": [
+    "docs/plans/apple-calendar-support/00-status.md",
+    "docs/plans/apple-calendar-support/04-task-slices.md",
+    "README.md",
+    ".agent/PLAN.md"
+  ],
+  "verification_commands": [
+    "read docs/plans/apple-calendar-support/00-status.md",
+    "read docs/plans/apple-calendar-support/04-task-slices.md",
+    "read README.md",
+    "read .agent/PLAN.md",
+    "grep calendar-connections backend/src/caldav/http.rs",
+    "grep well-known/caldav backend/src/caldav/http.rs",
+    "grep webcal frontend/src"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "DEPLOYMENT.md Apple Calendar section was already accurate and required no changes",
+    "No fake-CalDAV UI remains in frontend; legacy scaffold already removed",
+    "05-notes.md implementation log only has entries for slices 1, 2, and 14; other slices were not logged there"
+  ]
+}

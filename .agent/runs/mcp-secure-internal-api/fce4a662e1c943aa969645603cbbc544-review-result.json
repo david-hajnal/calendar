@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "Phase 1 internal-API boundary is correctly secured: middleware on all 15 routes, fail-closed startup check, constant-time compare, and passing route-level tests. No actionable defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo check",
+    "cargo test --lib mcp_internal::tests",
+    "cargo clippy --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "MCP server calls core via public origin https://cal.hajnal.space (traefik), so core NetworkPolicy permitting traefik is the intended path; no direct pod-to-pod MCP->core rule exists or is required.",
+    "token_exchange handler (mcp_internal.rs:336) is still a placeholder that mints a random UUID without validating subject_token \u2014 pre-existing, out of Phase 1 scope but relevant to later phases."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "Verified all 5 acceptance criteria. The standalone black-box harness (mcp-acceptance/harness.js) targets a configurable production URL, reuses only the slice1-lab initialize fixture shape, deterministically records the initialize response, and correctly exits 1 against the current production component (initialize -> HTTP 400 / -32601) as the intentional Phase 0.1 baseline; verify.js confirms both the FAIL (exit 1) and PASS (exit 0) paths.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/harness.js --url https://mcal.hajnal.space/mcp --record-dir /tmp/mcp-acceptance-prod"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Minor: the deterministic record includes the per-request Cloudflare cf-ray header (not in the harness volatile-header strip list), so byte-identical records across repeated runs against the same live endpoint are not guaranteed; the serialization itself (sorted keys, stable JSON) is deterministic. Not a defect against the acceptance criteria."
+  ],
+  "important_context": [
+    "The harness is the regression gate and stays red (exit 1) until the production component implements a standards-compatible initialize handshake; Phase 2 (mcp-rmcp-gateway) must fix this.",
+    "Current production component (mcp-server/src/gateway.rs) only recognizes tools/list and tools/call; initialize returns HTTP 400 with JSON-RPC -32601 'Method not found'.",
+    "Harness default target URL is https://mcal.hajnal.space/mcp; override with MCP_URL or --url.",
+    "No production code was modified during verification; the mcp-acceptance/ directory is new/untracked."
+  ]
+}

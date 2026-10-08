@@ -4,7 +4,7 @@
 #   - Two Services: `public` (OIDC provider, exposed via Ingress) and
 #     `internal` (CommonCal bridge, NO Ingress — reachable only from CommonCal
 #     via NetworkPolicy).
-#   - All secrets (DATABASE_URL, LAB_BRIDGE_KEY, cookie keys, JWKS) are
+#   - All secrets (DATABASE_URL, AUTH_BRIDGE_KEY, cookie keys, JWKS) are
 #     injected at runtime from a pre-existing Kubernetes Secret. No secret
 #     value is ever rendered into a manifest.
 #   - The private bridge port is never exposed: no Ingress rule targets it, and
@@ -18,7 +18,7 @@ image:
 
 imagePullSecrets: []
 
-replicaCount: 2
+replicaCount: 1
 
 # Name overrides.
 nameOverride: ""
@@ -37,7 +37,7 @@ public:
 
 # --- Internal service (CommonCal bridge) -----------------------------------
 # NOT exposed via Ingress. Reachable only from the CommonCal namespace via
-# NetworkPolicy. The bridge key (LAB_BRIDGE_KEY) authenticates every call.
+# NetworkPolicy. The bridge key (AUTH_BRIDGE_KEY) authenticates every call.
 internal:
   port: 80
   targetPort: 4001
@@ -60,16 +60,16 @@ networkPolicy:
   ingressNamespace: traefik
   # Namespace of CommonCal allowed to reach the private bridge port.
   commoncalNamespace: commoncal
+  commoncalPodLabels:
+    app.kubernetes.io/name: commoncal
   # Managed PostgreSQL egress target.
   postgres:
-    # Hostname of the managed PostgreSQL instance (e.g. a CNAME or the
-    # managed service DNS name). Empty means "do not pin egress to a host"
-    # (rely on namespace + port).
-    host: ""
     port: 5432
-    # Namespace of the PostgreSQL service when it is cluster-internal. Empty
-    # for a fully external managed instance.
-    namespace: ""
+    namespace: commoncal
+    podLabels:
+      app.kubernetes.io/name: commoncal-auth-postgres
+    # External database installations may supply exact CIDRs instead.
+    cidrs: []
 
 # --- Migration job ----------------------------------------------------------
 # Runs the schema migrations once before the Deployment becomes ready. Uses
@@ -100,6 +100,10 @@ resources:
 
 # --- Security context -------------------------------------------------------
 securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
   runAsNonRoot: true
   runAsUser: 65534
   runAsGroup: 65534
@@ -122,13 +126,15 @@ secrets:
   # Key within the Secret holding the PostgreSQL DSN (with TLS params).
   databaseUrlKey: DATABASE_URL
   # Key within the Secret holding the CommonCal bridge key (>= 32 chars).
-  bridgeKeyKey: LAB_BRIDGE_KEY
+  bridgeKeyKey: AUTH_BRIDGE_KEY
   # Key within the Secret holding comma-separated cookie keys.
   cookieKeysKey: AUTH_COOKIE_KEYS
   # Key within the Secret holding the JWKS document (JSON).
   jwksKey: AUTH_JWKS
   # Key within the Secret holding the signing kid (must match a JWKS key).
   signingKidKey: AUTH_SIGNING_KID
+  databaseCaSecret: commoncal-auth-postgres-tls
+  databaseCaKey: ca.crt
 
 # --- Non-secret config ------------------------------------------------------
 config:
@@ -137,14 +143,17 @@ config:
   # MCP resource URL (audience for tokens).
   resourceUrl: https://mcp.example.com/mcp
   # CommonCal base URL (the bridge calls this for consent/interaction).
-  commoncalUrl: http://commoncal.commoncal.svc:3000
+  commoncalUrl: https://calendar.example.com
   # DCR rate limit (requests per window).
   dcrRateLimit: 10
+  dcrLoopbackHosts: "127.0.0.1,[::1]"
+  dcrCallbackPath: /mcp/oauth/callback
+  trustProxy: true
 
 # --- Observability ----------------------------------------------------------
 livenessProbe:
   httpGet:
-    path: /.well-known/openid-configuration
+    path: /health
     port: public
   initialDelaySeconds: 10
   periodSeconds: 30
@@ -152,7 +161,7 @@ livenessProbe:
   failureThreshold: 3
 readinessProbe:
   httpGet:
-    path: /.well-known/openid-configuration
+    path: /ready
     port: public
   initialDelaySeconds: 5
   periodSeconds: 10

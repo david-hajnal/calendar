@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T10 implementation correctly centralizes change recording at the domain-service transaction boundary. All acceptance criteria are met for in-scope mutations. MCP internal handlers bypassing EventService is a T12 concern, not a T10 defect.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "MCP internal handlers (create_event, update_event, commit_delete_intent) in mcp_internal.rs bypass EventService and do not record DAV changes \u2014 this is a T12 concern",
+    "DAV create compensation path (http.rs:683) records 2 changes (created + deleted) when create_resource fails \u2014 this is a T07 concern"
+  ],
+  "important_context": [
+    "T10 scope is 'Base event create/update/delete paths' through the domain service",
+    "T12 scope is 'Inventory all mutation entry points and route/instrument each through the recorder'",
+    "All 48 tests in caldav_event_resource.rs pass"
+  ]
+}

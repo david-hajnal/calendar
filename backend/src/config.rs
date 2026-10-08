@@ -4,11 +4,13 @@ use std::{
     fmt::{self, Display, Formatter},
     net::{AddrParseError, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:3000";
 const DEFAULT_DATABASE_PATH: &str = "commoncal.sqlite";
 const DEFAULT_APP_ORIGIN: &str = "http://127.0.0.1:3000";
+const DEFAULT_AUTH_BRIDGE_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Environment {
@@ -38,10 +40,22 @@ pub struct AppConfig {
     app_origin: String,
     caldav_public_origin: String,
     password_login_enabled: bool,
+    /// Private interaction bridge base URL (authorization server). Empty when
+    /// the consent/bridge flow is disabled.
+    auth_bridge_url: String,
+    /// Bearer secret for the private bridge. Empty when disabled.
+    auth_bridge_secret: String,
+    /// Per-request timeout for bridge calls.
+    auth_bridge_timeout: Duration,
 }
 
 impl fmt::Debug for AppConfig {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        let bridge_secret = if self.auth_bridge_secret.is_empty() {
+            "disabled".to_string()
+        } else {
+            "[REDACTED]".to_string()
+        };
         formatter
             .debug_struct("AppConfig")
             .field("environment", &self.environment)
@@ -55,6 +69,9 @@ impl fmt::Debug for AppConfig {
             .field("app_origin", &self.app_origin)
             .field("caldav_public_origin", &self.caldav_public_origin)
             .field("password_login_enabled", &self.password_login_enabled)
+            .field("auth_bridge_url", &self.auth_bridge_url)
+            .field("auth_bridge_secret", &bridge_secret)
+            .field("auth_bridge_timeout", &self.auth_bridge_timeout)
             .finish()
     }
 }
@@ -81,6 +98,18 @@ impl AppConfig {
             .ok()
             .map(|s| s == "1" || s == "true" || s == "TRUE")
             .unwrap_or(false);
+        let auth_bridge_url = env::var("AUTH_BRIDGE_URL")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+        let auth_bridge_secret = env::var("AUTH_BRIDGE_SECRET")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
+        let auth_bridge_timeout = env::var("AUTH_BRIDGE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_AUTH_BRIDGE_TIMEOUT_SECS);
 
         let config = Self::with_database_path_and_origin_and_access_log_level(
             environment,
@@ -91,7 +120,8 @@ impl AppConfig {
             access_log_level,
             _password_login_enabled,
         )?;
-        config.with_caldav_public_origin(caldav_public_origin)
+        let config = config.with_caldav_public_origin(caldav_public_origin)?;
+        config.with_auth_bridge(auth_bridge_url, auth_bridge_secret, auth_bridge_timeout)
     }
 
     pub fn new(
@@ -192,7 +222,35 @@ impl AppConfig {
             caldav_public_origin: app_origin.clone(),
             app_origin,
             password_login_enabled,
+            auth_bridge_url: String::new(),
+            auth_bridge_secret: String::new(),
+            auth_bridge_timeout: Duration::from_secs(DEFAULT_AUTH_BRIDGE_TIMEOUT_SECS),
         })
+    }
+
+    /// Configure the private interaction bridge (authorization server).
+    ///
+    /// When `url` or `secret` is empty the bridge is disabled and the consent
+    /// flow is unavailable. This is safe: the MCP internal boundary and grant
+    /// management remain fully functional without it.
+    pub fn with_auth_bridge(
+        mut self,
+        url: String,
+        secret: String,
+        timeout_secs: u64,
+    ) -> Result<Self, ConfigError> {
+        if !url.is_empty() && !url.starts_with("https://") && !url.starts_with("http://") {
+            return Err(ConfigError::new("AUTH_BRIDGE_URL must be an http(s) URL"));
+        }
+        if timeout_secs == 0 {
+            return Err(ConfigError::new(
+                "AUTH_BRIDGE_TIMEOUT_SECS must be positive",
+            ));
+        }
+        self.auth_bridge_url = url;
+        self.auth_bridge_secret = secret;
+        self.auth_bridge_timeout = Duration::from_secs(timeout_secs);
+        Ok(self)
     }
 
     pub fn with_caldav_public_origin(
@@ -237,6 +295,26 @@ impl AppConfig {
 
     pub fn password_login_enabled(&self) -> bool {
         self.password_login_enabled
+    }
+
+    /// Private bridge base URL (empty when the consent flow is disabled).
+    pub fn auth_bridge_url(&self) -> &str {
+        &self.auth_bridge_url
+    }
+
+    /// Private bridge bearer secret (empty when disabled).
+    pub fn auth_bridge_secret(&self) -> &str {
+        &self.auth_bridge_secret
+    }
+
+    /// Per-request timeout for bridge calls.
+    pub fn auth_bridge_timeout(&self) -> Duration {
+        self.auth_bridge_timeout
+    }
+
+    /// Whether the private bridge is configured (consent flow available).
+    pub fn auth_bridge_enabled(&self) -> bool {
+        !self.auth_bridge_url.is_empty() && !self.auth_bridge_secret.is_empty()
     }
 }
 

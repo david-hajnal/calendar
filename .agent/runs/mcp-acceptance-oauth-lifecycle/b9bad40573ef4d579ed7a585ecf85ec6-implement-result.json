@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.3 OAuth lifecycle harness (DCR, Authorization Code + S256 PKCE, token exchange, authenticated MCP lifecycle through calendar_list) verified against all six acceptance criteria; the verifier passes on both the FAIL (current-production) and PASS (compliant) paths.",
+  "files_changed": [
+    ".agent/tasks/mcp-acceptance-oauth-lifecycle.json"
+  ],
+  "verification_commands": [
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The Phase 0.3 harness files (oauth-lifecycle.js, lib.js, mock/lifecycle-server.js, mock/oauth-provider.js, verify-oauth-lifecycle.js) were already present in the working tree (untracked); I verified them and updated the task manifest status to 'completed'.",
+    "The Phase 0.4 (security-isolation) task depends on this task and is still 'ready'."
+  ]
+}

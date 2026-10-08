@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "T03 real calendar collections verified: all 18 caldav::http tests pass covering owner/editor/viewer/freebusy/revoked/archived/foreign/shared fixtures; active authorized calendars list with stable paths/names/colors, revoked/archived/foreign are hidden (404), and DAV privileges match Happening roles. Full backend suite (101 lib + all integration) and clippy also pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib caldav::http",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Worktree also contains unrelated changes to backend/src/main.rs and backend/src/mcp_internal.rs (MCP internal API-key auth from a separate MCP production-fix task); they compile and their tests pass but are not part of T03.",
+    "T03 handoff: collection IDs and privilege mapping are now frozen for T04/T15."
+  ]
+}

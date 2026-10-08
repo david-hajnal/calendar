@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "All 12 backend fixture tests and 8 frontend CalendarConnections tests pass. Sanitized traces cover connect/sync/CRUD/revoke. No legacy fake-CalDAV UI remains. Deployment docs match actual API routes.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test apple_calendar_fixtures",
+    "npx vitest run src/settings/CalendarConnections.test.tsx"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Fixtures live in backend/tests/fixtures/apple-calendar/ (5 ICS + 7 trace JSON)",
+    "Frontend CalendarConnections.tsx is the real connection lifecycle UI (T17)",
+    "docs/DEPLOYMENT.md section 'Connect an Apple Calendar client' is the user-facing doc"
+  ]
+}

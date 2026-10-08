@@ -400,8 +400,18 @@ where
         audit_generic_request_in_transaction(&mut transaction, now).await?;
         transaction.commit().await?;
 
-        let authentication_link =
-            AuthenticationLink::new(format!("{}?token={}", self.login_url, token.expose()));
+        let mut link = url::Url::parse(&self.login_url).map_err(|e| {
+            RequestLoginLinkError::Database(sqlx::Error::Configuration(Box::new(e)))
+        })?;
+        link.query_pairs_mut().append_pair("token", token.expose());
+        if let Some(redirect) = command
+            .redirect
+            .as_deref()
+            .and_then(crate::mcp_consent::validate_continuation)
+        {
+            link.query_pairs_mut().append_pair("redirect", &redirect);
+        }
+        let authentication_link = AuthenticationLink::new(link.to_string());
         if self
             .email_sender
             .send_login_link(LoginLinkEmail::new(
@@ -671,6 +681,7 @@ where
 pub struct RequestLoginLink {
     pub email: String,
     pub client_ip: String,
+    pub redirect: Option<String>,
 }
 
 pub struct ConsumeLoginLink {

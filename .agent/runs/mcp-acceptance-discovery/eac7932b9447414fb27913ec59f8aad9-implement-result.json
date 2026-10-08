@@ -1,0 +1,35 @@
+{
+  "status": "completed",
+  "summary": "Added Phase 0.2 discovery harness (mcp-acceptance/discovery.js) asserting the public 401 challenge and OAuth discovery contract (A1-A4), extended the two-host mock, and added verify-discovery.js; against current production it exits 1 with focused A1/A2/A4 failures and passing A3, capturing the baseline without modifying production code.",
+  "files_changed": [
+    "mcp-acceptance/discovery.js",
+    "mcp-acceptance/verify-discovery.js",
+    "mcp-acceptance/mock/server.js",
+    "mcp-acceptance/README.md"
+  ],
+  "verification_commands": [
+    "node --check mcp-acceptance/discovery.js && node --check mcp-acceptance/mock/server.js && node --check mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-discovery.js --port 4123",
+    "node mcp-acceptance/discovery.js",
+    "node mcp-acceptance/verify.js --port 4125",
+    "node mcp-acceptance/harness.js",
+    "node mcp-acceptance/verify-discovery.js --port 4131"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "mcp-server/src/gateway.rs:456-541 hard-codes lab loopback URL http://127.0.0.1:3001 in both 401 WWW-Authenticate builders instead of the configured public resource URL",
+    "mcp-server/src/gateway.rs:158-184 dispatches initialize to 400/-32601 protocol-dispatch error instead of a 401 OAuth challenge",
+    "issuer host cal.hajnal.space serves CommonCal SPA HTML at /.well-known/openid-configuration and /.well-known/oauth-authorization-server instead of authorization-server metadata",
+    "mcp-server/src/config.rs:327-365 OauthProtectedResourceMetadata carries a self-referential resource_metadata field (the document's own URL inside the document)"
+  ],
+  "follow_up": [
+    "stray node process holds port 3999 on this machine; verify-discovery.js defaults to 3998/3999 so pass --port to avoid the collision",
+    "Phase 0.3/0.4 harnesses can reuse the two-host mock topology (MOCK_PORT + MOCK_ISSUER_PORT) and the mode-tracking pattern"
+  ],
+  "important_context": [
+    "Phase 0.2 harness is mcp-acceptance/discovery.js; exit 1 against current production is the intentional baseline (A1/A2/A4 red, A3 green) and is the regression gate for later phases",
+    "deterministic production record written to $MCP_RECORD_DIR/mcp-acceptance-discovery.json with per-assertion pass/violation detail",
+    "expected public resource_metadata URL is derived as origin(MCP_URL) + /.well-known/oauth-protected-resource, mirroring mcp-server/src/config.rs logic",
+    "mock server now listens on two ports: MOCK_PORT (MCP host) and MOCK_ISSUER_PORT (default MOCK_PORT+1, issuer host)"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "status": "failed",
+  "summary": "Found 1 concrete defect: multiple EXDATEs in one PUT fail with 500 due to version conflict. Secondary concern: ETag determinism with multiple exceptions (no ORDER BY).",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo clippy --all-targets"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/caldav/http.rs:1111-1139: Multiple EXDATEs in one PUT fail with 500. The delete_occurrence is called in a loop with event.version + 1, but the version is incremented after each call. So the second call fails with a conflict error. The handler returns dav_server_error() (500). This is a real defect that would manifest when a client sends multiple EXDATEs in one PUT. The existing test only sends one EXDATE, so it passes.",
+    "backend/src/caldav/http.rs:2170-2249: ETag determinism with multiple exceptions. The fetch_recurring_exceptions function has no ORDER BY clause. This means the order of exceptions is non-deterministic, which affects both the EXDATE list order and the exception VEVENT order, leading to non-deterministic ETags. However, in practice, SQLite returns rows in a consistent order, so this is a legitimate concern but not a clear defect."
+  ],
+  "follow_up": [
+    "Add a test for multiple EXDATEs in one PUT to verify the version conflict issue",
+    "Add ORDER BY to fetch_recurring_exceptions to ensure deterministic ETags"
+  ],
+  "important_context": [
+    "The update function deletes all exceptions when updating a recurring series (event.rs:1178), then the handler re-inserts them via delete_occurrence",
+    "The version is incremented by the update function and by each delete_occurrence call"
+  ]
+}

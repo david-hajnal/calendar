@@ -1,0 +1,28 @@
+{
+  "status": "failed",
+  "summary": "Five supported EventService mutation paths (create_recurring, update_occurrence, delete_occurrence, update_all_day_occurrence, delete_all_day_occurrence) never call record_caldav_change, violating T12's 'No supported Happening mutation bypasses DAV sync' and 'every supported path has regression coverage'.",
+  "files_changed": [],
+  "verification_commands": [
+    "grep record_caldav_change backend/src/",
+    "grep T12 backend/tests/",
+    "read backend/src/event.rs",
+    "read backend/src/mcp_internal.rs",
+    "read backend/migrations/0009_events.sql"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/event.rs:382-445 \u2014 create_recurring commits without calling record_caldav_change; recurring event creation is invisible to DAV sync-collection, violating 'No supported Happening mutation bypasses DAV sync'",
+    "backend/src/event.rs:847-934 \u2014 update_occurrence commits without calling record_caldav_change; T12 scope explicitly includes 'occurrence changes'",
+    "backend/src/event.rs:936-998 \u2014 delete_occurrence commits without calling record_caldav_change; T12 scope explicitly includes 'occurrence changes'",
+    "backend/src/event.rs:685-776 \u2014 update_all_day_occurrence commits without calling record_caldav_change; T12 scope explicitly includes 'occurrence changes'",
+    "backend/src/event.rs:778-845 \u2014 delete_all_day_occurrence commits without calling record_caldav_change; T12 scope explicitly includes 'occurrence changes'"
+  ],
+  "follow_up": [
+    "MCP internal create_event (mcp_internal.rs:534) and update_event (mcp_internal.rs:575) reference non-existent columns start_utc/end_utc (schema has timed_start_utc/timed_end_utc) and bypass EventService entirely; they will fail at runtime and also bypass DAV sync",
+    "No regression tests exist for DAV change recording on any occurrence or create_recurring path"
+  ],
+  "important_context": [
+    "record_caldav_change is only called in create, update (move + non-move), and delete; all five occurrence/recurring-create paths are missing it",
+    "The move path (update with target_calendar_id != source_calendar_id) is correctly instrumented and tested"
+  ]
+}

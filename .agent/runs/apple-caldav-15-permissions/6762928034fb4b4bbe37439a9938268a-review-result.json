@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "T15 permission and imported boundaries implementation is correct: role matrix enforced via single authorization projection, revocation immediate via revoked_at check, foreign paths return 404 with empty body, imported resources reject mutation with 404 plus domain-service defense-in-depth. All test suites pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test --test authorization",
+    "cargo test --test event_api",
+    "cargo test --test external_feed",
+    "cargo clippy --all-targets"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "event_is_imported uses unwrap_or(false) on DB error (fail-open pre-check); domain ensure_not_imported is fail-closed and authoritative, so no security impact",
+    "manager role not explicitly tested in T15 suite (same permission class as editor, covered by same code paths)"
+  ],
+  "important_context": [
+    "Free-busy representation omits SUMMARY/DESCRIPTION/LOCATION/STATUS/CATEGORIES/URL/TRANSP/alarms/X-properties, exposing only UID/DTSTAMP/DTSTART/DTEND/RRULE/EXDATE/RECURRENCE-ID/SEQUENCE",
+    "Imported = event has a row in external_event_mapping; DAV PUT/DELETE returns 404 empty body",
+    "Denial code for role-based and imported write rejections is 404 Not Found with empty body"
+  ]
+}

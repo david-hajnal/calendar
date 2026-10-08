@@ -328,15 +328,12 @@ kubectl create secret generic commoncal-mcp-secrets \
   "${MCP_SECRET_ARGS[@]}" \
   -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
 
+: "${AUTH_JWKS_FILE:?AUTH_JWKS_FILE must point to the private production JWKS}"
 echo "==> Applying auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;
 # it is created here out-of-band and referenced by the Helm chart.
-kubectl create secret generic commoncal-auth-secrets \
-  --from-literal=DATABASE_URL="$AUTH_DATABASE_URL" \
-  --from-literal=LAB_BRIDGE_KEY="$AUTH_BRIDGE_KEY" \
-  --from-literal=AUTH_COOKIE_KEYS="$AUTH_COOKIE_KEYS" \
-  --from-literal=AUTH_SIGNING_KID="$AUTH_SIGNING_KID" \
-  -n "$NAMESPACE" --dry-run=client -o yaml | kubectl "${kubectl_apply_args[@]}"
+source "$DEPLOY_DIR/auth-secret.sh"
+apply_auth_secret "$NAMESPACE" "${kubectl_apply_args[@]}"
 
 if [[ "$deploy_mode" == flux ]]; then
   if ((dry_run)); then
@@ -407,7 +404,7 @@ auth_helm_args=(
   --set-string "ingress.tls.secretName=$TLS_SECRET_NAME"
   --set-string secrets.name=commoncal-auth-secrets
   --set-string secrets.databaseUrlKey=DATABASE_URL
-  --set-string secrets.bridgeKeyKey=LAB_BRIDGE_KEY
+  --set-string secrets.bridgeKeyKey=AUTH_BRIDGE_KEY
   --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS
   --set-string secrets.signingKidKey=AUTH_SIGNING_KID
   --timeout=15m
@@ -433,9 +430,9 @@ core_helm_args=(
   # Authorization bridge (slice 5): CommonCal calls the private bridge.
   --set-string authBridge.enabled=true
   --set-string authBridge.url="http://commoncal-auth-internal.$NAMESPACE.svc:80"
-  --set-string authBridge.timeoutMs=5000
+  --set-string authBridge.timeoutSecs=5
   --set-string authBridge.secretName=commoncal-auth-secrets
-  --set-string authBridge.secretKey=LAB_BRIDGE_KEY
+  --set-string authBridge.secretKey=AUTH_BRIDGE_KEY
   --timeout=15m
 )
 mcp_helm_args=(

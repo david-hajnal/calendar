@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.4 security-isolation harness verified correct and complete: S1-S9 assertions are meaningful (catch calendar leaks, missing Bearer challenges, and cross-client overlap), the harness exits 1 against current production and 0 against compliant behavior, reports the correct production-fix phase map (S1-S5\u2192Phase 3, S6-S8\u2192Phase 4, S9\u2192Phase 2), and is a pure HTTP client with no lab-binary dependency. All four Phase 0 verifiers pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "node --check mcp-acceptance/security-isolation.js",
+    "node --check mcp-acceptance/lib.js",
+    "node --check mcp-acceptance/verify-security-isolation.js",
+    "node --check mcp-acceptance/mock/lifecycle-server.js",
+    "node --check mcp-acceptance/mock/oauth-provider.js",
+    "node mcp-acceptance/verify-security-isolation.js",
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Negative-token cases S1-S5 are driven in isolation (valid signature, single wrong claim) only via the mock's /_test/token/mint hook; against a real production server the harness falls back to tampering the JWT payload, which also invalidates the signature, so individual claim checks are not exercised in isolation against production.",
+    "assertFailClosed is intentionally lenient: it passes on a 200 carrying a JSON-RPC error (no calendar content) as well as a 401 with a Bearer challenge; it only fails on a 200 with calendar content or a 401 lacking a Bearer challenge."
+  ]
+}

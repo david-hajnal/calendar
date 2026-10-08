@@ -1,0 +1,30 @@
+{
+  "status": "completed",
+  "summary": "Added all-day event support to the CalDAV serializer, HTTP create/update/read paths, and repository exposure. All-day events now round-trip as DATE values (timezone-independent, exclusive end), edits preserve all-day representation, and mixed DATE/DATE-TIME values are rejected.",
+  "files_changed": [
+    "backend/src/caldav/ical.rs",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/tests/caldav_event_resource.rs",
+    "backend/tests/dst_check.rs",
+    "backend/tests/scratch_ics.rs"
+  ],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test --test caldav_event_resource",
+    "cargo test --test ics",
+    "cargo test",
+    "cargo clippy --all-targets",
+    "cargo fmt"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T14 (recurrence) must extend all-day canonicalization to recurring all-day series; the repository currently excludes recurring events from DAV exposure."
+  ],
+  "important_context": [
+    "CaldavIcalEvent now uses a timing: CaldavIcalTiming enum (Timed|AllDay) instead of flat start_utc/end_utc/timezone fields \u2014 any downstream consumer must migrate.",
+    "All-day events store ISO dates (YYYY-MM-DD) with exclusive end; the serializer converts to ICS DATE form (YYYYMMDD) via iso_to_ics_date.",
+    "list_events_in_range converts the query's UTC range endpoints to UTC dates for all-day overlap matching."
+  ]
+}

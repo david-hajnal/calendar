@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "summary": "T18 production hardening satisfies all acceptance criteria: body/rate/malformed limits enforced before writes, no credentials or calendar bodies in logs, production HTTPS enforced fail-closed, and metrics classify all failure classes. All 96 caldav tests and 12 config tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib -- caldav",
+    "cargo test --lib -- config"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Rate limiter key derived from x-forwarded-for header; deployment must ensure reverse proxy overwrites this header to prevent spoofing",
+    "DAV_AUTH_MAX_ATTEMPTS=10 per 60s window is per-IP; legitimate clients behind NAT share the bucket"
+  ]
+}

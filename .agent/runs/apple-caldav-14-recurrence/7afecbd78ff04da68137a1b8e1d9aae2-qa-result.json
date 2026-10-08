@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "All T14 recurrence semantics acceptance criteria verified: supported series round-trips as one UID/resource, modified and deleted occurrences persist, unsupported RRULE fails with 400, and ETags are deterministic.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource -- put_recurring",
+    "cargo test --test caldav_event_resource -- put_unsupported",
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav::ical",
+    "cargo test --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Supported RRULE parts: FREQ (DAILY/WEEKLY/MONTHLY/YEARLY), INTERVAL, COUNT, UNTIL. BYDAY and other parts are rejected.",
+    "Recurrence exceptions stored in event_recurrence_exceptions table with is_deleted flag for EXDATE semantics.",
+    "The ICS parser validates RRULE via RecurrenceRule::parse which rejects unsupported parts explicitly."
+  ]
+}

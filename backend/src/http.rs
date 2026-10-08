@@ -2781,6 +2781,7 @@ async fn request_login_link(
         .request_link(RequestLoginLink {
             email: request.email,
             client_ip,
+            redirect: request.redirect,
         })
         .await
     {
@@ -2994,7 +2995,7 @@ struct DevLoginQuery {
     display_name: Option<String>,
 }
 
-fn session_cookie(headers: &HeaderMap, secure: bool) -> Option<&str> {
+pub(crate) fn session_cookie(headers: &HeaderMap, secure: bool) -> Option<&str> {
     let cookies = headers.get(COOKIE)?.to_str().ok()?;
     let find = |expected: &str| {
         cookies.split(';').map(str::trim).find_map(|cookie| {
@@ -3036,6 +3037,8 @@ struct InvitationPreviewQuery {
 #[serde(deny_unknown_fields)]
 struct RequestLoginLinkRequest {
     email: String,
+    #[serde(default)]
+    redirect: Option<String>,
 }
 
 #[derive(Serialize)]

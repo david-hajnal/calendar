@@ -7,6 +7,7 @@
 // - Calendar ID in grant's allowed_calendar_ids
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -14,9 +15,11 @@ use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{ContentBlock, EventDescription, EventOutput, EventSummary, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct EventGetParams {
+    /// The calendar the event belongs to.
     pub calendar_id: i64,
+    /// The event ID to fetch.
     pub event_id: i64,
 }
 

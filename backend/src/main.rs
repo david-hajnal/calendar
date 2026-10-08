@@ -206,6 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let caldav_session_manager = session_manager.clone();
     let account_session_manager = session_manager.clone();
+    let mcp_session_manager = session_manager.clone();
     let account_admin_service = admin_service.clone();
 
     let mut router = build_router_with_auth_flows_sessions_admin_calendars_views_and_external_feeds(
@@ -266,33 +267,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     router = router.merge(mcp_router);
 
-    // Add McpGrant management routes (frontend-facing).
-    let db_pool = database.clone();
-    let mcp_grant_router = axum::Router::new()
-        .route(
-            "/api/v1/mcp-grants",
-            axum::routing::get(commoncal_backend::mcp_grant_management::list_mcp_grants),
-        )
-        .route(
-            "/api/v1/mcp-grants",
-            axum::routing::post(commoncal_backend::mcp_grant_management::create_mcp_grant),
-        )
-        .route(
-            "/api/v1/mcp-grants/:id",
-            axum::routing::patch(commoncal_backend::mcp_grant_management::update_mcp_grant),
-        )
-        .route(
-            "/api/v1/mcp-grants/:id",
-            axum::routing::delete(commoncal_backend::mcp_grant_management::revoke_mcp_grant),
-        )
-        .route(
-            "/api/v1/mcp-grants/:id/resend",
-            axum::routing::post(
-                commoncal_backend::mcp_grant_management::resend_mcp_grant_confirmation,
-            ),
-        )
-        .with_state(db_pool);
+    // Add McpGrant management routes (frontend-facing, session-bound).
+    let mcp_grant_router = commoncal_backend::mcp_grant_management::build_mcp_grant_router(
+        database.clone(),
+        mcp_session_manager.clone(),
+    );
     router = router.merge(mcp_grant_router);
+
+    // Add MCP consent routes (session-bound, bridge-backed). The consent flow
+    // is only available when the private bridge is configured; otherwise the
+    // routes are not mounted and the grant management API remains the
+    // authoritative surface.
+    if config.auth_bridge_enabled() {
+        let bridge = commoncal_backend::mcp_bridge::McpBridgeClient::new(
+            config.auth_bridge_url().to_string(),
+            config.auth_bridge_timeout(),
+            config.auth_bridge_secret().to_string(),
+        );
+        let consent_state = commoncal_backend::mcp_consent::ConsentState {
+            pool: database.clone(),
+            session_manager: mcp_session_manager.clone(),
+            bridge,
+        };
+        router = router.merge(commoncal_backend::mcp_consent::build_consent_router(
+            consent_state,
+        ));
+    }
 
     // Add CalDAV DAV router (isolated, Basic-auth, no browser session/CSRF).
     router = router.merge(build_caldav_router(caldav_accounts.clone()));

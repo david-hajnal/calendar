@@ -1,0 +1,18 @@
+{
+  "id": "apple-caldav-18-hardening",
+  "title": "CalDAV production hardening \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t18--production-hardening",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-11-sync-collection",
+    "apple-caldav-15-permissions",
+    "apple-caldav-17-lifecycle-ui"
+  ],
+  "acceptance": [
+    "malformed oversized and throttled requests fail before partial writes",
+    "logs contain no credentials or calendar bodies",
+    "insecure production transport configuration fails closed and metrics classify failures"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

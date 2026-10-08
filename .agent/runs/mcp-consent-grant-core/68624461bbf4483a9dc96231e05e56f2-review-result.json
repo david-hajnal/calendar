@@ -1,0 +1,21 @@
+{
+  "status": "failed",
+  "summary": "Review found 2 defects related to user_id = 0 placeholders in idempotency endpoints",
+  "files_changed": [],
+  "verification_commands": [
+    "grep -r \"user_id = 0\" backend/src/",
+    "grep -r \"bind(0)\" backend/src/"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "backend/src/mcp_internal.rs:836 - record_idempotency binds user_id = 0 as a placeholder, violating acceptance criteria \"all user_id = 0 and empty-list placeholders replaced\"; idempotency keys are not scoped to a user",
+    "backend/src/mcp_internal.rs:804-823 - check_idempotency does not filter by user_id, allowing cross-user information leaks if two users use the same operation_id"
+  ],
+  "follow_up": [
+    "Consider whether idempotency endpoints should be scoped to user_id for security"
+  ],
+  "important_context": [
+    "The record_idempotency and check_idempotency endpoints are not currently called by any MCP tool, so the impact is limited",
+    "The user_id = 0 placeholder is a clear violation of the acceptance criteria"
+  ]
+}

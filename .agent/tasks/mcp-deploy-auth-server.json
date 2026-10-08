@@ -1,0 +1,18 @@
+{
+  "id": "mcp-deploy-auth-server",
+  "title": "Phase 5: productionize and deploy the authorization server. BLOCKED on decisions: dedicated issuer hostname + DNS/TLS ownership, PostgreSQL hosting/backup/restore, production OAuth signing/cookie/bridge keys. Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 1,
+  "depends_on": [
+    "mcp-consent-grant-core"
+  ],
+  "acceptance": [
+    "backed-up PostgreSQL provisioned and provider schema migration run before enabling the deployment",
+    "lab test endpoints, loopback callback server, in-memory audit assumptions, and lab-named env vars removed from the production entry point",
+    "configured: dedicated HTTPS issuer, resource https://mcal.hajnal.space/mcp, consent origin https://cal.hajnal.space, cluster-only private bridge with rotated bearer secret, short access-token lifetime, refresh rotation/reuse detection, revocation, signing-key overlap, request limits, structured redaction",
+    "DCR configured for OpenCode's actual loopback callback shape; wildcards, arbitrary remote HTTPS redirects, and custom schemes rejected",
+    "DNS and TLS for the dedicated issuer; valid JSON authorization metadata and JWKS published without SPA fallback",
+    "dormant HelmRelease, NetworkPolicies, PDB, secrets, resource values, health checks, and Flux dependency order corrected and added to the production kustomization only after prerequisites exist"
+  ],
+  "docs_required": false,
+  "status": "failed"
+}

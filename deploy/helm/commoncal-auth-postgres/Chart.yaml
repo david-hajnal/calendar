@@ -1,0 +1,7 @@
+apiVersion: v2
+name: commoncal-auth-postgres
+description: Private PostgreSQL storage and encrypted backups for the OAuth issuer
+type: application
+version: 0.1.0
+appVersion: "17"
+kubeVersion: ">=1.25.0-0"

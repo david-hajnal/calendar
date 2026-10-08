@@ -9,20 +9,25 @@ import Provider, { errors } from 'oidc-provider';
 import pg from 'pg';
 
 import PostgresAdapter, { configureAdapter } from './postgres-adapter.mjs';
+import { cleanupExpired, startRetention } from './retention.mjs';
+import { productionConfig } from './production-config.mjs';
 import { HandoffStore } from './handoff-store.mjs';
 import { validateRedirect, defaultLabCatalog } from './dcr-policy.mjs';
 
 const { Pool } = pg;
 const here = dirname(fileURLToPath(import.meta.url));
 
-const ISSUER = process.env.LAB_ISSUER ?? 'http://127.0.0.1:4000';
-const RESOURCE = process.env.LAB_RESOURCE_URL ?? 'http://127.0.0.1:3001/mcp';
+const PRODUCTION = process.env.AUTH_RUNTIME === 'production';
+const production = PRODUCTION ? productionConfig(process.env, JSON.parse(await readFile(process.env.AUTH_JWKS_FILE, 'utf8'))) : null;
+
+const ISSUER = production?.issuer ?? process.env.LAB_ISSUER ?? 'http://127.0.0.1:4000';
+const RESOURCE = production?.resource ?? process.env.LAB_RESOURCE_URL ?? 'http://127.0.0.1:3001/mcp';
 // Use 127.0.0.1 (not localhost) so the CommonCal session cookie — set for the
 // 127.0.0.1 host by the lab login — is presented on the consent page. A
 // localhost/127.0.0.1 split would drop the cookie and loop on login.
-const COMMONCAL = process.env.LAB_COMMONCAL_URL ?? 'http://127.0.0.1:4002';
+const COMMONCAL = production?.commoncal ?? process.env.LAB_COMMONCAL_URL ?? 'http://127.0.0.1:4002';
 const REDIRECT = process.env.LAB_LOOPBACK_REDIRECT ?? 'http://127.0.0.1:8321/callback';
-const BRIDGE_KEY = process.env.LAB_BRIDGE_KEY ?? 'slice1-loopback-bridge-key';
+const BRIDGE_KEY = production?.bridge ?? process.env.LAB_BRIDGE_KEY ?? 'slice1-loopback-bridge-key';
 const FIXED_SUBJECT = '1';
 
 // Bind addresses are configurable so the same image serves both the loopback
@@ -57,16 +62,22 @@ const pool = new Pool({
 configureAdapter(pool);
 
 const migration = await readFile(resolve(here, '../migrations/0001_lab.sql'), 'utf8');
-await pool.query(migration);
+if (!PRODUCTION) {
+  await pool.query(migration);
+  await pool.query(await readFile(resolve(here, '../migrations/0002_production.sql'), 'utf8'));
+} else {
+  await pool.query('SELECT 1 FROM provider_entity, interaction_handoff, authorization_audit, dcr_rate_bucket LIMIT 0');
+}
 // The JWKS document path is configurable so the deployment can mount a
 // persistent, rotatable key set from a Secret. The lab default keeps the
 // disposable test keys. The document must contain at least one `sig` key whose
 // `kid` matches AUTH_SIGNING_KID (used to sign resource tokens).
 const JWKS_FILE = process.env.AUTH_JWKS_FILE ?? resolve(here, '../test-jwks.json');
 const jwksDocument = JSON.parse(await readFile(JWKS_FILE, 'utf8'));
-const jwks = { keys: jwksDocument.keys };
-const SIGNING_KID = process.env.AUTH_SIGNING_KID ?? 'slice1-test-rs256';
-const COOKIE_KEYS = (process.env.AUTH_COOKIE_KEYS ?? 'slice1-cookie-key-a-not-production,slice1-cookie-key-b-not-production')
+// Put the active signing key first for provider operations without an explicit kid.
+const jwks = { keys: PRODUCTION ? [...jwksDocument.keys].filter((key) => key.d).sort((a, b) => Number(b.kid === production.kid) - Number(a.kid === production.kid)) : jwksDocument.keys };
+const SIGNING_KID = production?.kid ?? process.env.AUTH_SIGNING_KID ?? 'slice1-test-rs256';
+const COOKIE_KEYS = production?.cookies ?? (process.env.AUTH_COOKIE_KEYS ?? 'slice1-cookie-key-a-not-production,slice1-cookie-key-b-not-production')
   .split(',')
   .map((k) => k.trim())
   .filter(Boolean);
@@ -111,7 +122,13 @@ const REDACT_SECRETS = new Set([BRIDGE_KEY]);
  */
 const AUDIT_LOG = [];
 const AUDIT_MAX = 1000;
-function audit(event, detail) {
+async function audit(event, detail) {
+  if (PRODUCTION) {
+    // Only bounded, policy-controlled fields are persisted; never client supplied names or URLs.
+    const safe = { ipHash: detail.ip ? createHash('sha256').update(detail.ip).digest('hex') : undefined, reason: event === 'dcr_rejected' ? 'invalid_request' : undefined };
+    await pool.query('INSERT INTO authorization_audit (event, detail) VALUES ($1, $2::jsonb)', [event, JSON.stringify(safe)]);
+    return;
+  }
   AUDIT_LOG.push({ ts: Date.now(), event, detail: redact(detail, REDACT_SECRETS) });
   if (AUDIT_LOG.length > AUDIT_MAX) AUDIT_LOG.shift();
 }
@@ -121,10 +138,15 @@ function audit(event, detail) {
  * registrations per 60 s window. The limit is mutable at runtime via the
  * `/internal/test/dcr-rate-limit` test hook (used by the S4-2 proof).
  */
-let DCR_RATE_LIMIT = Number(process.env.LAB_DCR_RATE_LIMIT ?? 100);
+let DCR_RATE_LIMIT = production?.rate ?? Number(process.env.LAB_DCR_RATE_LIMIT ?? 100);
 const DCR_RATE_WINDOW_MS = 60_000;
 const dcrRateBuckets = new Map();
-function dcrRateLimit(ip) {
+async function dcrRateLimit(ip) {
+  if (PRODUCTION) {
+    const key = createHash('sha256').update(ip).digest('hex');
+    const result = await pool.query(`INSERT INTO dcr_rate_bucket (bucket_key, window_start, count) VALUES ($1, date_trunc('minute', NOW()), 1) ON CONFLICT (bucket_key) DO UPDATE SET window_start = date_trunc('minute', NOW()), count = CASE WHEN dcr_rate_bucket.window_start = date_trunc('minute', NOW()) THEN dcr_rate_bucket.count + 1 ELSE 1 END RETURNING count`, [key]);
+    return result.rows[0].count <= DCR_RATE_LIMIT;
+  }
   const now = Date.now();
   let bucket = dcrRateBuckets.get(ip);
   if (!bucket || now - bucket.windowStart >= DCR_RATE_WINDOW_MS) {
@@ -160,7 +182,7 @@ function approvedResourceScopes(scope) {
 // Slice 4: callback-shape policy framework. Only the lab loopback callback is
 // admitted. Client slices (11-13) may extend this catalog with narrowly-proven
 // shapes after observing the released client. Arbitrary HTTPS remains forbidden.
-const REDIRECT_CATALOG = defaultLabCatalog(REDIRECT);
+const REDIRECT_CATALOG = production?.catalog ?? defaultLabCatalog(REDIRECT);
 
 function validateRegisteredMetadata(_ctx, key, value, metadata) {
   if (key === 'redirect_uris') {
@@ -170,7 +192,7 @@ function validateRegisteredMetadata(_ctx, key, value, metadata) {
     }
     if (!validateRedirect(value[0], REDIRECT_CATALOG)) {
       metadata.invalidate(
-        `redirect_uris[0] does not match an admitted callback shape (only the lab loopback ${REDIRECT} is admitted)`,
+        'redirect_uris[0] does not match an admitted callback shape',
       );
     }
   }
@@ -267,7 +289,12 @@ const configuration = {
 };
 
 const provider = new Provider(ISSUER, configuration);
-provider.proxy = false;
+provider.proxy = PRODUCTION;
+if (PRODUCTION) {
+  provider.proxyIpHeader = 'X-Forwarded-For';
+  provider.maxIpsCount = 1;
+  provider.on('server_error', () => console.error('authorization provider request failed'));
+}
 
 function json(res, status, value) {
   const body = JSON.stringify(value);
@@ -300,13 +327,14 @@ function bearerAuthorized(req) {
   return exactEqual(presented, BRIDGE_KEY);
 }
 
-function interactionView(details) {
+async function interactionView(details) {
+  const client = await provider.Client.find(details.params.client_id);
   const resources = Array.isArray(details.params.resource)
     ? details.params.resource
     : [details.params.resource].filter(Boolean);
   return {
     clientId: details.params.client_id,
-    clientName: details.params.client_id,
+    clientName: client?.clientName ?? details.params.client_id,
     redirectUri: details.params.redirect_uri,
     resource: resources[0],
     requestedScopes: [...splitScopes(details.params.scope)],
@@ -315,13 +343,15 @@ function interactionView(details) {
     // JWT agree on which scopes were actually approved.
     grantedScopes: approvedResourceScopes(details.params.scope),
     prompt: details.prompt.name,
+    subject: details.session?.accountId ?? null,
     expiresAt: details.exp,
   };
 }
 
 async function bootstrapInteraction(req, res) {
   const details = await provider.interactionDetails(req, res);
-  const handoff = await handoffs.create(details.uid, interactionView(details));
+  const handoff = await handoffs.create(details.uid, await interactionView(details));
+  if (PRODUCTION) await audit('interaction_started', {});
   // Slice 2: redirect to the real CommonCal consent page (session-gated).
   // CommonCal handles login (if needed) and consent, then resumes here.
   redirect(res, `${COMMONCAL}/consent?handoff=${encodeURIComponent(handoff)}`);
@@ -347,6 +377,7 @@ async function resumeInteraction(req, res, url) {
     // Bind the login to the CommonCal-approved subject (trusted bridge
     // decision). Falls back to the fixed lab subject only for decisions that
     // predate the subject field.
+    if (PRODUCTION && !/^[1-9]\d*$/.test(String(decision.subject ?? ''))) return json(res, 400, { error: 'invalid_subject' });
     const accountId = String(decision.subject ?? FIXED_SUBJECT);
     return provider.interactionFinished(
       req,
@@ -405,6 +436,9 @@ async function resumeInteraction(req, res, url) {
 const publicServer = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, ISSUER);
+    if (PRODUCTION && req.method === 'GET' && url.pathname === '/jwks') {
+      return json(res, 200, { keys: jwksDocument.keys.map(({ d, p, q, dp, dq, qi, oth, ...publicKey }) => publicKey) });
+    }
     if (req.method === 'GET' && /^\/interaction\/[^/]+$/.test(url.pathname)) {
       // Same path for bootstrap and resume so the provider's interaction
       // cookie (scoped to this path) is presented to both. The `handoff`
@@ -414,25 +448,29 @@ const publicServer = createServer(async (req, res) => {
       if (handoff) return await resumeInteraction(req, res, url);
       return await bootstrapInteraction(req, res);
     }
+    if (req.method === 'GET' && url.pathname === '/ready') {
+      await pool.query('SELECT 1 FROM provider_entity, interaction_handoff, authorization_audit, dcr_rate_bucket LIMIT 0');
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true });
 
     // Slice 4: DCR ingress controls. Intercept POST /reg to apply rate
     // limiting and audit logging before the provider handles registration.
     if (req.method === 'POST' && url.pathname === '/reg') {
-      const ip = req.socket?.remoteAddress ?? 'unknown';
-      if (!dcrRateLimit(ip)) {
-        audit('dcr_rate_limited', { ip });
+      const ip = PRODUCTION ? (req.headers['x-forwarded-for']?.split(',').at(-1)?.trim() ?? req.socket?.remoteAddress ?? 'unknown') : req.socket?.remoteAddress ?? 'unknown';
+      if (!await dcrRateLimit(ip)) {
+        await audit('dcr_rate_limited', { ip });
         return json(res, 429, { error: 'too_many_requests', error_description: 'DCR rate limit exceeded' });
       }
       let body;
       try {
         body = await readJson(req, 16_384);
       } catch (e) {
-        audit('dcr_rejected', { ip, reason: e.message });
+        await audit('dcr_rejected', { ip, reason: e.message });
         return json(res, 413, { error: 'payload_too_large' });
       }
       // Audit the attempt (redacted). The provider will validate the shape.
-      audit('dcr_attempt', {
+      await audit('dcr_attempt', {
         ip,
         client_name: body.client_name ?? null,
         redirect_uris: body.redirect_uris ?? null,
@@ -454,9 +492,20 @@ const publicServer = createServer(async (req, res) => {
       return provider.callback()(replayed, res);
     }
 
+    if (PRODUCTION && !['GET', 'HEAD'].includes(req.method)) {
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 16_384) return json(res, 413, { error: 'payload_too_large' });
+        chunks.push(chunk);
+      }
+      const replayed = Object.assign(Readable.from(Buffer.concat(chunks)), { headers: req.headers, method: req.method, url: req.url, socket: req.socket, httpVersion: req.httpVersion });
+      return provider.callback()(replayed, res);
+    }
     return provider.callback()(req, res);
   } catch (error) {
-    console.error('public request failed', error?.message ?? 'unknown error');
+    console.error('public request failed');
     if (!res.headersSent) json(res, 500, { error: 'internal_error' });
     else res.end();
   }
@@ -466,6 +515,7 @@ const privateServer = createServer(async (req, res) => {
   try {
     if (!bearerAuthorized(req)) return json(res, 401, { error: 'unauthorized' });
     const url = new URL(req.url, 'http://127.0.0.1:4001');
+    if (PRODUCTION && (url.pathname === '/internal/audit' || url.pathname.startsWith('/internal/test/'))) return json(res, 404, { error: 'not_found' });
     // Slice 4: audit log endpoint (lab-only, bridge-keyed). The harness reads
     // DCR attempts and verifies redaction.
     if (req.method === 'GET' && url.pathname === '/internal/audit') {
@@ -481,7 +531,8 @@ const privateServer = createServer(async (req, res) => {
         removed[m] = await new PostgresAdapter(m).cleanup();
       }
       removed.InteractionHandoff = await handoffs.cleanup();
-      audit('cleanup', { removed });
+      if (PRODUCTION) Object.assign(removed, await cleanupExpired(pool));
+      await audit('cleanup', { removed });
       return json(res, 200, { removed });
     }
     // Slice 4: test hook — set the DCR rate limit and reset the counter.
@@ -494,7 +545,7 @@ const privateServer = createServer(async (req, res) => {
       }
       DCR_RATE_LIMIT = limit;
       dcrRateBuckets.clear();
-      audit('dcr_rate_limit_set', { limit });
+      await audit('dcr_rate_limit_set', { limit });
       return json(res, 200, { limit });
     }
     // Slice 4: test hook — insert an expired provider_entity row so the
@@ -509,7 +560,7 @@ const privateServer = createServer(async (req, res) => {
          ON CONFLICT (model, id) DO UPDATE SET expires_at = NOW() - INTERVAL '1 second'`,
         [model, id, JSON.stringify({ test: 'expired' })],
       );
-      audit('insert_expired_entity', { model, id });
+      await audit('insert_expired_entity', { model, id });
       return json(res, 200, { model, id });
     }
     // Slice 4: test hook — check whether a provider_entity row exists.
@@ -544,9 +595,11 @@ const privateServer = createServer(async (req, res) => {
       // Carry the CommonCal-approved subject (identity authority) so the
       // provider grant binds to the real user, not a hardcoded value.
       const stored = { kind: decision.kind };
+      if (PRODUCTION && decision.kind === 'login' && !/^[1-9]\d*$/.test(String(decision.subject ?? ''))) return json(res, 400, { error: 'invalid_subject' });
       if (decision.subject !== undefined) stored.subject = decision.subject;
       const uid = await handoffs.decide(token, stored);
       if (!uid) return json(res, 409, { error: 'expired_or_already_decided' });
+      if (PRODUCTION) await audit(`interaction_${decision.kind}`, {});
       // Resume at the SAME path the provider scoped the interaction cookie to
       // (`/interaction/{uid}`), adding the handoff as a query param. A different
       // path would not receive the cookie and interactionDetails would fail.
@@ -556,33 +609,61 @@ const privateServer = createServer(async (req, res) => {
     }
     return json(res, 405, { error: 'method_not_allowed' });
   } catch (error) {
-    console.error('private request failed', error?.message ?? 'unknown error');
+    console.error('private request failed');
     return json(res, error?.message === 'request too large' ? 413 : 500, { error: 'internal_error' });
   }
 });
 
+for (const server of [publicServer, privateServer]) {
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
+  server.maxHeadersCount = 64;
+}
+
+const CALLBACK_PORT = Number(process.env.AUTH_CALLBACK_PORT ?? 8321);
 const callbackServer = createServer((req, res) => {
-  const url = new URL(req.url, 'http://127.0.0.1:8321');
+  const url = new URL(req.url, `http://127.0.0.1:${CALLBACK_PORT}`);
   if (url.pathname !== '/callback') return json(res, 404, { error: 'not_found' });
   return json(res, 200, { received: true });
 });
+let callbackActive = false;
 
 await Promise.all([
   new Promise((resolveListen) => publicServer.listen(PUBLIC_PORT, PUBLIC_BIND, resolveListen)),
   new Promise((resolveListen) => privateServer.listen(PRIVATE_PORT, PRIVATE_BIND, resolveListen)),
   // The callback server is a lab artifact (the production client runs its own
   // loopback callback). It stays bound to loopback only and is never exposed.
-  new Promise((resolveListen) => callbackServer.listen(8321, '127.0.0.1', resolveListen)),
+  // Its binding is non-fatal: if the port is already taken (e.g. by another
+  // local tool), the issuer still starts — token issuance does not depend on it.
+  PRODUCTION ? Promise.resolve() : new Promise((resolveListen) => {
+    callbackServer.once('error', (err) => {
+      if (err && err.code === 'EADDRINUSE') {
+        console.warn(`callback server port ${CALLBACK_PORT} in use; continuing without it`);
+      } else {
+        console.error('callback server failed to start', err?.message ?? 'unknown');
+      }
+      resolveListen();
+    });
+    callbackServer.listen(CALLBACK_PORT, '127.0.0.1', () => {
+      callbackActive = true;
+      resolveListen();
+    });
+  }),
 ]);
 
-console.log(`slice1 auth issuer listening at ${ISSUER}`);
+console.log(`auth issuer listening at ${ISSUER}`);
 console.log(`CommonCal interaction host expected at ${COMMONCAL} (separate process)`);
 
+const stopRetention = PRODUCTION ? startRetention(pool, production.cleanupInterval) : async () => {};
+
 async function shutdown() {
+  await stopRetention();
   await Promise.all([
     new Promise((resolveClose) => publicServer.close(resolveClose)),
     new Promise((resolveClose) => privateServer.close(resolveClose)),
-    new Promise((resolveClose) => callbackServer.close(resolveClose)),
+    callbackActive
+      ? new Promise((resolveClose) => callbackServer.close(resolveClose))
+      : Promise.resolve(),
   ]);
   await pool.end();
 }

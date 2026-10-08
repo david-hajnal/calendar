@@ -1,0 +1,45 @@
+# Apply only after cert-manager is installed. This CA signs private database TLS.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: commoncal-auth-postgres-selfsigned
+  namespace: commoncal
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: commoncal-auth-postgres-ca
+  namespace: commoncal
+spec:
+  isCA: true
+  commonName: commoncal-auth-postgres-ca
+  secretName: commoncal-auth-postgres-ca
+  duration: 87600h
+  renewBefore: 720h
+  privateKey: {algorithm: RSA, size: 3072}
+  issuerRef: {name: commoncal-auth-postgres-selfsigned, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: commoncal-auth-postgres-ca
+  namespace: commoncal
+spec:
+  ca: {secretName: commoncal-auth-postgres-ca}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: commoncal-auth-postgres-tls
+  namespace: commoncal
+spec:
+  secretName: commoncal-auth-postgres-tls
+  duration: 2160h
+  renewBefore: 360h
+  dnsNames:
+    - commoncal-auth-postgres.commoncal.svc.cluster.local
+    - commoncal-auth-postgres.commoncal.svc
+  privateKey: {algorithm: RSA, size: 3072, rotationPolicy: Always}
+  issuerRef: {name: commoncal-auth-postgres-ca, kind: Issuer}

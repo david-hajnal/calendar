@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-08-update",
+  "title": "Conflict-safe Apple update \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t08--conflict-safe-update",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-07-create"
+  ],
+  "acceptance": [
+    "matching If-Match updates through EventService and rotates ETag",
+    "stale or missing required precondition returns 412 without mutation",
+    "unauthorized update fails without disclosure"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

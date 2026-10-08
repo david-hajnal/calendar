@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "summary": "T07 create-from-Apple implementation meets all acceptance criteria. Conditional PUT creates events through EventService, events are readable in both systems, duplicates/partial writes fail safely, and audit behavior is preserved. No concrete defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo clippy --lib"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Non-transactional create+mapping is a design choice; rollback is best-effort via event_service.delete. Plan transactional requirement applies to T09/T10.",
+    "Race condition on concurrent PUTs maps to 500 instead of 412/409, but UNIQUE constraints prevent data corruption."
+  ]
+}

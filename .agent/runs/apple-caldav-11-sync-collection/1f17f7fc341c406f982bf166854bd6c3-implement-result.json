@@ -1,0 +1,34 @@
+{
+  "status": "completed",
+  "summary": "Implemented T11 incremental sync collection: added REPORT sync-collection handler with opaque HMAC-signed sync tokens, initial snapshot, incremental change paging, RFC 6578 deletion representation, and safe failure on invalid tokens. Added a resource_name column to the change log (migration 0026) so deleted changes carry their DAV href after the tombstone clears the event reference.",
+  "files_changed": [
+    "backend/src/caldav/auth.rs",
+    "backend/src/caldav/http.rs",
+    "backend/src/caldav/types.rs",
+    "backend/src/caldav/query.rs",
+    "backend/src/caldav/repository.rs",
+    "backend/src/event.rs",
+    "backend/src/security.rs",
+    "backend/migrations/0026_caldav_change_resource_name.sql",
+    "backend/migrations/rollbacks/0026_rollback.sql",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo check",
+    "cargo test --lib",
+    "cargo test --test caldav_event_resource",
+    "cargo clippy",
+    "cargo fmt"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The DAV delete path stamps the change-log resource_name after the domain delete (stamp_change_resource_name); a narrow race exists if a sync-collection reads between the delete commit and the stamp. Acceptable for now; could be tightened by moving the tombstone into the domain transaction (T09 design)."
+  ],
+  "important_context": [
+    "Change log (caldav_event_changes) now has a nullable resource_name column (migration 0026) carrying the DAV resource name for deleted changes.",
+    "Sync tokens are opaque base64url(revision).base64url(hmac) strings, signed with the SecretKey; clients must treat them as opaque and echo them back verbatim.",
+    "sync-collection REPORT is now dispatched in the calendar REPORT handler alongside calendar-query and calendar-multiget; sync-level must be 1.",
+    "Initial snapshot (empty sync-token) returns all exposed events plus a token at the latest revision; incremental calls page the change log by revision."
+  ]
+}

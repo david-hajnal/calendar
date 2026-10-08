@@ -33,9 +33,9 @@ config_map = next(
 )
 
 expected = {
-    "LAB_ISSUER": "https://cal.hajnal.space",
-    "LAB_RESOURCE_URL": "https://cal.hajnal.space",
-    "LAB_COMMONCAL_URL": "https://cal.hajnal.space",
+    "AUTH_ISSUER": "https://auth.hajnal.space",
+    "AUTH_RESOURCE_URL": "https://mcal.hajnal.space/mcp",
+    "AUTH_COMMONCAL_URL": "https://cal.hajnal.space",
 }
 for key, value in expected.items():
     actual = config_map["data"].get(key)
@@ -61,6 +61,8 @@ expected_secret_keys = {
     "cookieKeysKey",
     "jwksKey",
     "signingKidKey",
+    "databaseCaSecret",
+    "databaseCaKey",
 }
 actual_secret_keys = set(values.get("secrets", {}))
 unknown_secret_keys = actual_secret_keys - expected_secret_keys
@@ -89,7 +91,7 @@ fi
 # otherwise accepts a typo while retaining the chart defaults unnoticed.
 if helm template commoncal-auth "$chart_dir" \
   --namespace commoncal \
-  --set-string secrets.bridgeKey=LAB_BRIDGE_KEY >/dev/null 2>&1; then
+  --set-string secrets.bridgeKey=AUTH_BRIDGE_KEY >/dev/null 2>&1; then
   echo 'obsolete secrets.bridgeKey must be rejected by the chart schema' >&2
   exit 1
 fi
@@ -110,9 +112,9 @@ config_map = next(
 )
 
 expected = {
-    "LAB_ISSUER": "https://cal.hajnal.space",
-    "LAB_RESOURCE_URL": "https://cal.hajnal.space",
-    "LAB_COMMONCAL_URL": "https://cal.hajnal.space",
+    "AUTH_ISSUER": "https://auth.hajnal.space",
+    "AUTH_RESOURCE_URL": "https://mcal.hajnal.space/mcp",
+    "AUTH_COMMONCAL_URL": "https://cal.hajnal.space",
 }
 for key, value in expected.items():
     actual = config_map["data"].get(key)

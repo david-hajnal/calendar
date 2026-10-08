@@ -32,13 +32,13 @@ jobs:
   build-auth:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build auth image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.auth
@@ -64,7 +64,7 @@ jobs:
         run: docker save -o auth-image.tar "ghcr.io/david-hajnal/calendar-auth:${{ env.MAIN_TAG }}"
 
       - name: Upload auth image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: auth-image
           path: auth-image.tar
@@ -72,13 +72,13 @@ jobs:
   build-core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build core image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -104,7 +104,7 @@ jobs:
         run: docker save -o core-image.tar "ghcr.io/david-hajnal/calendar-core:${{ env.MAIN_TAG }}"
 
       - name: Upload core image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: core-image
           path: core-image.tar
@@ -112,13 +112,13 @@ jobs:
   build-mcp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build MCP image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.mcp
@@ -144,7 +144,7 @@ jobs:
         run: docker save -o mcp-image.tar "ghcr.io/david-hajnal/calendar-mcp:${{ env.MAIN_TAG }}"
 
       - name: Upload MCP image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcp-image
           path: mcp-image.tar
@@ -157,13 +157,14 @@ jobs:
       github.ref == 'refs/heads/main' &&
       startsWith(github.actor, 'github-actions[bot]') == false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Download images
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
+          pattern: "*-image"
           path: images
 
       - name: Load images
@@ -173,7 +174,7 @@ jobs:
           docker load -i images/mcp-image/mcp-image.tar
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

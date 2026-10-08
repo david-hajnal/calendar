@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "All 6 T11 sync-collection tests pass, covering initial snapshot, incremental sync, deletion representation, invalid token rejection, and pagination correctness. Full test suite passes with no failures.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav::query",
+    "cargo test --test caldav_event_resource sync_collection",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Sync tokens are HMAC-signed opaque tokens (base64url(revision).base64url(hmac)) using the server's SecretKey",
+    "Deletions use RFC 6578 shape: D:status 404 as direct child of D:response",
+    "Pagination uses MAX_RESULTS=1000 bound; new token always advances past last returned revision"
+  ]
+}

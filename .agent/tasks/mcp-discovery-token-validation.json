@@ -1,0 +1,17 @@
+{
+  "id": "mcp-discovery-token-validation",
+  "title": "Phase 3: align OAuth discovery and access-token validation. Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 2,
+  "depends_on": [
+    "mcp-rmcp-gateway"
+  ],
+  "acceptance": [
+    "fetch /.well-known/oauth-authorization-server (and OIDC form where appropriate), verify returned issuer exactly matches configuration, then follow its HTTPS jwks_uri",
+    "parse numeric sub as CommonCal user id and standard client_id and scope claims; validate signature, allowed algorithm, kid, exact iss, exact MCP audience, exp, iat with small clock skew",
+    "bounded metadata/JWKS caching, key rotation overlap, and one refresh on unknown kid; never accept a stale key indefinitely",
+    "grant lookup kept on every tool call so revocation takes effect while a token remains valid",
+    "integration tests validate tokens issued by the repository's real authorization-server implementation, not hand-built fixtures only"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

@@ -32,8 +32,8 @@ spec:
       tag: "sha-b2f71fd92ac74a87d76b2815477a0c350aad60c6"
       pullPolicy: IfNotPresent
     config:
-      issuer: https://cal.hajnal.space
-      resourceUrl: https://cal.hajnal.space
+      issuer: https://auth.hajnal.space
+      resourceUrl: https://mcal.hajnal.space/mcp
       commoncalUrl: https://cal.hajnal.space
     public:
       port: 80
@@ -44,23 +44,23 @@ spec:
     ingress:
       enabled: true
       className: traefik
-      host: cal.hajnal.space
+      host: auth.hajnal.space
       annotations:
         traefik.ingress.kubernetes.io/router.entrypoints: websecure
       tls:
         enabled: true
-        secretName: commoncal-tls
+        secretName: commoncal-auth-tls
     secrets:
       name: commoncal-auth-secrets
       databaseUrlKey: DATABASE_URL
-      bridgeKeyKey: LAB_BRIDGE_KEY
+      bridgeKeyKey: AUTH_BRIDGE_KEY
       cookieKeysKey: AUTH_COOKIE_KEYS
       signingKidKey: AUTH_SIGNING_KID
     networkPolicy:
       enabled: true
-      # k3s installs the Traefik controller in kube-system. This value is a
+      # Verify the actual Traefik controller namespace before rollout. This is a
       # namespace name, not the IngressClass name.
-      ingressNamespace: kube-system
+      ingressNamespace: traefik
       commoncalNamespace: commoncal
       postgres:
         port: 5432

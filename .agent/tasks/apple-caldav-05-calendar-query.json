@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-05-calendar-query",
+  "title": "Bounded calendar query \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t05--bounded-calendar-query",
+  "priority": 3,
+  "depends_on": [
+    "apple-caldav-04-event-read"
+  ],
+  "acceptance": [
+    "calendar-query returns only authorized events in range",
+    "malformed or unsupported queries fail deterministically",
+    "query result and input limits are enforced"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

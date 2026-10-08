@@ -1,0 +1,17 @@
+{
+  "id": "mcp-acceptance-security-isolation",
+  "title": "Phase 0.4: add fail-closed token, grant, and concurrent-identity acceptance cases",
+  "priority": 3,
+  "depends_on": [
+    "mcp-acceptance-oauth-lifecycle"
+  ],
+  "acceptance": [
+    "wrong issuer, audience, signature, expiry, and client token cases each fail closed with the correct public authentication behavior",
+    "missing grant, revoked grant, and attempted grant broadening each deny calendar_list without disclosing unauthorized calendars",
+    "two independently authenticated clients execute interleaved MCP lifecycles and calendar_list calls without observing each other's identity, calendars, session, or grant state",
+    "negative and concurrency fixtures are production-component fixtures derived from reusable lab proofs, not a dependency on the lab binary as the release artifact",
+    "the complete Phase 0 suite remains intentionally red against the current implementation and reports which production-fix phase will make each case green"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

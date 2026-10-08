@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "T16 safe client-property preservation is already fully implemented: allowlisted metadata (categories, URL, TRANSP, alarms, X-properties) is parsed, validated, persisted, merged, and serialized deterministically; scheduling properties (ATTENDEE, ORGANIZER, METHOD) are rejected; ETags are deterministic. All 4 T16 acceptance tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource t16_",
+    "cargo test --test caldav_event_resource",
+    "cargo test --test ics",
+    "cargo test --lib caldav::ical"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "T16 implementation spans: migration 0027 (caldav_event_properties table), types.rs (CaldavClientProperties), repository.rs (save/load_client_properties), ics.rs (parser extraction), http.rs (validate_dav_write, client_properties_from, ical_and_etag), ical.rs (serialize_vevent). All 81 caldav_event_resource tests pass."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "apple-caldav-17-lifecycle-ui",
+  "title": "Connection lifecycle UI \u2014 docs/plans/apple-calendar-support/04-task-slices.md#t17--connection-lifecycle-ui",
+  "priority": 2,
+  "depends_on": [
+    "apple-caldav-02-discovery"
+  ],
+  "acceptance": [
+    "setup secret is displayed once",
+    "revoke-one preserves other devices and disconnect-all invalidates all",
+    "accessible loading connected attention and error states are tested"
+  ],
+  "docs_required": false,
+  "unblock_when_dependencies_complete": true,
+  "status": "completed"
+}

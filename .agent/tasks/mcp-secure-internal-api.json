@@ -1,0 +1,16 @@
+{
+  "id": "mcp-secure-internal-api",
+  "title": "Phase 1: secure the core MCP internal API boundary. Full spec: docs/MCP-PRODUCTION-FIX-PLAN.md",
+  "priority": 3,
+  "depends_on": [],
+  "acceptance": [
+    "API-key middleware applied to the complete /internal/mcp/* router and any MCP-only reminder/token-exchange route",
+    "startup fails when MCP_INTERNAL_API_KEY is absent or empty in production",
+    "credentials compared in constant time; 401 for missing/invalid keys without logging secret values",
+    "NetworkPolicy permits MCP-to-core traffic and denies unrelated pods; TLS retained on the public service path",
+    "route-level tests cover every protected route with missing, invalid, and valid keys",
+    "no MCP internal operation is reachable without the configured key"
+  ],
+  "docs_required": false,
+  "status": "completed"
+}

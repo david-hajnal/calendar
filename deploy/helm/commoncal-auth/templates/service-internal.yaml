@@ -10,7 +10,7 @@ spec:
   type: ClusterIP
   # The internal (bridge) service is intentionally NOT exposed via any Ingress.
   # It is reachable only from the CommonCal namespace, enforced by the
-  # NetworkPolicy in networkpolicy.yaml. The bridge key (LAB_BRIDGE_KEY)
+  # NetworkPolicy in networkpolicy.yaml. The bridge key (AUTH_BRIDGE_KEY)
   # authenticates every call.
   selector:
     {{- include "commoncal-auth.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,15 @@
+{
+  "status": "completed",
+  "summary": "T12 mutation coverage is correct: moves atomically emit source-removal and target-addition in one transaction, all supported mutation paths record exactly one change, imported writes are rejected, and no duplicates occur. All 60 tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "DAV delete path (http.rs:953-998) stamps resource_name post-commit with let _ =; a concurrent sync-collection in that narrow window could see NULL resource_name. T11 concern, not T12."
+  ]
+}

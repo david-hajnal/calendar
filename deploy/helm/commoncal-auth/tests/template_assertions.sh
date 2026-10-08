@@ -187,12 +187,12 @@ grep -q 'secretKeyRef:' "$rendered"
 grep -q 'name: commoncal-auth-secrets' "$rendered"
 # The bridge key must come from a Secret reference, not a literal.
 if ! awk '
-  /- name: LAB_BRIDGE_KEY/ { in_bridge=1; next }
+  /- name: AUTH_BRIDGE_KEY/ { in_bridge=1; next }
   in_bridge && /valueFrom:/ { has_reference=1 }
   in_bridge && /^[[:space:]]+- name:/ { in_bridge=0 }
   END { exit has_reference ? 0 : 1 }
 ' "$rendered"; then
-  echo 'LAB_BRIDGE_KEY must be supplied by a Secret reference' >&2
+  echo 'AUTH_BRIDGE_KEY must be supplied by a Secret reference' >&2
   exit 1
 fi
 
@@ -213,8 +213,8 @@ grep -A30 'name: commoncal-auth-migrate' "$rendered" | grep -q 'app.kubernetes.i
 grep -q 'minAvailable: 1' "$rendered"
 
 # --- Issuer / resource consistency (non-secret config) ---------------------
-grep -q 'LAB_ISSUER' "$rendered"
-grep -q 'LAB_RESOURCE_URL' "$rendered"
-grep -q 'LAB_COMMONCAL_URL' "$rendered"
+grep -q 'AUTH_ISSUER' "$rendered"
+grep -q 'AUTH_RESOURCE_URL' "$rendered"
+grep -q 'AUTH_COMMONCAL_URL' "$rendered"
 
 echo 'commoncal-auth chart assertions passed'

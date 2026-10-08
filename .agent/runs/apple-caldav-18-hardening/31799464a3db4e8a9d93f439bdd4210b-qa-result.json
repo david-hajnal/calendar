@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "T18 CalDAV production hardening verified: malformed/oversized/throttled requests fail before writes, logs carry no credentials or bodies, production transport fails closed, and metrics classify failures. All 96 caldav tests plus the full backend suite pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --lib caldav",
+    "cargo test --lib caldav::http::tests::dav_",
+    "cargo test --lib caldav::http::tests::production_",
+    "cargo test --lib caldav::http::tests::caldav_metrics",
+    "cargo test"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "DAV auth rate limiter (10 attempts/60s per client IP) is checked in authenticate_dav_request before any handler logic, so throttled reads and writes both fail pre-write.",
+    "Access log middleware (backend/src/http.rs:2545) logs only method/path/status/bytes/latency/request_id; it never logs the Authorization header or request body.",
+    "SecretToken Debug impl (backend/src/security.rs:250) redacts to SecretToken([REDACTED]); caldav resource names are UUIDv4 so logged paths are safe.",
+    "validate_caldav_public_origin (backend/src/config.rs:259) rejects non-HTTPS CALDAV_PUBLIC_ORIGIN in production and requires the origin to be present."
+  ]
+}

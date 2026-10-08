@@ -188,7 +188,13 @@ pub struct IdempotencyKeyPath {
 #[derive(Debug, Deserialize)]
 pub struct RecordIdempotencyPayload {
     pub operation_id: String,
+    pub user_id: i64,
     pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CheckIdempotencyQuery {
+    pub user_id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,7 +405,7 @@ pub async fn list_calendars_for_mcp(
         "SELECT c.id, c.name, c.description, ca.role
          FROM calendars c
          JOIN calendar_acl ca ON c.id = ca.calendar_id
-         WHERE ca.user_id = ?",
+         WHERE ca.user_id = ? AND c.archived = 0",
     )
     .bind(user_id)
     .fetch_all(&pool)
@@ -425,7 +431,7 @@ pub async fn get_calendar_role(
     Path((calendar_id, user_id)): Path<(i64, i64)>,
 ) -> Result<Json<CalendarRoleResponse>, (StatusCode, String)> {
     let role = sqlx::query_as::<_, (String,)>(
-        "SELECT role FROM calendar_acl WHERE calendar_id = ? AND user_id = ?",
+        "SELECT ca.role FROM calendar_acl ca JOIN calendars c ON c.id = ca.calendar_id WHERE ca.calendar_id = ? AND ca.user_id = ? AND c.archived = 0",
     )
     .bind(calendar_id)
     .bind(user_id)
@@ -723,16 +729,33 @@ pub async fn commit_delete_intent(
     }
 }
 
-/// Get MCP grants.
+/// Get the single authoritative active MCP grant for a user + OAuth client.
+///
+/// Returns only the active grant (revoked_at IS NULL and not expired). This
+/// guarantees the MCP server resolves at most one grant, and that revocation
+/// takes effect immediately on the next tool invocation.
 pub async fn get_mcp_grants(
     State(pool): State<SqlitePool>,
     Query(params): Query<McpGrantsQuery>,
 ) -> Result<Json<Vec<McpGrantResponse>>, (StatusCode, String)> {
+    let now = chrono::Utc::now().timestamp();
     let grants = sqlx::query_as::<_, (String, i64, String, String, i32, i32, i32, i32, i32, i32, i64, Option<i64>, Option<i64>, Option<i64>)>(
-        "SELECT id, user_id, oauth_client_id, allowed_calendar_ids, allow_availability, allow_event_titles, allow_event_details, allow_create, allow_update, allow_delete, created_at, last_used_at, expires_at, revoked_at FROM mcp_grant WHERE user_id = ? AND oauth_client_id = ?"
+        "SELECT id, user_id, oauth_client_id, allowed_calendar_ids, allow_availability, allow_event_titles, allow_event_details, allow_create, allow_update, allow_delete, created_at, last_used_at, expires_at, revoked_at FROM mcp_grant WHERE user_id = ? AND oauth_client_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1"
     )
     .bind(params.user_id)
     .bind(&params.client_id)
+    .bind(now)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Grants store consent, while current membership remains authoritative.
+    // Intersect on every lookup so all tools lose access immediately when a
+    // calendar is archived or its membership is removed.
+    let live_calendars: Vec<i64> = sqlx::query_scalar(
+        "SELECT c.id FROM calendars c JOIN calendar_acl ca ON ca.calendar_id = c.id WHERE ca.user_id = ? AND c.archived = 0",
+    )
+    .bind(params.user_id)
     .fetch_all(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -761,7 +784,10 @@ pub async fn get_mcp_grants(
                     grant_id: id,
                     user_id,
                     oauth_client_id: client_id,
-                    allowed_calendar_ids: calendars,
+                    allowed_calendar_ids: calendars
+                        .into_iter()
+                        .filter(|id| live_calendars.contains(id))
+                        .collect(),
                     allow_availability: avail != 0,
                     allow_event_titles: titles != 0,
                     allow_event_details: details != 0,
@@ -784,11 +810,13 @@ pub async fn get_mcp_grants(
 pub async fn check_idempotency(
     State(pool): State<SqlitePool>,
     Path(operation_id): Path<String>,
+    Query(params): Query<CheckIdempotencyQuery>,
 ) -> Result<Json<Option<serde_json::Value>>, (StatusCode, String)> {
     let result = sqlx::query_as::<_, (i64, String, String)>(
-        "SELECT response_status, response_headers, response_body FROM idempotency_key WHERE key = ?"
+        "SELECT response_status, response_headers, response_body FROM idempotency_key WHERE key = ? AND user_id = ?"
     )
     .bind(&operation_id)
+    .bind(params.user_id)
     .fetch_optional(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -813,7 +841,7 @@ pub async fn record_idempotency(
         "INSERT OR REPLACE INTO idempotency_key (key, user_id, response_status, response_headers, response_body, created_at) VALUES (?, ?, 0, '[]', ?, ?)"
     )
     .bind(&payload.operation_id)
-    .bind(0)
+    .bind(payload.user_id)
     .bind(payload.payload.to_string())
     .bind(now)
     .execute(&pool)
@@ -976,5 +1004,152 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    #[tokio::test]
+    async fn get_mcp_grants_returns_only_active_grant() {
+        let pool = test_pool().await;
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert an active grant and a revoked grant for the same (user, client).
+        sqlx::query(
+            "INSERT INTO mcp_grant (id, user_id, oauth_client_id, allowed_calendar_ids, created_at, revoked_at) VALUES ('active', 1, 'client', '[]', ?, NULL)",
+        )
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO mcp_grant (id, user_id, oauth_client_id, allowed_calendar_ids, created_at, revoked_at) VALUES ('revoked', 1, 'client', '[]', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The internal API must return exactly one grant (the active one).
+        let grants = get_mcp_grants(
+            State(pool.clone()),
+            Query(McpGrantsQuery {
+                user_id: 1,
+                client_id: "client".to_string(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(grants.len(), 1, "must return exactly one active grant");
+        assert_eq!(grants[0].grant_id, "active");
+        assert!(grants[0].revoked_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_mcp_grants_returns_empty_when_all_revoked() {
+        let pool = test_pool().await;
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert only a revoked grant.
+        sqlx::query(
+            "INSERT INTO mcp_grant (id, user_id, oauth_client_id, allowed_calendar_ids, created_at, revoked_at) VALUES ('revoked', 1, 'client', '[]', ?, ?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The internal API must return no grants (immediate revocation).
+        let grants = get_mcp_grants(
+            State(pool.clone()),
+            Query(McpGrantsQuery {
+                user_id: 1,
+                client_id: "client".to_string(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            grants.is_empty(),
+            "must return no grants when all are revoked"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_mcp_grants_excludes_expired_grant() {
+        let pool = test_pool().await;
+        let now = chrono::Utc::now().timestamp();
+
+        // Insert an expired grant.
+        sqlx::query(
+            "INSERT INTO mcp_grant (id, user_id, oauth_client_id, allowed_calendar_ids, created_at, expires_at, revoked_at) VALUES ('expired', 1, 'client', '[]', ?, ?, NULL)",
+        )
+        .bind(now - 1000)
+        .bind(now - 100)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The internal API must return no grants (expired).
+        let grants = get_mcp_grants(
+            State(pool.clone()),
+            Query(McpGrantsQuery {
+                user_id: 1,
+                client_id: "client".to_string(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(
+            grants.is_empty(),
+            "must return no grants when the grant is expired"
+        );
+    }
+    #[tokio::test]
+    async fn grant_lookup_removes_lost_and_archived_calendar_access() {
+        let pool = test_pool().await;
+        let user: i64 = sqlx::query_scalar("INSERT INTO users (normalized_email, status, created_at, is_superadmin) VALUES ('live@example.com', 'registered', 1, 0) RETURNING id").fetch_one(&pool).await.unwrap();
+        let mut calendars = Vec::new();
+        for name in ["kept", "removed", "archived"] {
+            let id: i64 = sqlx::query_scalar("INSERT INTO calendars (owner_user_id, name, color, default_timezone, default_event_visibility, created_at, updated_at) VALUES (?, ?, '#fff', 'UTC', 'default', 1, 1) RETURNING id")
+                .bind(user).bind(name).fetch_one(&pool).await.unwrap();
+            sqlx::query("INSERT INTO calendar_acl (calendar_id, user_id, role, created_at, updated_at) VALUES (?, ?, 'owner', 1, 1)").bind(id).bind(user).execute(&pool).await.unwrap();
+            calendars.push(id);
+        }
+        sqlx::query("INSERT INTO mcp_grant (id, user_id, oauth_client_id, allowed_calendar_ids, created_at) VALUES ('live', ?, 'client', ?, 1)")
+            .bind(user).bind(serde_json::to_string(&calendars).unwrap()).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM calendar_acl WHERE calendar_id = ?")
+            .bind(calendars[1])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE calendars SET archived = 1 WHERE id = ?")
+            .bind(calendars[2])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let grants = get_mcp_grants(
+            State(pool.clone()),
+            Query(McpGrantsQuery {
+                user_id: user,
+                client_id: "client".into(),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(grants[0].allowed_calendar_ids, vec![calendars[0]]);
+        let visible = list_calendars_for_mcp(State(pool.clone()), Path(user))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            visible.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![calendars[0]]
+        );
+        let role = get_calendar_role(State(pool), Path((calendars[2], user))).await;
+        assert_eq!(role.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
     }
 }

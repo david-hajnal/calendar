@@ -1,0 +1,14 @@
+{
+  "status": "completed",
+  "summary": "Phase 0.3 oauth-lifecycle harness verified: FAIL path (current-production) exits 1 with L1 DCR violation (auth service not deployed, expected lifecycle/discovery reason); PASS path (compliant) exits 0 with L1-L7 all passing (DCR, Auth Code + S256 PKCE, token exchange, initialize, notifications/initialized, tools/list nine tools with descriptions + schemas, tools/call calendar_list). Harness is a pure HTTP client, does not call the lab release binary.",
+  "files_changed": [],
+  "verification_commands": [
+    "node mcp-acceptance/verify-oauth-lifecycle.js"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "mcp-acceptance/ is a new test harness (pure HTTP client, no lab binary). FAIL path fails on L1 (DCR) because current production auth service is not deployed (DCR returns SPA HTML). PASS path exercises full OAuth + MCP lifecycle against a verification-only mock (mock/lifecycle-server.js + mock/oauth-provider.js)."
+  ]
+}

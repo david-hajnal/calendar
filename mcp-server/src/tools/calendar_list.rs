@@ -3,10 +3,11 @@
 // Returns the user's calendars filtered by McpGrant permissions.
 // Requires:
 // - Valid OAuth token
-// - McpGrant with allow_availability=true (metadata read)
+// - McpGrant with calendar metadata read permission
 // - Calendar IDs in grant's allowed_calendar_ids
 
 use axum::http::{Response, StatusCode};
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::error::ToolError;
@@ -14,8 +15,9 @@ use crate::mcp_grant::check_calendar_access;
 use crate::output_schema::{CalendarListOutput, CalendarSummary, ContentBlock, ToolOutput};
 use crate::tools::AuthorizedToolContext;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CalendarListParams {
+    /// Whether to include access-level details in the response.
     #[serde(default)]
     pub include_access: bool,
 }
@@ -23,11 +25,12 @@ pub struct CalendarListParams {
 /// Handle the calendar_list tool call.
 ///
 /// Authorization pipeline:
-/// 1. Gateway validates the OAuth token and resolves the authoritative grant.
-/// 2. Check the grant's tool permission.
-/// 3. Call CommonCal core to list calendars.
-/// 4. Filter by the grant's allowed_calendar_ids.
-/// 5. Return the structured response.
+/// 1. Auth middleware validates the OAuth token and publishes the identity.
+/// 2. Service layer resolves the authoritative grant.
+/// 3. Check the grant's calendar-list permission.
+/// 4. Call CommonCal core to list calendars.
+/// 5. Filter by the grant's allowed_calendar_ids.
+/// 6. Return the structured response.
 pub async fn handle(
     context: &AuthorizedToolContext<'_>,
     _params: CalendarListParams,
@@ -35,9 +38,13 @@ pub async fn handle(
     let grant = context.grant;
 
     // Check tool permission against the authoritative grant.
-    if !crate::mcp_grant::check_tool_permission(grant, "availability_find") {
+    //
+    // calendar_list is a calendar-metadata read; it is gated by the
+    // availability/metadata capability, NOT by the availability_find tool
+    // capability. (Previously this checked the wrong capability.)
+    if !crate::mcp_grant::check_tool_permission(grant, "calendar_list") {
         return Err(ToolError::Forbidden(
-            "calendar_list requires availability permission".to_string(),
+            "calendar_list requires calendar metadata read permission".to_string(),
         ));
     }
 
@@ -60,7 +67,7 @@ pub async fn handle(
         })
         .collect();
 
-    // Step 5: Build structured response.
+    // Build structured response.
     let output = ToolOutput {
         content: vec![ContentBlock::Text {
             text: serde_json::to_string_pretty(&CalendarListOutput {
@@ -78,14 +85,6 @@ pub async fn handle(
         .header("content-type", "application/json")
         .body(axum::body::Body::from(body))
         .unwrap())
-}
-
-/// Handle calendar_list for the tracer bullet — returns empty tool catalog.
-/// Slice 5 will wire this to the real tool list.
-pub async fn handle_empty() -> Result<serde_json::Value, crate::error::ToolError> {
-    Ok(serde_json::json!({
-        "tools": []
-    }))
 }
 
 #[cfg(test)]

@@ -100,12 +100,12 @@ authBridge:
   enabled: false
   # URL of the private bridge (internal service of commoncal-auth). Non-secret.
   url: "http://commoncal-auth-internal.commoncal.svc:80"
-  # Timeout (ms) for bridge calls.
-  timeoutMs: 5000
+  # Timeout (seconds) for bridge calls.
+  timeoutSecs: 5
   # Pre-existing Secret holding the bridge key. The key must match the
-  # LAB_BRIDGE_KEY used by the authorization server.
+  # AUTH_BRIDGE_KEY used by the authorization server.
   secretName: commoncal-auth-secrets
-  secretKey: LAB_BRIDGE_KEY
+  secretKey: AUTH_BRIDGE_KEY
 
 resources:
   requests:

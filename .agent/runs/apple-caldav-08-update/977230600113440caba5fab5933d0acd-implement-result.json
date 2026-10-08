@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "Added conflict-safe CalDAV update: PUT to an existing resource now requires If-Match, enforces EditAnyEvent authorization (404, no disclosure), rejects stale/missing preconditions with 412 without mutation, routes the update through EventService with the observed version for atomicity, and rotates the ETag on success.",
+  "files_changed": [
+    "backend/src/caldav/http.rs",
+    "backend/tests/caldav_event_resource.rs"
+  ],
+  "verification_commands": [
+    "cargo test --test caldav_event_resource",
+    "cargo test --lib caldav",
+    "cargo test",
+    "cargo clippy --lib",
+    "cargo clippy --tests",
+    "cargo fmt --check"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Update path only supports timed, non-recurring events (consistent with T07 create); all-day and recurrence updates are out of scope per the packet and will be covered by T13/T14."
+  ],
+  "important_context": [
+    "The PUT handler (handle_put_event_resource) is now a dispatcher: existing resource -> handle_put_update_event_resource (If-Match required), missing resource -> handle_put_create_event_resource (If-None-Match: * required).",
+    "Conflict safety relies on two mechanisms: the If-Match vs content-derived ETag check (precondition) and EventService::update's expected_version optimistic concurrency (atomicity). Both return 412 on failure.",
+    "ETag is content-derived (etag_for_ical), so it rotates exactly when canonical content changes; the event version is a separate concurrency counter."
+  ]
+}

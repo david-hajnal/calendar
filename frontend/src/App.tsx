@@ -32,6 +32,15 @@ function safeRedirectTarget(value: string | null): string | null {
   }
 }
 
+function resumeAfterAuthentication(target: string) {
+  // Consent is rendered by core, so returning to it requires HTTP navigation.
+  if (new URL(target, window.location.origin).pathname.startsWith("/consent")) {
+    window.location.assign(target);
+  } else {
+    navigate(target);
+  }
+}
+
 function navigate(target: string) {
   window.history.replaceState({}, "", target);
   window.dispatchEvent(new PopStateEvent("popstate"));
@@ -63,6 +72,7 @@ function useIsMobile() {
 
 function LoginRequestPage() {
   const { api, completeAuthentication } = useAuth();
+  const [redirect] = useState(() => safeRedirectTarget(new URLSearchParams(window.location.search).get("redirect")));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [method, setMethod] = useState<"link" | "password">("link");
@@ -87,13 +97,12 @@ function LoginRequestPage() {
         }
         const data = await response.json() as ConsumptionResponse;
         await completeAuthentication(data.csrf_token);
-        window.history.replaceState({}, "", "/dashboard");
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        resumeAfterAuthentication(redirect ?? "/dashboard");
       } else {
         const response = await api.request("/api/v1/auth/login-links", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email }),
+          body: JSON.stringify({ email, ...(redirect === null ? {} : { redirect }) }),
         });
         if (!response.ok) throw new Error("request failed");
         setSubmitted(true);
@@ -203,7 +212,7 @@ function TokenConsumptionPage() {
         await completeAuthentication(data.csrf_token);
         if (active) {
           setResult("success");
-          if (redirect !== null) navigate(redirect);
+          if (redirect !== null) resumeAfterAuthentication(redirect);
         }
       } catch {
         if (active) setResult("failure");

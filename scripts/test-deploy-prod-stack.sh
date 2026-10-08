@@ -37,6 +37,10 @@ case "${1:-} ${2:-} ${3:-}" in
   "get namespace "*)
     ;;
   "get secret "*)
+    if [ "$3" = commoncal-auth-backup ]; then
+      # Fixture starts without a backup Secret; no operator secrets are read.
+      exit 0
+    fi
     if [ "$3" = commoncal-session ]; then
       case "$*" in
         *'jsonpath={.data.SESSION_SECRET}'*) printf '%s' dGVzdC1zZXNzaW9uLXNlY3JldA== ;;
@@ -310,7 +314,12 @@ if [ -n "${CMD_SEQ_LOG:-}" ]; then
 fi
 EOF
 
-chmod +x "$fixture/bin/kubectl" "$fixture/bin/openssl" "$fixture/bin/helm" "$fixture/bin/flux"
+cat >"$fixture/bin/age" <<'EOF'
+#!/bin/sh
+# Cryptography is verified by the real-image proof; this fixture checks the invocation.
+test "$1" = --encrypt && test "$2" = --recipient && test "$3" = age1deploymentfixture
+EOF
+chmod +x "$fixture/bin/kubectl" "$fixture/bin/openssl" "$fixture/bin/helm" "$fixture/bin/flux" "$fixture/bin/age"
 
 run_stack() {
   PATH="$fixture/bin:$PATH" \
@@ -335,7 +344,7 @@ run_stack() {
     MCP_INTERNAL_API_BASE=https://calendar.example.test \
     MCP_INTERNAL_API_KEY=test-internal-api-key \
     MCP_SESSION_SECRET=test-mcp-session-secret \
-    AUTH_DATABASE_URL=postgresql://auth:auth@localhost:5432/commoncal_auth \
+    AUTH_BACKUP_AGE_RECIPIENT=age1deploymentfixture \
     AUTH_BRIDGE_KEY=test-bridge-key \
     AUTH_COOKIE_KEYS='["test-cookie-key"]' \
     AUTH_SIGNING_KID=test-kid \
@@ -487,9 +496,17 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     try: manifest=json.loads(line)
     except ValueError: continue
     if manifest.get('metadata', {}).get('name') == 'commoncal-auth-secrets': manifests.append(manifest)
+backup_manifests=[]
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    try: manifest=json.loads(line)
+    except ValueError: continue
+    if manifest.get('metadata',{}).get('name')=='commoncal-auth-backup': backup_manifests.append(manifest)
+assert backup_manifests, 'enabled SQLite backup requires an applied recipient Secret'
+for manifest in backup_manifests:
+    assert manifest['metadata']['namespace']=='commoncal'
+    assert base64.b64decode(manifest['data']['AGE_RECIPIENT']).decode()=='age1deploymentfixture'
 assert manifests, 'auth Secret must be applied through stdin'
-expected={'DATABASE_URL':'postgresql://auth:auth@localhost:5432/commoncal_auth',
-          'AUTH_BRIDGE_KEY':'test-bridge-key', 'AUTH_COOKIE_KEYS':'["test-cookie-key"]',
+expected={'AUTH_BRIDGE_KEY':'test-bridge-key', 'AUTH_COOKIE_KEYS':'["test-cookie-key"]',
           'AUTH_SIGNING_KID':'test-kid', 'AUTH_JWKS':pathlib.Path(sys.argv[2]).read_text()}
 for manifest in manifests:
     assert manifest['type'] == 'Opaque'
@@ -497,7 +514,7 @@ for manifest in manifests:
     actual={key:base64.b64decode(value).decode() for key,value in manifest['data'].items()}
     assert actual == expected, 'auth stdin Secret must contain every expected input'
 arguments='\n'.join(pathlib.Path(path).read_text() for path in sys.argv[3:])
-for key in ['DATABASE_URL', 'AUTH_BRIDGE_KEY', 'AUTH_COOKIE_KEYS', 'AUTH_JWKS']:
+for key in ['AUTH_BRIDGE_KEY', 'AUTH_COOKIE_KEYS', 'AUTH_JWKS']:
     assert expected[key] not in arguments, f'{key} must not appear in process arguments'
 assert 'private-jwks-fixture' not in arguments, 'private JWKS must not appear in process arguments'
 PY

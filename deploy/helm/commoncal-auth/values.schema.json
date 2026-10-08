@@ -46,10 +46,6 @@
           "type": "string",
           "minLength": 1
         },
-        "databaseUrlKey": {
-          "type": "string",
-          "minLength": 1
-        },
         "bridgeKeyKey": {
           "type": "string",
           "minLength": 1
@@ -65,17 +61,56 @@
         "signingKidKey": {
           "type": "string",
           "minLength": 1
-        },
-        "databaseCaSecret": {
-          "type": "string",
-          "minLength": 1
-        },
-        "databaseCaKey": {
-          "type": "string",
-          "minLength": 1
         }
       },
       "additionalProperties": false
+    },
+    "replicaCount": {
+      "const": 1
+    },
+    "persistence": {
+      "type": "object",
+      "required": [
+        "databasePath",
+        "size",
+        "accessModes"
+      ],
+      "properties": {
+        "databasePath": {
+          "type": "string",
+          "pattern": "^/app/data/[A-Za-z0-9_.-]+\\.sqlite$"
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "accessModes": {
+          "const": [
+            "ReadWriteOnce"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "migration": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "not": {}
+        }
+      }
     }
   }
 }

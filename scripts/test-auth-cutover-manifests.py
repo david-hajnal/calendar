@@ -9,7 +9,7 @@ root = pathlib.Path(__file__).resolve().parents[1]
 cutover = root / 'deploy/flux/overlays/auth-cutover'
 rendered_overlay = subprocess.check_output(['kubectl', 'kustomize', str(cutover)], text=True)
 releases = {doc['metadata']['name']: doc for doc in yaml.safe_load_all(rendered_overlay) if doc and doc['kind'] == 'HelmRelease'}
-expected = {'commoncal-auth-postgres': set(), 'commoncal-auth': {'commoncal-auth-postgres'}, 'commoncal': {'commoncal-auth'}, 'commoncal-mcp': {'commoncal', 'commoncal-auth'}}
+expected = {'commoncal-auth': set(), 'commoncal': {'commoncal-auth'}, 'commoncal-mcp': {'commoncal', 'commoncal-auth'}}
 assert set(releases) == set(expected)
 for name, dependencies in expected.items():
     assert {item['name'] for item in releases[name]['spec'].get('dependsOn', [])} == dependencies, name
@@ -61,9 +61,16 @@ assert 'AUTH_BRIDGE_TIMEOUT_MS' not in core_config
 assert core_config['AUTH_BRIDGE_URL'] == 'http://commoncal-auth-internal.commoncal.svc:80'
 assert auth['command'] == ['node', 'src/production.mjs']
 assert auth['readinessProbe']['httpGet']['path'] == '/ready'
-assert auth_env['DATABASE_URL']['valueFrom']['secretKeyRef'] == {'name': 'commoncal-auth-secrets', 'key': 'DATABASE_URL'}
-volume = next(v for v in obj('commoncal-auth', 'Deployment')['spec']['template']['spec']['volumes'] if v['name'] == 'database-ca')
-assert volume['secret']['secretName'] == 'commoncal-auth-postgres-tls'
+assert 'DATABASE_URL' not in auth_env
+assert auth_config['AUTH_SQLITE_PATH'] == '/app/data/auth.sqlite'
+workload = obj('commoncal-auth', 'Deployment')
+assert workload['spec']['replicas'] == 1
+assert workload['spec']['strategy'] == {'type': 'Recreate'}
+assert workload['spec']['template']['spec']['initContainers'][0]['command'] == ['node', 'src/migrate.mjs']
+volume = next(v for v in workload['spec']['template']['spec']['volumes'] if v['name'] == 'data')
+assert volume['persistentVolumeClaim']['claimName'] == 'commoncal-auth-data'
+assert not any(v['name'] == 'database-ca' for v in workload['spec']['template']['spec']['volumes'])
+assert obj('commoncal-auth', 'PersistentVolumeClaim')['metadata']['annotations']['helm.sh/resource-policy'] == 'keep'
 for name, host, secret in [('commoncal-auth', 'auth.hajnal.space', 'commoncal-auth-tls'), ('commoncal', 'cal.hajnal.space', 'commoncal-tls'), ('commoncal-mcp', 'mcal.hajnal.space', 'commoncal-tls')]:
     ingress = obj(name, 'Ingress')['spec']
     assert host in [rule['host'] for rule in ingress['rules']]
@@ -75,7 +82,8 @@ private = obj('commoncal-auth', 'Service', 'commoncal-auth-internal')['spec']
 assert private.get('type', 'ClusterIP') == 'ClusterIP'
 assert private['ports'][0]['targetPort'] == 'private'
 assert next(port for port in auth['ports'] if port['name'] == 'private')['containerPort'] == 4001
-policy = obj('commoncal-auth', 'NetworkPolicy')['spec']
+policy = obj('commoncal-auth', 'NetworkPolicy', 'commoncal-auth')['spec']
+assert policy['egress'] == []
 bridge = next(rule for rule in policy['ingress'] if rule['ports'][0]['port'] == 4001)
 assert bridge['from'][0]['namespaceSelector']['matchLabels']['kubernetes.io/metadata.name'] == 'commoncal'
 assert bridge['from'][0]['podSelector']['matchLabels']['app.kubernetes.io/name'] == 'commoncal'

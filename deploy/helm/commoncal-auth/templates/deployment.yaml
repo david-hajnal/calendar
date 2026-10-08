@@ -9,10 +9,7 @@ spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: 5
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       {{- include "commoncal-auth.selectorLabels" . | nindent 6 }}
@@ -27,6 +24,27 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "src/migrate.mjs"]
+          env:
+            - name: AUTH_SQLITE_PATH
+              value: {{ .Values.persistence.databasePath | quote }}
+            - name: NODE_ENV
+              value: production
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
       containers:
         - name: auth
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -47,11 +65,6 @@ spec:
           env:
             # Secrets are injected by name reference only — no value is ever
             # rendered into this manifest.
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.name }}
-                  key: {{ .Values.secrets.databaseUrlKey }}
             - name: AUTH_BRIDGE_KEY
               valueFrom:
                 secretKeyRef:
@@ -71,15 +84,12 @@ spec:
             # path is passed via env. The file content comes from the Secret.
             - name: AUTH_JWKS_FILE
               value: /etc/commoncal-auth/jwks.json
-            - name: NODE_EXTRA_CA_CERTS
-              value: /etc/auth-database/ca.crt
           volumeMounts:
             - name: jwks
               mountPath: /etc/commoncal-auth
               readOnly: true
-            - name: database-ca
-              mountPath: /etc/auth-database
-              readOnly: true
+            - name: data
+              mountPath: /app/data
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
@@ -93,12 +103,9 @@ spec:
             items:
               - key: {{ .Values.secrets.jwksKey }}
                 path: jwks.json
-        - name: database-ca
-          secret:
-            secretName: {{ .Values.secrets.databaseCaSecret }}
-            items:
-              - key: {{ .Values.secrets.databaseCaKey }}
-                path: ca.crt
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "commoncal-auth.fullname" . }}-data
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

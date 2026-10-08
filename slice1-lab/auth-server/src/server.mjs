@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 
 import Provider, { errors } from 'oidc-provider';
-import pg from 'pg';
+import { SQLiteStorage } from './sqlite-storage.mjs';
 
 import PostgresAdapter, { configureAdapter } from './postgres-adapter.mjs';
 import { cleanupExpired, startRetention } from './retention.mjs';
@@ -14,10 +14,10 @@ import { productionConfig } from './production-config.mjs';
 import { HandoffStore } from './handoff-store.mjs';
 import { validateRedirect, defaultLabCatalog } from './dcr-policy.mjs';
 
-const { Pool } = pg;
 const here = dirname(fileURLToPath(import.meta.url));
 
 const PRODUCTION = process.env.AUTH_RUNTIME === 'production';
+const Pool = PRODUCTION ? null : (await import('pg')).default.Pool;
 const production = PRODUCTION ? productionConfig(process.env, JSON.parse(await readFile(process.env.AUTH_JWKS_FILE, 'utf8'))) : null;
 
 const ISSUER = production?.issuer ?? process.env.LAB_ISSUER ?? 'http://127.0.0.1:4000';
@@ -54,19 +54,21 @@ const SCOPE_CATALOG = [
 // the provider treat them as OIDC scopes and loop on consent.
 const OIDC_SCOPES = ['openid', 'offline_access'];
 
-const pool = new Pool({
+const storage = PRODUCTION ? new SQLiteStorage(production.sqlitePath) : null;
+const Adapter = storage ? storage.adapter() : PostgresAdapter;
+const pool = storage ?? new Pool({
   connectionString: process.env.DATABASE_URL
     ?? 'postgres://oidc:oidc-lab-only@127.0.0.1:5432/oidc',
   max: 8,
 });
-configureAdapter(pool);
+if (!storage) configureAdapter(pool);
 
 const migration = await readFile(resolve(here, '../migrations/0001_lab.sql'), 'utf8');
 if (!PRODUCTION) {
   await pool.query(migration);
   await pool.query(await readFile(resolve(here, '../migrations/0002_production.sql'), 'utf8'));
 } else {
-  await pool.query('SELECT 1 FROM provider_entity, interaction_handoff, authorization_audit, dcr_rate_bucket LIMIT 0');
+  storage.assertReady();
 }
 // The JWKS document path is configurable so the deployment can mount a
 // persistent, rotatable key set from a Secret. The lab default keeps the
@@ -81,7 +83,7 @@ const COOKIE_KEYS = production?.cookies ?? (process.env.AUTH_COOKIE_KEYS ?? 'sli
   .split(',')
   .map((k) => k.trim())
   .filter(Boolean);
-const handoffs = new HandoffStore(pool);
+const handoffs = storage ? storage.handoffs() : new HandoffStore(pool);
 
 // ---------------------------------------------------------------------------
 // Slice 4: DCR ingress controls — rate limiting, audit log, redaction
@@ -126,7 +128,7 @@ async function audit(event, detail) {
   if (PRODUCTION) {
     // Only bounded, policy-controlled fields are persisted; never client supplied names or URLs.
     const safe = { ipHash: detail.ip ? createHash('sha256').update(detail.ip).digest('hex') : undefined, reason: event === 'dcr_rejected' ? 'invalid_request' : undefined };
-    await pool.query('INSERT INTO authorization_audit (event, detail) VALUES ($1, $2::jsonb)', [event, JSON.stringify(safe)]);
+    storage.audit(event, safe);
     return;
   }
   AUDIT_LOG.push({ ts: Date.now(), event, detail: redact(detail, REDACT_SECRETS) });
@@ -144,8 +146,7 @@ const dcrRateBuckets = new Map();
 async function dcrRateLimit(ip) {
   if (PRODUCTION) {
     const key = createHash('sha256').update(ip).digest('hex');
-    const result = await pool.query(`INSERT INTO dcr_rate_bucket (bucket_key, window_start, count) VALUES ($1, date_trunc('minute', NOW()), 1) ON CONFLICT (bucket_key) DO UPDATE SET window_start = date_trunc('minute', NOW()), count = CASE WHEN dcr_rate_bucket.window_start = date_trunc('minute', NOW()) THEN dcr_rate_bucket.count + 1 ELSE 1 END RETURNING count`, [key]);
-    return result.rows[0].count <= DCR_RATE_LIMIT;
+    return storage.rateLimit(key, DCR_RATE_LIMIT);
   }
   const now = Date.now();
   let bucket = dcrRateBuckets.get(ip);
@@ -211,7 +212,7 @@ function validateRegisteredMetadata(_ctx, key, value, metadata) {
 }
 
 const configuration = {
-  adapter: PostgresAdapter,
+  adapter: Adapter,
   clients: [],
   claims: { amr: null },
   scopes: OIDC_SCOPES,
@@ -449,7 +450,8 @@ const publicServer = createServer(async (req, res) => {
       return await bootstrapInteraction(req, res);
     }
     if (req.method === 'GET' && url.pathname === '/ready') {
-      await pool.query('SELECT 1 FROM provider_entity, interaction_handoff, authorization_audit, dcr_rate_bucket LIMIT 0');
+      if (storage) storage.assertReady();
+      else await pool.query('SELECT 1 FROM provider_entity, interaction_handoff, authorization_audit, dcr_rate_bucket LIMIT 0');
       return json(res, 200, { ok: true });
     }
     if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true });
@@ -528,7 +530,7 @@ const privateServer = createServer(async (req, res) => {
       const models = ['Client', 'Grant', 'AccessToken', 'AuthorizationCode', 'RefreshToken', 'Interaction', 'Session'];
       const removed = {};
       for (const m of models) {
-        removed[m] = await new PostgresAdapter(m).cleanup();
+        removed[m] = await new Adapter(m).cleanup();
       }
       removed.InteractionHandoff = await handoffs.cleanup();
       if (PRODUCTION) Object.assign(removed, await cleanupExpired(pool));

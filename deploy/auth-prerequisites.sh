@@ -16,13 +16,11 @@ pods=json.load(open(sys.argv[1])).get('items',[])
 if not any(any(c.get('type')=='Ready' and c.get('status')=='True' for c in p.get('status',{}).get('conditions',[])) for p in pods):
     raise SystemExit('No Ready Traefik controller in the configured ingress namespace')
 PYCONTROLLER
-kubectl wait certificate/commoncal-auth-postgres-ca certificate/commoncal-auth-postgres-tls -n "$namespace" --for=condition=Ready --timeout=30s
-for name in commoncal-auth-secrets commoncal-auth-postgres-secrets commoncal-auth-postgres-backup commoncal-auth-tls commoncal-auth-postgres-tls; do
+for name in commoncal-auth-secrets commoncal-auth-backup commoncal-auth-tls; do
   kubectl get secret "$name" -n "$namespace" -o json > "$work_dir/$name.json"
 done
 python3 - "$work_dir" "$namespace" <<'PY'
 import base64, json, pathlib, sys
-from urllib.parse import urlparse, unquote, parse_qs
 root=pathlib.Path(sys.argv[1]); namespace=sys.argv[2]
 def data(name,key):
     value=json.loads((root/(name+'.json')).read_text()).get('data',{}).get(key)
@@ -36,27 +34,39 @@ if len(bridge)<32 or len(keys)<2 or len(set(keys))!=len(keys) or any(len(key.str
 jwks=json.loads(data(auth,'AUTH_JWKS'));kid=data(auth,'AUTH_SIGNING_KID').decode()
 if not any(k.get('kid')==kid and k.get('d') and k.get('alg')=='RS256' for k in jwks.get('keys',[])):
     raise SystemExit('Active private signing key is missing')
-u=urlparse(data(auth,'DATABASE_URL').decode())
-if u.scheme not in ('postgres','postgresql') or u.hostname != f'commoncal-auth-postgres.{namespace}.svc.cluster.local' or u.username!='commoncal_auth' or u.path!='/commoncal_auth' or parse_qs(u.query).get('sslmode')!=['verify-full']:
-    raise SystemExit('Auth database DSN does not match the private TLS service')
-if unquote(u.password or '').encode()!=data('commoncal-auth-postgres-secrets','AUTH_DATABASE_PASSWORD'):
-    raise SystemExit('Auth and PostgreSQL application credentials do not match')
-if len(data('commoncal-auth-postgres-secrets','POSTGRES_PASSWORD'))<32:
-    raise SystemExit('PostgreSQL administrator password is too short')
-if not data('commoncal-auth-postgres-backup','AGE_RECIPIENT').decode().startswith('age1'):
+recipient = data('commoncal-auth-backup','AGE_RECIPIENT').decode()
+if not recipient.startswith('age1'):
     raise SystemExit('Encrypted backup recipient is missing')
-for name,host in [('commoncal-auth-tls','auth.hajnal.space'),('commoncal-auth-postgres-tls',f'commoncal-auth-postgres.{namespace}.svc.cluster.local')]:
+(root/'backup-recipient').write_text(recipient)
+for name,host in [('commoncal-auth-tls','auth.hajnal.space')]:
     (root/(name+'.crt')).write_bytes(data(name,'tls.crt'))
     data(name,'tls.key')
-(root/'database-ca.crt').write_bytes(data('commoncal-auth-postgres-tls','ca.crt'))
 PY
+command -v age >/dev/null 2>&1 || { echo "age is required to validate the backup recipient" >&2; exit 1; }
+age --encrypt --recipient "$(cat "$work_dir/backup-recipient")" --output "$work_dir/recipient-proof.age" </dev/null
 openssl x509 -in "$work_dir/commoncal-auth-tls.crt" -noout -checkhost auth.hajnal.space -checkend 86400 >/dev/null
-openssl x509 -in "$work_dir/commoncal-auth-postgres-tls.crt" -noout -checkhost "commoncal-auth-postgres.$namespace.svc.cluster.local" -checkend 86400 >/dev/null
-openssl verify -CAfile "$work_dir/database-ca.crt" "$work_dir/commoncal-auth-postgres-tls.crt" >/dev/null
-kubectl rollout status statefulset/commoncal-auth-postgres -n "$namespace" --timeout=30s
+kubectl rollout status deployment/commoncal-auth -n "$namespace" --timeout=30s
+kubectl get deployment commoncal-auth -n "$namespace" -o json > "$work_dir/deployment.json"
+kubectl get pvc commoncal-auth-data -n "$namespace" -o json > "$work_dir/pvc.json"
+python3 - "$work_dir" <<'SQLITE'
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1]); spec=json.loads((root/'deployment.json').read_text())['spec']
+if spec['replicas']!=1 or spec['strategy']['type']!='Recreate':
+    raise SystemExit('SQLite auth requires one replica and Recreate rollouts')
+if json.loads((root/'pvc.json').read_text()).get('status',{}).get('phase')!='Bound':
+    raise SystemExit('Authorization persistent volume is not Bound')
+SQLITE
+kubectl exec -n "$namespace" deployment/commoncal-auth -- node --input-type=module -e '
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(process.env.AUTH_SQLITE_PATH, {readOnly:true});
+try {
+  if (db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok") process.exitCode=1;
+  if (db.prepare("SELECT MAX(version) AS version FROM schema_migration").get().version !== 1) process.exitCode=1;
+} finally { db.close(); }
+'
 # Successful encryption alone does not prove recovery. Require the separate
 # restore drill evidence, whose operator procedure is documented in Phase 5.
-job_success=$(kubectl get jobs -n "$namespace" -l app.kubernetes.io/name=commoncal-auth-postgres-backup -o json)
+job_success=$(kubectl get jobs -n "$namespace" -l app.kubernetes.io/name=commoncal-auth-backup -o json)
 JOB_SUCCESS="$job_success" python3 - <<'PY'
 import json,os
 if not any(job.get('status',{}).get('succeeded',0)>0 for job in json.loads(os.environ['JOB_SUCCESS']).get('items',[])):

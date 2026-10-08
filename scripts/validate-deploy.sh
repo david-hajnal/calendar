@@ -23,13 +23,10 @@ if command -v helm &>/dev/null; then
   helm lint deploy/helm/commoncal --set-string mail.host=smtp.example.test --set-string mail.from=no-reply@example.test >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal"; ERRORS=$((ERRORS+1)); }
   helm lint deploy/helm/commoncal-mcp >/dev/null 2>&1 || { echo "FAIL: helm lint commoncal-mcp"; ERRORS=$((ERRORS+1)); }
   
-  helm lint deploy/helm/commoncal-auth-postgres --set-string image.tag=test >/dev/null 2>&1 || { echo "FAIL: helm lint auth PostgreSQL"; ERRORS=$((ERRORS+1)); }
-  bash deploy/helm/commoncal-auth-postgres/tests/template_assertions.sh || { echo "FAIL: auth PostgreSQL assertions"; ERRORS=$((ERRORS+1)); }
   echo "--- Helm template (auth) ---"
   helm template commoncal-auth deploy/helm/commoncal-auth \
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
-    --set-string secrets.databaseUrlKey=DATABASE_URL \
     --set-string secrets.bridgeKeyKey=AUTH_BRIDGE_KEY \
     --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
     --set-string secrets.signingKidKey=AUTH_SIGNING_KID \
@@ -200,7 +197,6 @@ if [ -s "$BUNDLE" ]; then
   helm template commoncal-auth deploy/helm/commoncal-auth \
     --set-string image.tag=test \
     --set-string secrets.name=commoncal-auth-secrets \
-    --set-string secrets.databaseUrlKey=DATABASE_URL \
     --set-string secrets.bridgeKeyKey=AUTH_BRIDGE_KEY \
     --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS \
     --set-string secrets.signingKidKey=AUTH_SIGNING_KID \

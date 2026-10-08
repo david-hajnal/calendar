@@ -9,7 +9,7 @@ set -euo pipefail
 #   MCP_INTERNAL_API_KEY        - MCP internal API key
 #   MCP_SESSION_SECRET          - MCP session secret
 #   MCP_OAUTH_ISSUER            - HTTPS OAuth issuer exposing the JWKS endpoint
-#   AUTH_DATABASE_URL           - PostgreSQL DSN for the authorization server (slice 5)
+#   AUTH_BACKUP_AGE_RECIPIENT   - public age recipient for encrypted SQLite backups
 #   AUTH_BRIDGE_KEY             - shared secret for the private bridge (slice 5)
 #   AUTH_COOKIE_KEYS            - comma-separated distinct cookie signing keys (slice 5)
 #   AUTH_SIGNING_KID            - JWKS key ID for the authorization server (slice 5)
@@ -61,7 +61,7 @@ FLUX_VERSION="${FLUX_VERSION:-v2.9.4}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 echo "==> Validating required environment variables..."
-for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET MCP_OAUTH_ISSUER AUTH_DATABASE_URL AUTH_BRIDGE_KEY AUTH_COOKIE_KEYS AUTH_SIGNING_KID GITHUB_TOKEN; do
+for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET MCP_OAUTH_ISSUER AUTH_BACKUP_AGE_RECIPIENT AUTH_BRIDGE_KEY AUTH_COOKIE_KEYS AUTH_SIGNING_KID GITHUB_TOKEN; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: $var is required" >&2
     exit 1
@@ -86,11 +86,8 @@ fi
 : "${AUTH_JWKS_FILE:?AUTH_JWKS_FILE must point to the private production JWKS}"
 [[ -r "$AUTH_JWKS_FILE" ]] || { echo 'ERROR: AUTH_JWKS_FILE is not readable' >&2; exit 1; }
 
-# AUTH_DATABASE_URL must be a PostgreSQL DSN.
-if [[ ! "$AUTH_DATABASE_URL" =~ ^postgres(ql)?:// ]]; then
-  echo "ERROR: AUTH_DATABASE_URL must be a PostgreSQL DSN (postgres:// or postgresql://)" >&2
-  exit 1
-fi
+# SQLite storage is configured by the chart; no database credentials are needed.
+
 
 echo "==> Ensuring namespace '$NAMESPACE' exists..."
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
@@ -119,6 +116,7 @@ echo "==> Creating auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;
 # it is created here out-of-band and referenced by the Helm chart.
 source "$(dirname "${BASH_SOURCE[0]}")/auth-secret.sh"
+apply_auth_backup_secret "$NAMESPACE" apply -f -
 apply_auth_secret "$NAMESPACE" apply -f -
 
 echo "==> Bootstrapping Flux (path: deploy/flux/overlays/production)..."

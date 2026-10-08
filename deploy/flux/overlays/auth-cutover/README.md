@@ -5,8 +5,8 @@ not reference this directory. Every candidate HelmRelease is suspended. The imag
 tags copied from the existing stack are placeholders for configuration review;
 they do not prove that the Phase 5/6 images exist or contain these changes.
 
-The dependency order is PostgreSQL → auth → core → MCP. Auth does not depend on
-core: its readiness checks the authorization database, while browser interaction
+The dependency order is auth → core → MCP. Auth stores state in SQLite on its retained PVC. Auth does not depend on
+core: its readiness checks the migrated SQLite file, while browser interaction
 redirects to core only after the stack is available. Core reads
 `AUTH_BRIDGE_SECRET` from Secret `commoncal-auth-secrets`, data key
 `AUTH_BRIDGE_KEY`; auth reads the same data key as `AUTH_BRIDGE_KEY`. Core's
@@ -29,25 +29,23 @@ activation. Do not deploy the rendering fixtures.
 
 ## Operator activation gates
 
-1. Publish immutable build images for PostgreSQL, auth, core and MCP, and replace
+1. Publish immutable build images for auth, core and MCP, and replace
    every candidate image tag with the corresponding verified published SHA tag.
-   Confirm image pull credentials for all four repositories.
-2. Follow `docs/AUTH-PRODUCTION.md` to provision the database Secrets,
-   TLS certificates, encrypted-backup recipient and authorization signing keys.
-   Verify cert-manager, storage class/PVC capacity, ingress controller namespace,
-   DNS, public TLS for `auth.hajnal.space`, and database `verify-full` trust. The
-   auth workload trusts `ca.crt` in `commoncal-auth-postgres-tls`; database CA
-   rollover requires the coordinated trust update/restart described there.
-3. Review the Git change that connects this candidate to production. Keep all
-   releases suspended initially. Database TLS resources may then reconcile,
-   provided cert-manager and certificate prerequisites are satisfied.
-4. Unsuspend PostgreSQL first. Prove readiness and encrypted backup/restore with
-   an isolated target. Unsuspend auth next, prove migration success and `/ready`,
-   then core and its private bridge. While the issuer remains unadvertised,
-   prove the real OAuth flow, take a fresh backup of the migrated schema and OAuth
-   records, and complete the full OAuth recovery drill in `docs/AUTH-PRODUCTION.md`.
-   Run `deploy/auth-prerequisites.sh` successfully before unsuspending MCP.
-   `dependsOn` enforces readiness order; it does not enforce these operator proofs.
+   Confirm image pull credentials for all three repositories.
+2. Follow `docs/AUTH-PRODUCTION.md` to provision auth and age recipient Secrets,
+   the retained SQLite PVC and public TLS. No database server, passwords or
+   database certificates are needed. Preserve existing signing/cookie keys and
+   import stopped PostgreSQL state first if an issuer was previously initialized.
+3. Review the Git change connecting the candidate to production. Keep all
+   releases suspended initially. Root Flux must remain paused during manual
+   staging; persist final configuration before resuming root reconciliation.
+4. Unsuspend auth first, prove initContainer migration and `/ready`, then core
+   and its private bridge. While the issuer remains unadvertised, prove the real
+   OAuth flow, take an encrypted online SQLite backup and complete the full OAuth
+   recovery drill in `docs/AUTH-PRODUCTION.md`. Run `deploy/auth-prerequisites.sh`
+   successfully before unsuspending MCP. `dependsOn` enforces readiness order;
+   it does not enforce these operator proofs. Exactly one auth replica and
+   Recreate upgrades are required. Backup jobs share its RWO volume on the same node.
 5. Run public-ingress acceptance below and the browser/OpenCode canary. Record
    results before broad client cutover. Keep the previous image/configuration
    revisions and database backups available for operator rollback.

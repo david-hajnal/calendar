@@ -110,17 +110,6 @@ jobs:
 
   auth-runtime:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-bookworm
-        env:
-          POSTGRES_USER: auth_test
-          POSTGRES_PASSWORD: disposable-auth-check-password
-          POSTGRES_DB: auth_test
-        ports: [5432:5432]
-        options: >-
-          --health-cmd "pg_isready -U auth_test -d auth_test"
-          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -135,7 +124,5 @@ jobs:
         working-directory: slice1-lab/auth-server
       - run: node tests/production-integration.mjs
         working-directory: slice1-lab/auth-server
-        env:
-          AUTH_TEST_DATABASE_URL: postgresql://auth_test:disposable-auth-check-password@127.0.0.1:5432/auth_test
-      - name: Verify authorization database image and recovery
+      - name: Verify SQLite authorization image and encrypted recovery
         run: ./scripts/dev.sh auth-storage-check

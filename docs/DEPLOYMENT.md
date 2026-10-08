@@ -8,7 +8,7 @@ exact `sha-<40 hex commit>` that CI built and scanned.
 
 The auth server is a Node.js OIDC provider retained for a future authentication
 cutover. Its HelmRelease manifest is retained for future use but excluded from
-the production Kustomization because its PostgreSQL dependency is unavailable.
+the production Kustomization until its SQLite storage, credentials and live acceptance gates are complete.
 Core therefore deploys without an auth dependency or private bridge
 configuration, and MCP continues to use its existing issuer.
 
@@ -53,7 +53,7 @@ auth (HelmRelease excluded; no installed resources or core bridge wiring)
 ```
 
 - **auth** — Node.js OIDC provider HelmRelease retained in Git, but excluded
-  from production while managed PostgreSQL is unavailable.
+  from production until the dedicated issuer is provisioned and verified.
 - **core** — Rust StatefulSet. The application backend; currently has no auth
   HelmRelease dependency or auth bridge configuration. Also serves the
   CalDAV account surface (`/dav/`) used by Apple Calendar on macOS and iOS;
@@ -166,15 +166,20 @@ The DAV root is:
 https://cal.hajnal.space/dav/
 ```
 
-Discovery is standards-shaped: `/.well-known/caldav` redirects to the DAV
-root, `OPTIONS` advertises the `1, 2, access-control, calendar-access`
+Discovery accepts GET, HEAD and PROPFIND at `/.well-known/caldav` and returns
+307 with `Cache-Control: no-cache` to the canonical `/dav/` root.
+[RFC 6764 §5](https://www.rfc-editor.org/rfc/rfc6764#section-5) permits 307;
+[RFC 9110 §15.4.8](https://www.rfc-editor.org/rfc/rfc9110#section-15.4.8)
+preserves the method and body when following it. Native Apple behavior still
+requires a client check. No fallback aliases are added for `/` or `/principals/`.
+At the DAV root, `OPTIONS` advertises the `1, 2, access-control, calendar-access`
 capabilities, and the principal/calendar-home `PROPFIND` responses expose the
 user's active calendars with their names, colors, and role privileges.
 
 ### Issue a connection password
 
 Connection passwords are revocable, per-device secrets. They are shown once
-at creation and stored only as a salted hash; the plaintext is never persisted
+at creation and stored only as a domain-separated keyed HMAC; the plaintext is never persisted
 or logged.
 
 From the web app, open **Settings → Calendar connections** and create a
@@ -326,11 +331,11 @@ Then add to each HelmRelease's `imagePullSecrets`.
 
 ## Production Secrets
 
-- `commoncal-auth-secrets` — auth server secrets:
-  - `DATABASE_URL` — PostgreSQL connection string for the auth database
-  - `LAB_BRIDGE_KEY` — shared secret for the private bridge endpoint
-  - `AUTH_COOKIE_KEYS` — JSON array of cookie signing keys (for rotation)
-  - `AUTH_SIGNING_KID` — current signing key ID
+- `commoncal-auth-secrets` — `AUTH_BRIDGE_KEY`, comma-separated distinct
+  `AUTH_COOKIE_KEYS`, `AUTH_SIGNING_KID`, and private `AUTH_JWKS`.
+- `commoncal-auth-backup` — public age recipient under `AGE_RECIPIENT`;
+  keep the private age identity recoverable outside the cluster.
+- `commoncal-auth-tls` — public TLS for `auth.hajnal.space`.
 - `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
 - `commoncal-mcp-secrets` — the shared internal API key, MCP session secret, and HTTPS OAuth issuer (`mcp-oauth-issuer`)
 - `commoncal-tls` — self-signed TLS certificate for the origin hop (covers both `cal.hajnal.space` and `mcal.hajnal.space`)
@@ -341,32 +346,27 @@ self-signed certificate is only presented on the Cloudflare-to-origin hop.
 
 `BACKUP_ENCRYPTION_KEY_HEX` must be an even number of hexadecimal characters (at least 32); 64-hex (32-byte) keys remain backward-compatible.
 
-## Auth Migration
+## Auth SQLite storage and migration
 
-The auth server uses a managed PostgreSQL database. Schema migrations run
-automatically via a Helm pre-install/pre-upgrade Job in the `commoncal-auth`
-chart. The migration Job:
-
-1. Runs before the auth Deployment starts
-2. Applies all pending migrations in order
-3. Exits 0 on success, non-zero on failure
-4. Blocks the auth Deployment rollout on failure
-
-To run migrations manually (e.g., after a failed rollout):
+Production auth uses `/app/data/auth.sqlite` on the retained `commoncal-auth-data`
+PVC. It has exactly one replica and Recreate rollouts. The initContainer runs
+`src/migrate.mjs` on that same volume before auth starts; production startup only
+checks readiness and never auto-migrates. Inspect it with:
 
 ```bash
-kubectl create job --namespace=commoncal \
-  --from=cronjob/commoncal-auth-migrate \
-  commoncal-auth-migrate-manual
-kubectl logs -n commoncal job/commoncal-auth-migrate-manual --follow
+kubectl logs -n commoncal deployment/commoncal-auth -c migrate
+kubectl rollout status deployment/commoncal-auth -n commoncal
 ```
 
-To inspect migration status:
+There is no production PostgreSQL dependency or database password. The daily
+`commoncal-auth-backup` CronJob takes a consistent online SQLite snapshot, checks
+integrity, encrypts it with age and retains 14 days of encrypted archives on the
+same PVC. Export backups to a separate failure domain. Never copy only a live
+SQLite main file while WAL is active.
 
-```bash
-kubectl get jobs -n commoncal -l app.kubernetes.io/name=commoncal-auth
-kubectl logs -n commoncal job/commoncal-auth-migrate --tail=50
-```
+Follow [the SQLite auth setup and recovery guide](AUTH-PRODUCTION.md). An existing
+PostgreSQL issuer requires a stopped-issuer import before activating SQLite;
+keep the original database, PVCs and signing/cookie keys available for rollback.
 
 ## Issuer Cutover
 
@@ -408,14 +408,14 @@ To roll back a release:
 
 To roll back the auth server specifically:
 
-1. Revert the auth HelmRelease tag to the previous version
-2. The migration Job is idempotent — it will not re-run if the schema is
-   already at the target version
-3. If the migration was destructive, restore the database from backup:
-   ```bash
-   pg_restore --dbname=commoncal_auth --clean --if-exists \
-     --username=auth < backup-file.dump
-   ```
+1. Revert the auth HelmRelease tag to a version compatible with the existing
+   SQLite schema. Preserve the auth PVC and signing/cookie keys.
+2. The migration initContainer is idempotent when the schema is already current.
+3. If a schema rollback needs recovery, stop auth and backup jobs first. Restore
+   a verified decrypted SQLite snapshot to the retained PVC while no process is
+   using it, with UID/GID 65534 and mode 0600. Restart the compatible image and
+   verify readiness and OAuth continuation. Follow [the auth recovery guide](AUTH-PRODUCTION.md);
+   never replace a running SQLite file or restore a PostgreSQL dump into it.
 
 ## TLS Cutover Checklist
 
@@ -808,3 +808,256 @@ not reach the running pod (Flux reverted the ConfigMap, or the pod has not
 restarted). Confirm with
 `kubectl -n commoncal get configmap commoncal -o yaml | grep PASSWORD_LOGIN_ENABLED`
 and `kubectl -n commoncal get pods`.
+
+
+## CalDAV compatibility repair handoff
+
+Code-level verification is separate from native Apple account setup. No
+successful macOS setup or production rollout is established by the local tests.
+
+The repair covers these defects:
+
+- Missing/unsupported properties and propname now use namespace-preserving XML
+  elements; empty status groups are omitted and explicit selections are honored.
+- XML parsing restores namespace scope and validates document/report grammar;
+  object PROPFIND, authenticated principal metadata, Depth rules and report
+  property selection share the corrected property handling.
+- Calendar-query applies component/range/recurrence semantics and reports result
+  overflow. Unsupported filters or calendar-data projections fail explicitly.
+- Sync tokens are direct multistatus children, collection/user/visibility-bound
+  opaque URIs. Snapshots retain their high-water mark, pages continue explicitly,
+  changes coalesce by resource, and durable tombstones survive event deletion.
+  Concurrent writes can require retry (503); old tokens require full resync
+  (403 `DAV:valid-sync-token`). Migration `0028_caldav_visibility_epochs.sql`
+  persists ACL epochs so revoke/regrant cannot revive a previous token.
+- HTTP status/capability/privilege claims, write preconditions and validators,
+  and iCalendar escaping, folding and timezone representation are corrected.
+  Parsing respects quoted parameter delimiters and escaped commas in categories;
+  URL properties retain URI values. Imported metadata is persisted and existing
+  imports are backfilled on a successful HTTP 200 feed refresh.
+
+### Post-deployment checks
+
+After the normal release applies migration 0028, run the read-only semantic
+smoke from the repository root. Enter a newly generated device password at the
+hidden prompt; do not paste credentials into command arguments or enable shell
+tracing. The script follows advertised same-origin principal/home/collection
+URLs, validates XML property statuses and checks initial-sync continuations.
+
+```sh
+export CALDAV_ORIGIN=https://cal.hajnal.space
+read -r -p 'Happening email: ' CALDAV_USERNAME
+export CALDAV_USERNAME
+read -r -s -p 'Connection password: ' CALDAV_PASSWORD
+printf '\n'
+export CALDAV_PASSWORD
+python3 scripts/caldav-smoke.py
+unset CALDAV_USERNAME CALDAV_PASSWORD
+```
+
+The prompts above use bash (`bash` first if your interactive shell is zsh).
+Success prints a calendar count, never credentials. A nonzero exit means the
+smoke failed; inspect server-side status logs without printing request headers.
+This smoke does not test write operations or prove native Apple compatibility.
+
+Then add a new Other CalDAV Account on macOS using the server, Happening email
+and a fresh connection password. Confirm account acceptance, expected writable,
+read-only and free/busy calendars, first sync and subsequent refresh. On a test
+calendar, create/read/update/delete an event in each app and verify the other
+app receives every change; include an all-day event and recurrence exception.
+Check imported-event restrictions and revoke a test connection to confirm 401.
+Record macOS version, setup time and result; do not record the password.
+
+If account setup still fails, capture the corresponding reverse-proxy access
+records with only timestamp, request **method**, URL **path** (without query),
+response **status**, and **User-Agent**. Keep Authorization, Cookie, passwords,
+request/response bodies and token-bearing query strings out of logs and shared
+traces. Correlate the setup time and User-Agent with discovery, PROPFIND and
+REPORT requests; inspect individual propstat statuses for 207 responses. This
+is a capture procedure, not a claim that safe logging is already configured.
+
+Residual checks: native Apple request sequences, TLS/public-host redirects and
+production middleware remain deployment checks; concurrent workloads may need
+503 retries and token-format changes cause a one-time full resync. The bundled
+chrono-tz transition data ends in 2099; recurring schedules beyond that horizon
+need refreshed timezone data before relying on future DST behavior. Local test
+results belong in the accompanying change report, including unavailable checks.
+
+Primary protocol references: [RFC 4918 (WebDAV)](https://www.rfc-editor.org/rfc/rfc4918),
+[RFC 3744 (privileges/principals)](https://www.rfc-editor.org/rfc/rfc3744),
+[RFC 4791 (CalDAV)](https://www.rfc-editor.org/rfc/rfc4791),
+[RFC 5397 (current-user-principal)](https://www.rfc-editor.org/rfc/rfc5397),
+[RFC 6764 (discovery)](https://www.rfc-editor.org/rfc/rfc6764),
+[RFC 6578 (sync)](https://www.rfc-editor.org/rfc/rfc6578),
+[RFC 5545 (iCalendar)](https://www.rfc-editor.org/rfc/rfc5545), and
+[RFC 9110 (HTTP, including PUT validators §9.3.4)](https://www.rfc-editor.org/rfc/rfc9110#section-9.3.4).
+
+
+### Local verification
+
+- `cargo test --manifest-path backend/Cargo.toml`: 571 passed across 43 suites,
+  including 104 CalDAV integration tests and 12 Apple fixture tests.
+- `cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings`:
+  passed.
+- `cargo fmt --manifest-path backend/Cargo.toml -- --check` and `git diff --check`:
+  passed.
+- `pnpm --dir e2e exec playwright test tests/caldav-account.spec.ts`: two projects
+  passed (desktop Firefox and mobile WebKit).
+- `scripts/caldav-smoke.py`: passed against a local server using API-issued
+  device credentials; production and native macOS verification remain pending.
+
+QA's last completed verdict was PASS WITH CONCERNS before the final metadata
+regressions. Its final summary hit an agent usage limit; the orchestrator
+verified the completed final 104-test QA log and full suite directly.
+
+### Suggested change description
+
+Commit subject and PR title: `fix(caldav): repair discovery and synchronization compatibility`
+
+Repair namespace-aware DAV properties, discovery, report parsing, recurrence
+queries and collection-bound paginated sync. Correct HTTP/iCalendar behavior,
+preserve imported metadata, and add ACL epoch migration, regressions and a
+credential-safe smoke script. Native macOS setup remains a post-deployment
+check. Validation: 571 backend tests, strict Clippy, formatting, two browser
+E2E projects and local semantic smoke passed.
+
+Domain reviewer from repository history: david-hajnal <david@hajnal.space>;
+no verified GitHub handle.
+
+
+## Discovery and key persistence rollout
+
+The discovery defect was confirmed: the well-known route accepted GET only,
+so Apple's PROPFIND received 405. Router/middleware regression tests now follow
+307 with the original DAV request body, Depth and same-origin authentication,
+then validate the root, current-user-principal, calendar home and collections.
+The semantic smoke checks both GET and PROPFIND discovery, redirect targets and
+XML properties. Passing these checks does not establish native Apple sync.
+
+A separate confirmed persistence defect was found in `SecretKey::derive`:
+PBKDF2 used a new random salt for every process and discarded it. Consequently,
+identical `SESSION_SECRET` values produced different keys on restart. The fix
+uses the stable domain salt `commoncal/session-key/v1`; connection-password
+HMAC hashing remains unchanged. Tests prove a credential survives a new service
+instance with the same database and secret, fails under deliberate key change,
+and still works under its original key afterward. Failed authentication does
+not itself revoke or rewrite it.
+
+### First rollout: required recovery
+
+Back up the database and configuration before promoting this change through
+the normal release/Flux process. Do not deploy automatically. This first
+rollout changes the effective derived key: the old discarded salts cannot be
+recovered from `SESSION_SECRET`, the database or ordinary backups alone.
+Existing pre-fix connection passwords are expected to fail once. Reissue device
+passwords and sessions, recreate outstanding invitation/login/public-share
+links, perform a full CalDAV resync and reconfigure external feed URLs encrypted
+with the old key. Account passwords (bcrypt), account data and events are not
+rehashed or deleted. There is no automatic database migration or credential
+revocation for this repair. Rolling back the old binary creates another random
+key and does not recover the previous key.
+
+After this transition, normal restarts and deployments preserve credentials
+when the database and `SESSION_SECRET` stay the same. Production startup rejects
+missing or empty `SESSION_SECRET`; random fallback is limited to development.
+
+### Secret ownership and deployment guard
+
+The core Helm deployment sets `APP_ENV=production` and injects `SESSION_SECRET`
+from `commoncal-session` through `secretKeyRef`. The current configuration uses
+one core replica and SQLite at `/app/data/commoncal.sqlite` on a PVC. Flux owns
+the chart and ConfigMap; no Git-managed core Secret was found in this checkout.
+
+Both `deploy/deploy-prod.sh` and `deploy/bootstrap-production.sh` now preserve
+an existing `commoncal-session` object in full, including its backup key. A
+matching supplied session secret permits deployment; mismatch, missing/empty
+key in an existing object, or read failure stops it. A missing Secret is created.
+`deploy-prod.sh` sources `deploy/.env`, which overrides exported variables;
+bootstrap gives an already-exported value precedence. Ensure the effective
+value matches the stored key rather than regenerating it during releases.
+
+Intentional rotation is a separate operator action. Supply the new value via a
+secure environment, disable shell tracing, then run:
+
+```bash
+CONFIRM_SESSION_KEY_ROTATION=rotate bash deploy/rotate-session-secret.sh
+```
+
+This patches only the session key and does not restart pods. Coordinate restart
+of every core process afterward; mixed keys reject credentials intermittently.
+Rotation requires the same credential/link/feed recovery described above.
+
+### Production investigation and post-deployment checks
+
+No production inspection was available during this repair. Actual Secret
+replacement, differing injected values, database replacement and explicit
+revocation remain unconfirmed hypotheses. The old scripts could replace the
+Secret; that capability alone does not prove it happened.
+
+Compare SHA-256 fingerprints without displaying secrets (bash; disable tracing):
+
+```bash
+set +x
+set -o pipefail
+kubectl -n commoncal get secret commoncal-session \
+  -o 'jsonpath={.data.SESSION_SECRET}' | python3 -c '
+import base64, hashlib, sys
+try:
+    secret = base64.b64decode(sys.stdin.read(), validate=True)
+    if not secret:
+        raise ValueError()
+except Exception:
+    sys.exit("Missing/empty or invalid session key; fingerprint unavailable")
+print(hashlib.sha256(secret).hexdigest())'
+kubectl -n commoncal get secret commoncal-session \
+  -o 'jsonpath={.metadata.uid}{" "}{.metadata.resourceVersion}{"\n"}'
+kubectl -n commoncal get pods
+read -r -p 'Core pod name: ' CORE_POD
+kubectl -n commoncal exec "$CORE_POD" -- sh -c \
+  'test -n "$SESSION_SECRET" && printf %s "$SESSION_SECRET" | sha256sum'
+```
+
+Record Secret UID/resourceVersion before and after deployment: a changed UID
+indicates object replacement; a changed resourceVersion indicates an update and
+does not by itself prove key rotation. Repeat the pod fingerprint for every core
+pod and after restart/deployment. Equal fingerprints verify injected values, but could not prevent the old random
+salt defect. Inspect PVC identity and SQLite path, credential counts and
+`revoked_at`, plus relevant `audit_log` actions/timestamps. Never select or log
+`token_hash`, password material, authorization headers or feed URLs. Preserve
+before/after evidence to distinguish revocation or database replacement.
+
+Use the hidden-prompt smoke command in **CalDAV compatibility repair handoff →
+Post-deployment checks** with an existing password issued after this repair.
+Keep that same password for another restart/deployment and rerun it; this is the
+persistence check. An old pre-fix password cannot validate persistence through
+the first corrective rollout. Confirm both discovery methods reach `/dav/`,
+with the expected principal/home and calendar count.
+
+Retry Apple account setup or refresh afterward. Capture the **first failing**
+request's method, path, status and User-Agent using the credential-safe proxy
+procedure above. Backend access logging defaults to OFF and lacks User-Agent,
+so those logs alone cannot supply the requested trace. Record native-client
+results separately from smoke results before claiming Apple compatibility.
+
+
+### Verification and suggested change description for this repair
+
+The current repair's full `cargo test --manifest-path backend/Cargo.toml` run
+exited successfully, including 183 library tests and 104 CalDAV integration
+tests among the complete integration suites. Three smoke fixtures passed,
+including discovery and initial sync for two calendars. Secret preservation,
+explicit rotation, deployment-stack and chart checks passed, as did backend
+formatting and `git diff --check`. These results describe this repair separately
+from the earlier compatibility handoff above; production and native Apple
+verification remain pending.
+
+Proposed commit subject and PR title:
+`fix(caldav): preserve discovery methods and deployment credentials`
+
+Accept PROPFIND discovery with a method/body-preserving 307, validate GET and
+PROPFIND discovery through the router and semantic smoke, and stabilize session
+key derivation across processes. Preserve existing production secrets during
+normal deployments and require explicit rotation. Document first-rollout
+credential/link/feed recovery and subsequent password persistence checks.
+Domain reviewer from repository history: david-hajnal <david@hajnal.space>;
+no verified GitHub handle. No commit, PR or deployment is created by this handoff.

@@ -1,9 +1,7 @@
-# Dormant: activate only after the public ingress and operator gates pass.
+# Suspended SQLite cutover candidate; no PostgreSQL resources.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../auth-preparation
-  - charts/postgres-helmrelease.yaml
-  - charts/auth-helmrelease.yaml
-  - charts/core-helmrelease.yaml
-  - charts/mcp-helmrelease.yaml
+- charts/auth-helmrelease.yaml
+- charts/core-helmrelease.yaml
+- charts/mcp-helmrelease.yaml

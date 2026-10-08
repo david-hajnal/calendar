@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "commoncal-auth.labels" . | nindent 4 }}
 data:
-  # Non-secret configuration only. Secrets (DATABASE_URL, AUTH_BRIDGE_KEY,
+  # Non-secret configuration only. Secrets (AUTH_BRIDGE_KEY,
   # cookie keys, JWKS) are injected from the pre-existing Secret referenced in
   # .Values.secrets — never rendered here.
   AUTH_ISSUER: {{ .Values.config.issuer | quote }}
@@ -20,4 +20,5 @@ data:
   AUTH_TRUST_PROXY: {{ .Values.config.trustProxy | quote }}
   AUTH_DCR_LOOPBACK_HOSTS: {{ .Values.config.dcrLoopbackHosts | quote }}
   AUTH_DCR_CALLBACK_PATH: {{ .Values.config.dcrCallbackPath | quote }}
+  AUTH_SQLITE_PATH: {{ .Values.persistence.databasePath | quote }}
   NODE_ENV: "production"

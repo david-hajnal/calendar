@@ -1,4 +1,4 @@
-# Dormant and suspended: replace all candidate image tags with published build SHAs before operator activation.
+# SQLite auth; production activation requires published images and recovery proof.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -53,7 +53,6 @@ spec:
         secretName: commoncal-auth-tls
     secrets:
       name: commoncal-auth-secrets
-      databaseUrlKey: DATABASE_URL
       bridgeKeyKey: AUTH_BRIDGE_KEY
       cookieKeysKey: AUTH_COOKIE_KEYS
       signingKidKey: AUTH_SIGNING_KID
@@ -61,12 +60,8 @@ spec:
       enabled: true
       ingressNamespace: traefik
       commoncalNamespace: commoncal
-      postgres:
-        port: 5432
     migration:
       enabled: true
-      backoffLimit: 3
-      activeDeadlineSeconds: 300
     pdb:
       enabled: true
       minAvailable: 1
@@ -74,11 +69,15 @@ spec:
       TZ: Europe/Budapest
     resources:
       requests:
-        cpu: 100m
-        memory: 128Mi
+        cpu: 50m
+        memory: 64Mi
       limits:
         cpu: 500m
         memory: 256Mi
-  dependsOn:
-  - name: commoncal-auth-postgres
+    persistence:
+      size: 1Gi
+      storageClass: ''
+      accessModes:
+      - ReadWriteOnce
+      databasePath: /app/data/auth.sqlite
   suspend: true

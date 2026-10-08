@@ -1,23 +1,20 @@
-// Migration entrypoint for the deployment migration job.
-//
-// Connects to the managed PostgreSQL instance using DATABASE_URL and applies
-// every migration in ../migrations/ in lexicographic order. Idempotent: each
-// migration uses CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS, so
-// re-running is safe. Exits 0 on success, non-zero on the first failure.
-//
-// This is the immutable entrypoint used by the Helm migration Job. The long-
-// lived production server never migrates; the Job gates rollout on a clean schema.
+import { openDatabase, migrateSQLite } from './sqlite-storage.mjs';
+// Explicit schema migration entrypoint. Production uses a versioned SQLite
+// transaction; PostgreSQL remains available for the disposable OAuth lab.
+// The production server never creates or migrates schema during startup.
 
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import pg from 'pg';
 
-const { Pool } = pg;
 const here = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = resolve(here, '../migrations');
 
+if (process.env.AUTH_SQLITE_PATH || process.env.NODE_ENV === 'production') {
+  try { const db=openDatabase(process.env.AUTH_SQLITE_PATH,{create:true}); try { migrateSQLite(db); } finally { db.close(); } console.log('migrate: SQLite schema ready'); process.exit(0); } catch { console.error('migrate: SQLite migration failed'); process.exit(1); }
+}
+const { Pool } = (await import('pg')).default;
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
   console.error('migrate: DATABASE_URL is required');

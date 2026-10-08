@@ -197,8 +197,14 @@ cmd_clean() {
   log "Cleaned"
 }
 
-# Keep this fixture isolated from the application project and all production data.
+# Production auth checks use a disposable SQLite directory, without a database server.
 cmd_auth_check() (
+  cd slice1-lab/auth-server
+  node tests/production-integration.mjs
+)
+
+# Optional verification for an already-running legacy PostgreSQL issuer.
+ensure_auth_docker() {
   if ! docker info >/dev/null 2>&1; then
     if [[ "$(uname -s)" == Darwin ]]; then
       open -a Docker
@@ -209,37 +215,21 @@ cmd_auth_check() (
     fi
     docker info >/dev/null 2>&1 || die "Docker daemon is not available"
   fi
-  trap 'docker compose -p happening-auth-check -f docker-compose.auth-test.yml down --volumes >/dev/null 2>&1' EXIT
-  docker compose -p happening-auth-check -f docker-compose.auth-test.yml up -d --wait postgres
-  AUTH_TEST_DATABASE_URL=postgres://auth_test:disposable-auth-check-password@127.0.0.1:55433/auth_test \
-    node slice1-lab/auth-server/tests/production-integration.mjs
+}
+
+cmd_auth_import_check() (
+  ensure_auth_docker
+  trap 'docker compose -p happening-auth-import-check -f docker-compose.auth-test.yml down --volumes >/dev/null 2>&1' EXIT
+  docker compose -p happening-auth-import-check -f docker-compose.auth-test.yml up -d --wait postgres
+  (cd slice1-lab/auth-server && AUTH_TEST_DATABASE_URL=postgresql://auth_test:disposable-auth-check-password@127.0.0.1:55433/auth_test node tests/postgres-import-proof.mjs)
 )
 
-# Unique Compose project, tmpfs databases, and temporary keys: no application
-# services or persisted production data participate in this proof.
+# Actual Node 22 auth image, age encryption, non-root filesystem and recovery.
 cmd_auth_storage_check() (
-  local storage_fixture
-  storage_fixture=$(mktemp -d)
-  export AUTH_STORAGE_FIXTURE="$storage_fixture"
-  trap 'docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml down --volumes >/dev/null 2>&1; rm -rf "$storage_fixture"' EXIT
-  docker info >/dev/null 2>&1 || die "Docker daemon is not available"
-  for name in ca renewed-ca untrusted-ca; do
-    openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$name disposable proof" \
-      -keyout "$storage_fixture/$name.key" -out "$storage_fixture/$name.crt" >/dev/null 2>&1
-  done
-  printf '%s\n' 'subjectAltName=DNS:db,DNS:restore' 'extendedKeyUsage=serverAuth' >"$storage_fixture/leaf.ext"
-  for leaf in tls renewed; do
-    local authority=ca
-    [[ "$leaf" == renewed ]] && authority=renewed-ca
-    openssl req -new -newkey rsa:2048 -nodes -subj '/CN=db' \
-      -keyout "$storage_fixture/$leaf.key" -out "$storage_fixture/$leaf.csr" >/dev/null 2>&1
-    openssl x509 -req -in "$storage_fixture/$leaf.csr" -CA "$storage_fixture/$authority.crt" \
-      -CAkey "$storage_fixture/$authority.key" -CAcreateserial -days 1 \
-      -extfile "$storage_fixture/leaf.ext" -out "$storage_fixture/$leaf.crt" >/dev/null 2>&1
-  done
-  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml build prepare
-  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml up -d --wait db restore
-  docker compose -p happening-auth-storage-check -f docker-compose.auth-storage-test.yml run --rm --no-deps proof
+  ensure_auth_docker
+  trap 'docker compose -p happening-auth-sqlite-check -f docker-compose.auth-sqlite-test.yml down --volumes >/dev/null 2>&1' EXIT
+  docker compose -p happening-auth-sqlite-check -f docker-compose.auth-sqlite-test.yml build proof
+  docker compose -p happening-auth-sqlite-check -f docker-compose.auth-sqlite-test.yml run --rm proof
 )
 
 usage() {
@@ -256,8 +246,9 @@ ${YELLOW}Commands:${NC}
   seed      Run db seed command against running app container
   logs      Show recent logs (add -f to follow)
   status    Show container and volume status
-  auth-storage-check Verify TLS, restricted role, encrypted backup/restore and certificate reload
-  auth-check Run production auth proofs with a disposable PostgreSQL fixture
+  auth-storage-check Verify SQLite backup/recovery in the non-root Node 22 auth image
+  auth-import-check Verify optional legacy PostgreSQL-to-SQLite import
+  auth-check Run production auth proofs with disposable SQLite storage
   clean     Stop, remove volumes, prune build cache (interactive)
 
 ${YELLOW}Ports:${NC}
@@ -278,5 +269,6 @@ case "${1:-}" in
   clean)    cmd_clean ;;
   auth-check) cmd_auth_check ;;
   auth-storage-check) cmd_auth_storage_check ;;
+  auth-import-check) cmd_auth_import_check ;;
   *)        usage ;;
 esac

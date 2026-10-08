@@ -27,6 +27,5 @@ spec:
               {{- toYaml .Values.networkPolicy.commoncalPodLabels | nindent 14 }}
       ports:
         - {protocol: TCP, port: {{ .Values.internal.targetPort }}}
-  egress:
-    {{- include "commoncal-auth.databaseEgress" . | nindent 4 }}
+  egress: []
 {{- end }}

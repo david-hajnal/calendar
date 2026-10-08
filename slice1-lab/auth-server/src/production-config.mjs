@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 
 export function productionConfig(env, jwks) {
@@ -15,8 +16,8 @@ export function productionConfig(env, jwks) {
   const resource = https('AUTH_RESOURCE_URL');
   const commoncal = https('AUTH_COMMONCAL_URL', true);
   if ([resource, commoncal].some((url) => new URL(url).origin === issuer)) throw new Error('AUTH_ISSUER must use a dedicated origin');
-  const database = new URL(required('DATABASE_URL'));
-  if (!['postgres:', 'postgresql:'].includes(database.protocol)) throw new Error('DATABASE_URL must use postgres or postgresql');
+  const sqlitePath = required('AUTH_SQLITE_PATH');
+  if (!isAbsolute(sqlitePath) || sqlitePath === ':memory:') throw new Error('AUTH_SQLITE_PATH must be an absolute file path');
   const strong = (value) => typeof value === 'string' && value.length >= 32 && !/slice1|lab-only|not-production|example|changeme/i.test(value);
   const bridge = required('AUTH_BRIDGE_KEY');
   const cookies = required('AUTH_COOKIE_KEYS').split(',').map((key) => key.trim());
@@ -46,5 +47,5 @@ export function productionConfig(env, jwks) {
   if (!Number.isInteger(rate) || rate < 1 || rate > 1000) throw new Error('invalid DCR rate limit');
   const cleanupInterval = Number(env.AUTH_CLEANUP_INTERVAL_MS ?? 60_000);
   if (!Number.isInteger(cleanupInterval) || cleanupInterval < 1000 || cleanupInterval > 3_600_000) throw new Error('invalid retention cleanup interval');
-  return { cleanupInterval, issuer, resource, commoncal, bridge, cookies, kid, rate, catalog: hosts.map((host) => ({ kind: 'loopback', host, port: 'any', path })) };
+  return { sqlitePath, cleanupInterval, issuer, resource, commoncal, bridge, cookies, kid, rate, catalog: hosts.map((host) => ({ kind: 'loopback', host, port: 'any', path })) };
 }

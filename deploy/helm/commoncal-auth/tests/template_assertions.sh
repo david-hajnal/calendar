@@ -1,220 +1,78 @@
 #!/usr/bin/env sh
 set -eu
-
 chart_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 rendered=$(mktemp)
-ingress_section=$(mktemp)
-trap 'rm -f "$rendered" "$ingress_section"' EXIT
-
-require_source() {
-  if ! grep -F -q -- "$2" "$1"; then
-    echo "missing required chart configuration: $2" >&2
+trap 'rm -f "$rendered"' EXIT
+helm template commoncal-auth "$chart_dir" --namespace commoncal --set-string image.tag=proof > "$rendered"
+python3 - "$rendered" <<'ASSERT'
+import sys,yaml
+objects=[doc for doc in yaml.safe_load_all(open(sys.argv[1])) if doc]
+def obj(kind,name=None):
+    return next(doc for doc in objects if doc['kind']==kind and (name is None or doc['metadata']['name']==name))
+deployment=obj('Deployment'); spec=deployment['spec']; pod=spec['template']['spec']
+assert spec['replicas']==1 and spec['strategy']=={'type':'Recreate'}
+assert pod['automountServiceAccountToken'] is False
+assert pod['securityContext']['fsGroup']==65534
+app=pod['containers'][0]; migration=pod['initContainers'][0]
+assert app['command']==['node','src/production.mjs']
+assert migration['command']==['node','src/migrate.mjs']
+assert app['securityContext']['readOnlyRootFilesystem'] is True
+for container in [app,migration]:
+    assert container['securityContext']['allowPrivilegeEscalation'] is False
+    assert container['securityContext']['capabilities']['drop']==['ALL']
+    assert any(mount['name']=='data' and mount['mountPath']=='/app/data' for mount in container['volumeMounts'])
+env={entry['name']:entry for entry in app['env']}
+assert not {'DATABASE_URL','NODE_EXTRA_CA_CERTS'} & env.keys()
+assert env['AUTH_BRIDGE_KEY']['valueFrom']['secretKeyRef']=={'name':'commoncal-auth-secrets','key':'AUTH_BRIDGE_KEY'}
+assert env['AUTH_COOKIE_KEYS']['valueFrom']['secretKeyRef']['key']=='AUTH_COOKIE_KEYS'
+assert obj('ConfigMap')['data']['AUTH_SQLITE_PATH']=='/app/data/auth.sqlite'
+assert migration['env'][0]=={'name':'AUTH_SQLITE_PATH','value':'/app/data/auth.sqlite'}
+assert not any(v['name']=='database-ca' for v in pod['volumes'])
+pvc=obj('PersistentVolumeClaim')
+assert pvc['metadata']['name']=='commoncal-auth-data'
+assert pvc['metadata']['annotations']['helm.sh/resource-policy']=='keep'
+assert pvc['spec']['accessModes']==['ReadWriteOnce']
+assert not any(doc['kind']=='Job' for doc in objects), 'no migration hooks competing for SQLite PVC'
+policy=obj('NetworkPolicy','commoncal-auth')['spec']
+assert policy['egress']==[]
+private=next(rule for rule in policy['ingress'] if rule['ports'][0]['port']==4001)
+assert private['from'][0]['podSelector']['matchLabels']=={'app.kubernetes.io/name':'commoncal'}
+assert private['from'][0]['namespaceSelector']['matchLabels']['kubernetes.io/metadata.name']=='commoncal'
+for rule in obj('Ingress')['spec']['rules']:
+    for path in rule['http']['paths']:
+        assert path['backend']['service']['name']=='commoncal-auth-public'
+backup=obj('CronJob')['spec']
+assert backup['concurrencyPolicy']=='Forbid'
+job=backup['jobTemplate']; assert job['metadata']['labels']['app.kubernetes.io/name']=='commoncal-auth-backup'
+bpod=job['spec']['template']['spec']; bapp=bpod['containers'][0]
+assert bpod['automountServiceAccountToken'] is False
+assert bapp['command']==['node','src/backup.mjs']
+assert bapp['securityContext']['readOnlyRootFilesystem'] is True
+assert bpod['affinity']['podAffinity']['requiredDuringSchedulingIgnoredDuringExecution'][0]['topologyKey']=='kubernetes.io/hostname'
+assert bpod['volumes'][0]['persistentVolumeClaim']['claimName']==pvc['metadata']['name']
+assert bpod['volumes'][1]['emptyDir']['medium']=='Memory'
+benv={entry['name']:entry for entry in bapp['env']}
+assert benv['AGE_RECIPIENT']['valueFrom']['secretKeyRef']=={'name':'commoncal-auth-backup','key':'AGE_RECIPIENT'}
+assert obj('NetworkPolicy','commoncal-auth-backup')['spec']['egress']==[]
+ASSERT
+for invalid in 'replicaCount=2' 'migration.enabled=false' 'secrets.databaseUrlKey=DATABASE_URL' 'networkPolicy.postgres.port=5432' 'persistence.databasePath=:memory:'; do
+  if helm template commoncal-auth "$chart_dir" --set "$invalid" >/dev/null 2>&1; then
+    echo "Invalid SQLite configuration accepted: $invalid" >&2
     exit 1
   fi
-}
-
-if ! command -v helm >/dev/null 2>&1; then
-  echo 'helm is not installed; checking the chart source for slice 5 acceptance gates' >&2
-
-  # Two services: public (OIDC) and internal (bridge).
-  require_source "$chart_dir/templates/service-public.yaml" 'kind: Service'
-  require_source "$chart_dir/templates/service-internal.yaml" 'kind: Service'
-  # Ingress exists and is public-only.
-  require_source "$chart_dir/templates/ingress.yaml" 'kind: Ingress'
-  require_source "$chart_dir/templates/ingress.yaml" 'commoncal-auth.publicServiceName'
-  # Network policy enforces bridge isolation.
-  require_source "$chart_dir/templates/networkpolicy.yaml" 'kind: NetworkPolicy'
-  require_source "$chart_dir/templates/networkpolicy.yaml" 'commoncalNamespace'
-  # Migration job.
-  require_source "$chart_dir/templates/migration-job.yaml" 'kind: Job'
-  require_source "$chart_dir/templates/migration-job.yaml" 'src/migrate.mjs'
-  require_source "$chart_dir/templates/migration-job.yaml" '"helm.sh/hook": pre-install,pre-upgrade'
-  require_source "$chart_dir/templates/migration-job.yaml" '"helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded'
-  # PDB.
-  require_source "$chart_dir/templates/pdb.yaml" 'kind: PodDisruptionBudget'
-  # Secrets by reference only.
-  require_source "$chart_dir/templates/deployment.yaml" 'secretKeyRef:'
-  require_source "$chart_dir/templates/deployment.yaml" 'name: {{ .Values.secrets.name }}'
-  require_source "$chart_dir/values.yaml" 'runAsNonRoot: true'
-  require_source "$chart_dir/values.yaml" 'type: RuntimeDefault'
-  exit 0
-fi
-
-helm template commoncal-auth "$chart_dir" --namespace commoncal > "$rendered"
-
-# Flux's Helm post-renderer rejects duplicate mapping keys even though
-# `helm lint` and `helm template` accept them.
-python3 "$chart_dir/../../../scripts/validate-yaml.py" "$rendered"
-
-# --- Kinds present ---------------------------------------------------------
-grep -q 'kind: Deployment' "$rendered"
-grep -q 'kind: Service' "$rendered"
-grep -q 'kind: Ingress' "$rendered"
-grep -q 'kind: NetworkPolicy' "$rendered"
-grep -q 'kind: Job' "$rendered"
-grep -q 'kind: PodDisruptionBudget' "$rendered"
-grep -q 'kind: ConfigMap' "$rendered"
-grep -q 'kind: ServiceAccount' "$rendered"
-
-# --- Security context ------------------------------------------------------
-grep -q 'runAsNonRoot: true' "$rendered"
-grep -q 'runAsUser: 65534' "$rendered"
-grep -q 'type: RuntimeDefault' "$rendered"
-grep -q 'automountServiceAccountToken: false' "$rendered"
-
-# fsGroup is a PodSecurityContext field, not a container SecurityContext field.
-# Kubernetes server-side apply rejects a workload when it is rendered beneath
-# an individual container, even though `helm template` accepts the manifest.
-python3 - "$rendered" <<'PY'
-import sys
-
-import yaml
-
-with open(sys.argv[1], encoding="utf-8") as stream:
-    documents = [document for document in yaml.safe_load_all(stream) if document]
-
-workloads = [document for document in documents if document.get("kind") in {"Deployment", "Job"}]
-assert workloads, "expected rendered Deployment and Job workloads"
-
-migration_jobs = [
-    workload for workload in workloads
-    if workload.get("kind") == "Job"
-    and workload.get("metadata", {}).get("name") == "commoncal-auth-migrate"
-]
-assert len(migration_jobs) == 1, "expected exactly one commoncal-auth migration Job"
-migration_annotations = migration_jobs[0].get("metadata", {}).get("annotations", {})
-assert migration_annotations.get("helm.sh/hook") == "pre-install,pre-upgrade", (
-    "migration Job must run before each install/upgrade instead of patching an immutable Job"
-)
-assert migration_annotations.get("helm.sh/hook-delete-policy") == (
-    "before-hook-creation,hook-succeeded"
-), "migration Job must be recreated for each Helm revision and cleaned up after success"
-
-# Helm runs pre-install hooks before creating ordinary chart resources. Any
-# chart-owned ConfigMap or ServiceAccount consumed by this Job must therefore
-# be a pre-install hook too, otherwise a fresh install cannot start the pod.
-pre_install_hooks = {
-    (document.get("kind"), document.get("metadata", {}).get("name"))
-    for document in documents
-    if "pre-install"
-    in document.get("metadata", {}).get("annotations", {}).get("helm.sh/hook", "").split(",")
-}
-chart_resources = {
-    (document.get("kind"), document.get("metadata", {}).get("name"))
-    for document in documents
-}
-migration_pod_spec = migration_jobs[0]["spec"]["template"]["spec"]
-migration_config_maps = {
-    source["configMapRef"]["name"]
-    for container in migration_pod_spec.get("containers", [])
-    for source in container.get("envFrom", [])
-    if "configMapRef" in source
-}
-for config_map in migration_config_maps:
-    assert ("ConfigMap", config_map) not in chart_resources or (
-        "ConfigMap", config_map
-    ) in pre_install_hooks, (
-        f"pre-install migration Job depends on ordinary chart ConfigMap {config_map!r}"
-    )
-migration_service_account = migration_pod_spec.get("serviceAccountName", "default")
-assert ("ServiceAccount", migration_service_account) not in chart_resources or (
-    "ServiceAccount", migration_service_account
-) in pre_install_hooks, (
-    "pre-install migration Job depends on ordinary chart ServiceAccount "
-    f"{migration_service_account!r}"
-)
-
-for workload in workloads:
-    pod_spec = workload["spec"]["template"]["spec"]
-    name = workload["metadata"]["name"]
-    assert pod_spec.get("securityContext", {}).get("fsGroup") == 65534, (
-        f"{name}: pod securityContext must retain fsGroup"
-    )
-    for container in pod_spec.get("containers", []) + pod_spec.get("initContainers", []):
-        assert "fsGroup" not in container.get("securityContext", {}), (
-            f"{name}/{container['name']}: fsGroup is invalid in container securityContext"
-        )
-
-deployments = [workload for workload in workloads if workload.get("kind") == "Deployment"]
-assert len(deployments) == 1, "expected exactly one commoncal-auth Deployment"
-auth_container = next(
-    container
-    for container in deployments[0]["spec"]["template"]["spec"]["containers"]
-    if container["name"] == "auth"
-)
-container_ports = {
-    port.get("name"): port["containerPort"]
-    for port in auth_container.get("ports", [])
-}
-for probe_name in ("livenessProbe", "readinessProbe"):
-    probe_port = auth_container[probe_name]["httpGet"]["port"]
-    resolved_port = container_ports.get(probe_port, probe_port)
-    assert resolved_port == container_ports.get("public"), (
-        f"auth {probe_name} must target the public container port "
-        f"({container_ports.get('public')} or 'public'), rendered {probe_port!r}"
-    )
-PY
-
-# --- Two services ----------------------------------------------------------
-grep -q 'name: commoncal-auth-public' "$rendered"
-grep -q 'name: commoncal-auth-internal' "$rendered"
-grep -A10 'name: commoncal-auth-public' "$rendered" | grep -q 'app.kubernetes.io/component: public'
-grep -A10 'name: commoncal-auth-internal' "$rendered" | grep -q 'app.kubernetes.io/component: internal'
-
-# Service selectors continue to target the authorization Deployment pods.
-grep -A20 'name: commoncal-auth-public' "$rendered" | grep -q 'app.kubernetes.io/component: authorization'
-grep -A20 'name: commoncal-auth-internal' "$rendered" | grep -q 'app.kubernetes.io/component: authorization'
-
-# --- Ingress is public-only (no internal service reference) -----------------
-# The Ingress must reference the public service, never the internal one.
-sed -n '/kind: Ingress/,/^---/p' "$rendered" > "$ingress_section"
-if grep -q 'commoncal-auth-internal' "$ingress_section"; then
-  echo 'Ingress must not reference the internal (bridge) service' >&2
-  exit 1
-fi
-grep -q 'name: commoncal-auth-public' "$ingress_section"
-
-# --- No secret values in rendered output -----------------------------------
-# Strip comments, then assert none of the known secret material appears.
-if grep -vE '^[[:space:]]*#' "$rendered" | grep -qiE \
-  'oidc-lab-only|slice1-cookie-key|slice1-loopback-bridge|postgres://oidc|slice1-test-rs256'; then
-  echo 'rendered output must not contain secret values' >&2
-  exit 1
-fi
-
-# --- Secrets injected by reference only ------------------------------------
-grep -q 'secretKeyRef:' "$rendered"
-grep -q 'name: commoncal-auth-secrets' "$rendered"
-# The bridge key must come from a Secret reference, not a literal.
-if ! awk '
-  /- name: AUTH_BRIDGE_KEY/ { in_bridge=1; next }
-  in_bridge && /valueFrom:/ { has_reference=1 }
-  in_bridge && /^[[:space:]]+- name:/ { in_bridge=0 }
-  END { exit has_reference ? 0 : 1 }
-' "$rendered"; then
-  echo 'AUTH_BRIDGE_KEY must be supplied by a Secret reference' >&2
-  exit 1
-fi
-
-# --- Network policy enforces bridge isolation ------------------------------
-# The bridge port (4001) must be reachable only from the commoncal namespace.
-grep -q 'kubernetes.io/metadata.name: commoncal' "$rendered"
-grep -q 'port: 4001' "$rendered"
-# The public port (4000) is reachable from the ingress namespace.
-grep -q 'kubernetes.io/metadata.name: traefik' "$rendered"
-grep -q 'port: 4000' "$rendered"
-
-# --- Migration job uses the migration entrypoint ---------------------------
-grep -q 'src/migrate.mjs' "$rendered"
-grep -q 'name: commoncal-auth-migrate' "$rendered"
-grep -A30 'name: commoncal-auth-migrate' "$rendered" | grep -q 'app.kubernetes.io/component: migration'
-
-# --- PDB -------------------------------------------------------------------
-grep -q 'minAvailable: 1' "$rendered"
-
-# --- Issuer / resource consistency (non-secret config) ---------------------
-grep -q 'AUTH_ISSUER' "$rendered"
-grep -q 'AUTH_RESOURCE_URL' "$rendered"
-grep -q 'AUTH_COMMONCAL_URL' "$rendered"
-
-echo 'commoncal-auth chart assertions passed'
+done
+# Custom PVC placement and private-image pull credentials must reach both workloads.
+helm template commoncal-auth "$chart_dir" --namespace commoncal \
+  --set-string persistence.storageClass=local-path \
+  --set-string imagePullSecrets[0].name=registry-proof > "$rendered"
+python3 - "$rendered" <<'ASSERT'
+import sys,yaml
+objects=[doc for doc in yaml.safe_load_all(open(sys.argv[1])) if doc]
+for doc in objects:
+    if doc['kind']=='Deployment': pod=doc['spec']['template']['spec']
+    elif doc['kind']=='CronJob': pod=doc['spec']['jobTemplate']['spec']['template']['spec']
+    else: continue
+    assert pod['imagePullSecrets']==[{'name':'registry-proof'}]
+assert next(doc for doc in objects if doc['kind']=='PersistentVolumeClaim')['spec']['storageClassName']=='local-path'
+ASSERT
+echo 'commoncal-auth SQLite template assertions passed'

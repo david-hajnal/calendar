@@ -1,0 +1,24 @@
+# Disposable production-image proof; no PostgreSQL service or persistent volumes.
+services:
+  proof:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    image: commoncal-auth-sqlite-proof:local
+    user: "65534:65534"
+    read_only: true
+    entrypoint: [/bin/sh, -c]
+    command: ["node --test test/*.test.mjs && node tests/production-integration.mjs && node tests/sqlite-storage-proof.mjs"]
+    environment:
+      TMPDIR: /proof
+      AUTH_TEST_ENCRYPTED_BACKUP: "true"
+      AUTH_SECRET_HELPER: /app/deploy/auth-secret.sh
+    tmpfs:
+      - /proof:uid=65534,gid=65534,mode=0700,size=67108864
+      - /tmp:uid=65534,gid=65534,mode=0700,size=67108864
+    volumes:
+      - ./slice1-lab/auth-server/tests:/app/tests:ro
+      - ./slice1-lab/auth-server/test:/app/test:ro
+      - ./deploy/auth-secret.sh:/app/deploy/auth-secret.sh:ro
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

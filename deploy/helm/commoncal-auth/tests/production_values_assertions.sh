@@ -56,13 +56,10 @@ values = helmrelease["spec"]["values"]
 assert "issuer" not in values, "obsolete top-level issuer key bypasses chart config"
 expected_secret_keys = {
     "name",
-    "databaseUrlKey",
     "bridgeKeyKey",
     "cookieKeysKey",
     "jwksKey",
     "signingKidKey",
-    "databaseCaSecret",
-    "databaseCaKey",
 }
 actual_secret_keys = set(values.get("secrets", {}))
 unknown_secret_keys = actual_secret_keys - expected_secret_keys

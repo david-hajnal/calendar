@@ -6,18 +6,21 @@
 #   SMTP_HOST, SMTP_FROM (SMTP_PORT defaults to 587; direct Helm mode)
 #   Pre-created commoncal-mail Secret containing SMTP_USERNAME/SMTP_PASSWORD.
 #   MCP_INTERNAL_API_KEY, MCP_SESSION_SECRET, MCP_DOMAIN, MCP_OAUTH_ISSUER
+#   AUTH_BACKUP_AGE_RECIPIENT (public recipient; identity stays off-cluster)
 # Optional:
 #   IMAGE_TAG (default: main; used only for direct Helm deployment)
 #   DOMAIN (default: cal.hajnal.space)
 #   MCP_INTERNAL_API_BASE (default: https://$DOMAIN)
 #   TLS_SECRET_NAME, CORE_HELM_RELEASE_NAME, MCP_HELM_RELEASE_NAME, NAMESPACE
 #   GHCR_TOKEN (direct Helm mode only; rejected under Flux ownership), DRY_RUN=1
+#   DEPLOY_ENV_FILE (default: deploy/.env; tests use an isolated empty file)
 
 set -euo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$DEPLOY_DIR/.env" ]]; then
-  source "$DEPLOY_DIR/.env"
+DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-$DEPLOY_DIR/.env}"
+if [[ -f "$DEPLOY_ENV_FILE" ]]; then
+  source "$DEPLOY_ENV_FILE"
 fi
 
 : "${SESSION_SECRET:?ERROR: SESSION_SECRET is required. Set it in $DEPLOY_DIR/.env or export it}"
@@ -27,19 +30,16 @@ fi
 : "${MCP_DOMAIN:?ERROR: MCP_DOMAIN is required. Set it in $DEPLOY_DIR/.env or export it}"
 : "${MCP_OAUTH_ISSUER:?ERROR: MCP_OAUTH_ISSUER is required and must be the HTTPS issuer exposing OAuth metadata/JWKS}"
 # Authorization server (slice 5) — required for the private bridge.
-: "${AUTH_DATABASE_URL:?ERROR: AUTH_DATABASE_URL is required (PostgreSQL DSN for the authorization server). Set it in $DEPLOY_DIR/.env or export it}"
+: "${AUTH_BACKUP_AGE_RECIPIENT:?ERROR: AUTH_BACKUP_AGE_RECIPIENT is required for encrypted SQLite backups}"
 : "${AUTH_BRIDGE_KEY:?ERROR: AUTH_BRIDGE_KEY is required (shared secret for the private bridge). Set it in $DEPLOY_DIR/.env or export it}"
-: "${AUTH_COOKIE_KEYS:?ERROR: AUTH_COOKIE_KEYS is required (JSON array of cookie keys). Set it in $DEPLOY_DIR/.env or export it}"
+: "${AUTH_COOKIE_KEYS:?ERROR: AUTH_COOKIE_KEYS is required (comma-separated distinct cookie keys). Set it in $DEPLOY_DIR/.env or export it}"
 : "${AUTH_SIGNING_KID:?ERROR: AUTH_SIGNING_KID is required (JWKS key ID). Set it in $DEPLOY_DIR/.env or export it}"
 
 if [[ ! "$BACKUP_ENCRYPTION_KEY_HEX" =~ ^([[:xdigit:]]{2}){16,}$ ]]; then
   echo "ERROR: BACKUP_ENCRYPTION_KEY_HEX must be an even number of hexadecimal characters (at least 32)" >&2
   exit 1
 fi
-if [[ ! "$AUTH_DATABASE_URL" =~ ^postgres(ql)?:// ]]; then
-  echo "ERROR: AUTH_DATABASE_URL must be a PostgreSQL DSN (postgres:// or postgresql://)" >&2
-  exit 1
-fi
+
 
 NAMESPACE="${NAMESPACE:-commoncal}"
 CORE_RELEASE="${CORE_HELM_RELEASE_NAME:-${HELM_RELEASE_NAME:-commoncal}}"
@@ -333,6 +333,7 @@ echo "==> Applying auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;
 # it is created here out-of-band and referenced by the Helm chart.
 source "$DEPLOY_DIR/auth-secret.sh"
+apply_auth_backup_secret "$NAMESPACE" "${kubectl_apply_args[@]}"
 apply_auth_secret "$NAMESPACE" "${kubectl_apply_args[@]}"
 
 if [[ "$deploy_mode" == flux ]]; then
@@ -403,7 +404,6 @@ auth_helm_args=(
   --set-string "ingress.host=$DOMAIN"
   --set-string "ingress.tls.secretName=$TLS_SECRET_NAME"
   --set-string secrets.name=commoncal-auth-secrets
-  --set-string secrets.databaseUrlKey=DATABASE_URL
   --set-string secrets.bridgeKeyKey=AUTH_BRIDGE_KEY
   --set-string secrets.cookieKeysKey=AUTH_COOKIE_KEYS
   --set-string secrets.signingKidKey=AUTH_SIGNING_KID

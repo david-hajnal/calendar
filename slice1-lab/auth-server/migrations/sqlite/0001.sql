@@ -1,0 +1,10 @@
+CREATE TABLE provider_entity(model TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),grant_id TEXT,uid TEXT,user_code TEXT,expires_at INTEGER,consumed_at INTEGER,PRIMARY KEY(model,id));
+CREATE INDEX provider_grant ON provider_entity(grant_id);
+CREATE INDEX provider_uid ON provider_entity(model,uid);
+CREATE INDEX provider_code ON provider_entity(model,user_code);
+CREATE INDEX provider_expiry ON provider_entity(expires_at);
+CREATE TABLE interaction_handoff(token_hash TEXT PRIMARY KEY,interaction_uid TEXT NOT NULL,view TEXT NOT NULL CHECK(json_valid(view)),decision TEXT CHECK(decision IS NULL OR json_valid(decision)),expires_at INTEGER NOT NULL,consumed_at INTEGER);
+CREATE INDEX handoff_expiry ON interaction_handoff(expires_at);
+CREATE TABLE authorization_audit(id INTEGER PRIMARY KEY,created_at INTEGER NOT NULL,event TEXT NOT NULL,detail TEXT NOT NULL CHECK(json_valid(detail)));
+CREATE INDEX audit_created ON authorization_audit(created_at);
+CREATE TABLE dcr_rate_bucket(bucket_key TEXT PRIMARY KEY,window_start INTEGER NOT NULL,count INTEGER NOT NULL);

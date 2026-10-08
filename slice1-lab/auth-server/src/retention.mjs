@@ -1,6 +1,7 @@
 // Bounded batches cap each maintenance pass. Database expiry remains authoritative
 // for reads even when more than one batch awaits deletion.
 export async function cleanupExpired(pool, batchSize = 1000) {
+  if (typeof pool.cleanup === 'function') return pool.cleanup(batchSize);
   const queries = {
     provider: `DELETE FROM provider_entity WHERE ctid IN (SELECT ctid FROM provider_entity WHERE expires_at <= NOW() ORDER BY expires_at LIMIT $1)`,
     handoffs: `DELETE FROM interaction_handoff WHERE ctid IN (SELECT ctid FROM interaction_handoff WHERE expires_at <= NOW() ORDER BY expires_at LIMIT $1)`,

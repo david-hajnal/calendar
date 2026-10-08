@@ -232,6 +232,16 @@ cmd_auth_storage_check() (
   docker compose -p happening-auth-sqlite-check -f docker-compose.auth-sqlite-test.yml run --rm proof
 )
 
+# Match the publication gate against the actual production auth image.
+cmd_auth_image_scan() (
+  command -v trivy >/dev/null 2>&1 || die "Trivy is required for auth-image-scan"
+  ensure_auth_docker
+  local auth_image_id
+  auth_image_id="$(docker image inspect --format '{{.Id}}' commoncal-auth-sqlite-proof:local 2>/dev/null)" || die "Run auth-storage-check before auth-image-scan"
+  [[ -n "$auth_image_id" ]] || die "Run auth-storage-check before auth-image-scan"
+  trivy image --severity CRITICAL,HIGH --exit-code 1 --ignore-unfixed "$auth_image_id"
+)
+
 usage() {
   cat <<EOF
 ${BLUE}happening local dev Docker orchestrator${NC}
@@ -247,6 +257,7 @@ ${YELLOW}Commands:${NC}
   logs      Show recent logs (add -f to follow)
   status    Show container and volume status
   auth-storage-check Verify SQLite backup/recovery in the non-root Node 22 auth image
+  auth-image-scan Scan the production auth image using the publication security gate
   auth-import-check Verify optional legacy PostgreSQL-to-SQLite import
   auth-check Run production auth proofs with disposable SQLite storage
   clean     Stop, remove volumes, prune build cache (interactive)
@@ -270,5 +281,6 @@ case "${1:-}" in
   auth-check) cmd_auth_check ;;
   auth-storage-check) cmd_auth_storage_check ;;
   auth-import-check) cmd_auth_import_check ;;
+  auth-image-scan) cmd_auth_image_scan ;;
   *)        usage ;;
 esac

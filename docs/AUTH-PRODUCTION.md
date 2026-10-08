@@ -81,6 +81,47 @@ conversion or deployment has been performed. Existing PostgreSQL data is preserv
 Do not use the old PostgreSQL setup steps from earlier chat messages. Do not
 remove existing PostgreSQL Secrets/PVCs as part of this transition.
 
+## Migration initContainer fails after switching to SQLite
+
+A SQLite chart paired with an old PostgreSQL auth image fails in `migrate` and
+can leave Helm stalled with `context deadline exceeded` and
+`MissingRollbackTarget`. Check the migration output and actual image first:
+
+```bash
+kubectl logs deployment/commoncal-auth -n commoncal -c migrate
+kubectl get deployment commoncal-auth -n commoncal \
+  -o jsonpath='{.spec.template.spec.initContainers[?(@.name=="migrate")].image}{"\n"}'
+```
+
+The candidate's `sha-a52bbc...` placeholder predates SQLite. An error requiring
+`DATABASE_URL` confirms that old migration code is running. Do not add a
+PostgreSQL URL to the SQLite configuration or delete its PVC.
+
+Wait for a successful **Promote main** workflow that publishes all three
+auth/core/MCP images before selecting a replacement SHA. A commit existing on
+GitHub does not establish that its images were published. The Dockerfiles now
+upgrade inherited `perl-base` to at least `5.36.0-7+deb12u4`; earlier builds failed
+the vulnerability scan before publication. The scan must pass for the new build.
+
+Keep the root Flux Kustomization paused. In the server checkout, replace the
+image tags in all three files under `deploy/flux/overlays/auth-cutover/charts/`
+with verified published `sha-<full 40-character commit>` tags. Preserve real
+SMTP values and pull credentials, and keep core/MCP suspended. Reapply the
+candidate, then resume and reset the failed auth reconciliation:
+
+```bash
+kubectl apply -k deploy/flux/overlays/auth-cutover
+flux resume helmrelease commoncal-auth -n flux-system
+flux reconcile helmrelease commoncal-auth -n flux-system --reset --with-source
+kubectl rollout status deployment/commoncal-auth -n commoncal --timeout=10m
+kubectl logs deployment/commoncal-auth -n commoncal -c migrate
+curl --fail https://auth.hajnal.space/ready
+```
+
+Retain the PVC and existing keys. Continue with the bridge, real OAuth and
+encrypted recovery gates above before resuming MCP. Persist the verified
+candidate values in Git before resuming root Flux.
+
 ## Encrypted backup and isolated restore
 
 The CronJob uses the auth image, runs beside auth to share its RWO PVC, and has

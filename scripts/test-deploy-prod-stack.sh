@@ -10,6 +10,8 @@ trap 'rm -rf "$fixture"' EXIT HUP INT TERM
 
 mkdir "$fixture/bin"
 : >"$fixture/kubeconfig"
+# Never source the operator's deploy/.env during mocked deployment tests.
+: >"$fixture/deploy.env"
 : >"$fixture/helm.log"
 : >"$fixture/flux.log"
 : >"$fixture/kubectl.log"
@@ -312,6 +314,7 @@ chmod +x "$fixture/bin/kubectl" "$fixture/bin/openssl" "$fixture/bin/helm" "$fix
 
 run_stack() {
   PATH="$fixture/bin:$PATH" \
+    DEPLOY_ENV_FILE="$fixture/deploy.env" \
     KUBECONFIG="$fixture/kubeconfig" \
     KUBECTL_LOG="${KUBECTL_LOG_OVERRIDE:-$fixture/kubectl.log}" \
     KUBECTL_STDIN_LOG="${KUBECTL_STDIN_LOG_OVERRIDE:-$fixture/kubectl-stdin.log}" \

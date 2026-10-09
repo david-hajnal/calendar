@@ -4,12 +4,13 @@ import { UserManagement } from "./UserManagement";
 import { AccountSettings } from "./AccountSettings";
 import "./Settings.css";
 
-export function Settings({ api, isAdmin, currentUserId, path, navigate }: {
-  api: ApiClient; isAdmin: boolean; currentUserId: number; path: string; navigate(target: string): void;
+export function Settings({ api, isAdmin, currentUserId, path, navigate, calendarHref = "/dashboard" }: {
+  api: ApiClient; isAdmin: boolean; currentUserId: number; path: string; navigate(target: string): void; calendarHref?: string;
 }) {
   const users = path === "/settings/users";
   const connections = path === "/settings/calendar-connections";
   return <div className="settings-page">
+    <button className="app-button" type="button" onClick={() => navigate(calendarHref)}>Return to calendar</button>
     <h1>Settings</h1>
     <nav className="settings-nav" aria-label="Settings">
       <button type="button" aria-current={!users && !connections ? "page" : undefined} onClick={() => navigate("/settings/account")}>Account</button>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useIsMobile } from "./useIsMobile";
-import { SampleAgenda } from "./calendar/MobileCalendar";
+import { CalendarNavigationProvider, useOptionalCalendarNavigation } from "./calendar/calendarNavigation";
 
 import type { Fetcher } from "./auth/api";
 import { AuthProvider, useAuth } from "./auth/session";
@@ -251,6 +251,8 @@ function AuthenticatedShell() {
   const { state, api, reloadSession, logout } = useAuth();
   const location = useLocation();
   const isMobile = useIsMobile();
+  const calendarNavigation = useOptionalCalendarNavigation();
+  const calendarHref = () => calendarNavigation?.calendarHref() ?? "/dashboard";
   const lastNotifsRef = useRef<number[]>([]);
 
   useEffect(() => {
@@ -310,7 +312,7 @@ function AuthenticatedShell() {
       </div>
       {/* Desktop nav tabs */}
       {!isMobile && <nav className="app-nav" aria-label="Primary navigation">
-        <button className={`app-nav__button ${activeTab === "calendar" ? "app-nav__button--active" : ""}`} type="button" onClick={() => navigate("/dashboard")}>Calendar</button>
+        <button className={`app-nav__button ${activeTab === "calendar" ? "app-nav__button--active" : ""}`} type="button" onClick={() => navigate(calendarHref())}>Calendar</button>
         <button className={`app-nav__button ${activeTab === "calendars" ? "app-nav__button--active" : ""}`} type="button" onClick={() => navigate("/calendars")}>Calendars</button>
         <button className={`app-nav__button ${activeTab === "shared" ? "app-nav__button--active" : ""}`} type="button" onClick={() => navigate("/shared")}>Composite views</button>
       </nav>}
@@ -326,7 +328,7 @@ function AuthenticatedShell() {
     </header>
     {/* Mobile bottom nav */}
     {isMobile && <nav className="bottom-nav" aria-label="Primary navigation">
-      <button className={`bottom-nav__item ${activeTab === "calendar" ? "bottom-nav__item--active" : ""}`} type="button" onClick={() => navigate("/dashboard")}>
+      <button className={`bottom-nav__item ${activeTab === "calendar" ? "bottom-nav__item--active" : ""}`} type="button" onClick={() => navigate(calendarHref())}>
         <span className="bottom-nav__item__icon-wrapper"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>calendar_month</span></span>
         <span>Calendar</span>
       </button>
@@ -342,30 +344,25 @@ function AuthenticatedShell() {
     <div className="app-shell__content">
       {window.location.pathname === "/calendars" && <CalendarManagement api={api} />}
       {window.location.pathname === "/shared" && <CompositeViewManagement api={api} />}
-      {window.location.pathname.startsWith("/settings") && <Settings api={api} currentUserId={state.session.user.id} isAdmin={state.session.user.is_superadmin} path={window.location.pathname} navigate={navigate} />}
+      {window.location.pathname.startsWith("/settings") && <Settings api={api} currentUserId={state.session.user.id} isAdmin={state.session.user.is_superadmin} path={window.location.pathname} navigate={navigate} calendarHref={calendarHref()} />}
       {window.location.pathname !== "/calendars" && window.location.pathname !== "/shared" && !window.location.pathname.startsWith("/settings") && <CalendarPage api={api} />}
     </div>
   </main>;
 }
 
 function CalendarPage({ api }: { api: ReturnType<typeof useAuth>["api"] }) {
-  const isMobile = useIsMobile();
-  const [preview, setPreview] = useState(false);
-  const previewButton = useRef<HTMLButtonElement>(null);
   const [calendars, setCalendars] = useState<Calendar[] | null>(null);
   const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
+    setError(false); setCalendars(null);
     void listCalendars(api).then((result) => { if (active) setCalendars(result); }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
-  }, [api]);
-  if (isMobile && preview) return <SampleAgenda onReturn={() => { setPreview(false); requestAnimationFrame(() => previewButton.current?.focus()); }} />;
-  if (error) return <p role="alert">We could not load your calendars. Please try again.</p>;
+  }, [api, attempt]);
+  if (error) return <p role="alert">We could not load your calendars. <button type="button" className="app-button" onClick={() => setAttempt(current => current + 1)}>Retry calendars</button></p>;
   if (calendars === null) return <p role="status">Loading calendars…</p>;
-  return <>
-    {isMobile && <button ref={previewButton} className="app-button" type="button" onClick={() => setPreview(true)}>Preview mobile Agenda</button>}
-    <CalendarEventUI api={api} calendars={calendars} />
-  </>;
+  return <CalendarEventUI api={api} calendars={calendars} />;
 }
 
 function LoginRedirect({ location }: { location: string }) {
@@ -379,6 +376,7 @@ function LoginRedirect({ location }: { location: string }) {
 
 function AuthRoutes() {
   const location = useLocation();
+  const { state } = useAuth();
   const pathname = window.location.pathname;
   if (pathname === "/login") return <LoginRequestPage />;
   if (pathname === "/dev-login") return <DevLoginPage />;
@@ -387,7 +385,9 @@ function AuthRoutes() {
   if (pathname === "/password-reset") return <PasswordResetPage />;
   if (pathname === "/invitations/consume" || pathname === "/invitations/accept") return <InvitationPage />;
   if (pathname === "/login/consume") return <TokenConsumptionPage />;
-  return <AuthenticatedShell key={location} />;
+  return state.status === "authenticated"
+    ? <CalendarNavigationProvider key={state.session.user.id} userId={state.session.user.id}><AuthenticatedShell key={location} /></CalendarNavigationProvider>
+    : <AuthenticatedShell key={location} />;
 }
 
 export function App({ fetcher }: { fetcher?: Fetcher }) {

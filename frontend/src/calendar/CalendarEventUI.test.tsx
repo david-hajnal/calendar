@@ -38,7 +38,7 @@ function monthCell(day: string) {
     .find((cell) => cell.querySelector(".event-grid__day")?.textContent === day)!;
 }
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("CalendarEventUI", () => {
   it("renders a backend-shaped timed event in its month cell", async () => {
@@ -826,4 +826,30 @@ describe("CalendarEventUI", () => {
     expect(parseFloat(afterBlock.style.top)).toBe(originalTop);
     expect(parseFloat(afterBlock.style.height)).toBe(originalHeight + 15);
   });
+});
+
+it("mobile Agenda shows Busy and read-only external labels without exposing busy metadata", async () => {
+  vi.stubGlobal("innerWidth", 390);
+  const api = apiWithEvents();
+  vi.mocked(api.request).mockImplementation(async () => new Response(JSON.stringify([
+    { ...events[0], access: "free_busy", title: "Hidden title", location: "Hidden room" },
+    events[1],
+  ]), { status: 200 }));
+  render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+  expect(await screen.findByRole("button", { name: /Busy/ })).toBeInTheDocument();
+  expect(screen.getByText("Read-only external event")).toBeInTheDocument();
+  expect(screen.queryByText("Hidden title")).not.toBeInTheDocument();
+  expect(screen.queryByText("Hidden room")).not.toBeInTheDocument();
+});
+
+it("mobile Agenda offers a retry after a failed live read", async () => {
+  vi.stubGlobal("innerWidth", 390);
+  const api = apiWithEvents();
+  vi.mocked(api.request).mockResolvedValue(new Response(null, { status: 500 }));
+  render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("We could not load events");
+  vi.mocked(api.request).mockImplementation(async () => new Response(JSON.stringify(events), { status: 200 }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry events" }));
+  expect(await screen.findByRole("button", { name: /Planning/ })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

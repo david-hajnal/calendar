@@ -97,7 +97,9 @@ describe("authentication pages", () => {
 
     expect(await screen.findByRole("heading", { name: "CommonCal" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/");
-    expect(window.location.search).toBe("");
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("month");
+    expect(new URLSearchParams(window.location.search).has("redirect")).toBe(false);
+    expect(new URLSearchParams(window.location.search).has("token")).toBe(false);
   });
 
   it("resumes a safe redirect after login-link authentication", async () => {
@@ -286,22 +288,38 @@ it("password login links to recovery and reset pages do not load an existing ses
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-// Gate 4 tracer: the authenticated application is the approved test seam.
-describe("mobile Agenda preview", () => {
-  it("opens clearly labeled sample content and returns without event mutations", async () => {
+describe("live mobile Agenda", () => {
+  it("defaults to readable live events without sample content", async () => {
     vi.stubGlobal("innerWidth", 390);
-    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(
-      JSON.stringify(String(input) === "/api/v1/auth/session" && (!_init?.method || _init.method === "GET") ? session : []),
-      { status: 200 },
-    ));
-    renderAt("/dashboard", fetcher);
-    fireEvent.click(await screen.findByRole("button", { name: "Preview mobile Agenda" }));
-    expect(screen.getByRole("heading", { name: "Sample Agenda" })).toBeInTheDocument();
-    expect(screen.getByText("Sample events only — this preview does not change your calendar.")).toBeInTheDocument();
-    expect(screen.getByText("Design review and next week’s priorities")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Return to your calendar" }));
-    expect(screen.queryByRole("heading", { name: "Sample Agenda" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Preview mobile Agenda" })).toBeInTheDocument();
-    expect(fetcher.mock.calls.every(([, init]) => !init || !init.method || init.method === "GET")).toBe(true);
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+      String(input) === "/api/v1/auth/session" ? session
+      : String(input) === "/api/v1/calendars" ? [{ id: 1, name: "Work", color: "#2563eb", role: "owner", access: "details" }]
+      : String(input).includes("/events?") ? [{ id: 10, calendar_id: 1, access: "details", status: "confirmed", event_kind: "timed", title: "Live planning with a readable long title", start_utc: Date.parse("2026-10-09T09:00:00Z") / 1000, end_utc: Date.parse("2026-10-09T10:00:00Z") / 1000, version: 1 }] : []
+    ), { status: 200 }));
+    renderAt("/dashboard?date=2026-10-09", fetcher);
+    expect(await screen.findByRole("region", { name: "Agenda" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Live planning with a readable long title/ })).toBeInTheDocument();
+    expect(screen.queryByText("Sample Agenda")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview mobile Agenda" })).not.toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("agenda");
   });
+});
+
+it("preserves an explicit mobile view, date, extra query, and empty filters through Settings", async () => {
+  vi.stubGlobal("innerWidth", 390);
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+    String(input) === "/api/v1/auth/session" ? session
+    : String(input) === "/api/v1/calendars" ? [{ id: 1, name: "Work", color: "#2563eb", role: "owner", access: "details" }] : []
+  ), { status: 200 }));
+  renderAt("/dashboard?view=day&date=2026-10-15&source=bookmark", fetcher);
+  await screen.findByRole("region", { name: "Day calendar" });
+  // The mobile filter supplements the desktop sidebar, which CSS hides on phones.
+  fireEvent.click(screen.getAllByRole("checkbox", { name: "Work" }).at(-1)!);
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Return to calendar" }));
+  await screen.findByRole("region", { name: "Day calendar" });
+  expect(new URLSearchParams(window.location.search).get("date")).toBe("2026-10-15");
+  expect(new URLSearchParams(window.location.search).get("source")).toBe("bookmark");
+  expect(screen.getAllByRole("checkbox", { name: "Work" }).at(-1)).not.toBeChecked();
+  expect(window.history.state.commoncalCalendar.snapshot.visibleCalendarIds).toEqual([]);
 });

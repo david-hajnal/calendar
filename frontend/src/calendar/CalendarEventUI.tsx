@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { useIsMobile } from "../useIsMobile";
+import { MobileCalendar } from "./MobileCalendar";
+import { dateKey, calendarWritable as writable, eventExternal as external, eventEditable as editable, eventTitle as title, type CalendarView } from "./calendarModel";
+import { useOptionalCalendarNavigation } from "./calendarNavigation";
+
 import type { ApiClient } from "../auth/api";
 import { CalendarApiError, createEvent, deleteEvent, deleteEventOccurrence, listExpandedEvents, updateEvent, updateEventOccurrence, type EventPayload, type EventProjection } from "./api";
 import { setReminder, removeReminder } from "./reminderApi";
 import type { Calendar } from "./CalendarManagement";
 import "./CalendarEventUI.css";
 
-type CalendarView = "month" | "week" | "day" | "agenda";
 type Draft = { title: string; allDay: boolean; start: string; end: string; startDate: string; endDate: string; calendarId: number; recurrenceRule: string };
 type CalendarAnchor = { date: Date; minuteOfDay: number };
 type DragState = {
@@ -27,13 +31,6 @@ type EventIdentity = { calendarId: number; eventId: number; recurrenceId?: strin
 const DRAG_THRESHOLD_PX = 5;
 const viewLabels: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day", agenda: "Agenda" };
 
-function writable(calendar: Calendar | undefined) {
-  return calendar?.access === "details" && ["owner", "manager", "editor"].includes(calendar.role);
-}
-
-function external(event: EventProjection) { return event.is_external === true || event.read_only === true; }
-function editable(event: EventProjection, calendar: Calendar | undefined) { return writable(calendar) && event.access === "details" && !external(event) && event.version !== undefined; }
-function title(event: EventProjection) { return event.title ?? "Busy"; }
 function eventTime(event: EventProjection) { return event.start_utc ?? Date.parse(`${event.start_date}T00:00:00Z`) / 1000; }
 function eventDateKey(event: EventProjection): string | null {
   if (event.start_date) return event.start_date;
@@ -48,7 +45,7 @@ function localToUtcMs(local: Date): number { return local.getTime(); }
 function utcToLocalMs(utc: number): number { return utc; }
 function startOfDay(value: Date) { const copy = new Date(value); copy.setHours(0, 0, 0, 0); return copy; }
 function addDays(value: Date, days: number) { const copy = new Date(value); copy.setDate(copy.getDate() + days); return copy; }
-function dateKey(value: Date) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
+
 function dateFromKey(value: string) { return new Date(`${value}T00:00:00`); }
 function moveDateKey(value: string, days: number) { return dateKey(addDays(dateFromKey(value), days)); }
 function recurrenceIdentity(event: EventProjection) { return event.recurrence_id ?? event.recurrence_date; }
@@ -127,9 +124,27 @@ function draftAt(anchor: CalendarAnchor, calendarId: number): Draft {
 }
 
 export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { api: ApiClient; calendars: Calendar[]; initialDate?: Date }) {
-  const [view, setView] = useState<CalendarView>("month");
-  const [date, setDate] = useState(() => startOfDay(initialDate));
-  const [visible, setVisible] = useState(() => new Set(calendars.map((calendar) => calendar.id)));
+  const isMobile = useIsMobile();
+  const navigation = useOptionalCalendarNavigation();
+  const [localView, setLocalView] = useState<CalendarView>(() => isMobile ? "agenda" : "month");
+  const [localDate, setLocalDate] = useState(() => startOfDay(initialDate));
+  const [localVisible, setLocalVisible] = useState(() => new Set(calendars.map((calendar) => calendar.id)));
+  const view = navigation?.snapshot.view ?? localView;
+  const anchorDate = navigation?.snapshot.anchorDate;
+  const date = useMemo(() => anchorDate ? dateFromKey(anchorDate) : localDate, [anchorDate, localDate]);
+  const visibleIds = navigation?.snapshot.visibleCalendarIds;
+  const visible = useMemo(() => navigation ? new Set(visibleIds ?? calendars.map(c => c.id)) : localVisible, [visibleIds, calendars, localVisible, !!navigation]);
+  function setView(value: CalendarView) { if (navigation) navigation.setView(value); else setLocalView(value); }
+  function setDate(value: Date | ((current: Date) => Date)) {
+    const next = typeof value === "function" ? value(date) : value;
+    if (navigation) navigation.setDate(dateKey(next)); else setLocalDate(next);
+  }
+  function setVisible(value: (current: Set<number>) => Set<number>) {
+    const next = value(visible);
+    if (navigation) navigation.setVisibleCalendars([...next]); else setLocalVisible(next);
+  }
+  const reconcileCalendars = navigation?.reconcileCalendars;
+  useEffect(() => { reconcileCalendars?.(calendars.map(c => c.id)); }, [calendars, reconcileCalendars]);
   const [events, setEvents] = useState<EventProjection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +187,26 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       gridRef.current.scrollTop = Math.max(0, top);
     }
   }, [view]);
+
+  const captureScroll = navigation?.captureScroll;
+  const restoreScroll = useRef(navigation?.snapshot.scroll);
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (!captureScroll || loading || error) return;
+    const capture = () => { if (restoredScroll.current) captureScroll({ page: Math.max(0, window.scrollY), timelineTop: gridRef.current?.scrollTop ?? 0, timelineLeft: gridRef.current?.scrollLeft ?? 0 }); };
+    window.addEventListener("scroll", capture);
+    return () => window.removeEventListener("scroll", capture);
+  }, [captureScroll, loading, error]);
+  useEffect(() => {
+    if (loading || error || restoredScroll.current || !restoreScroll.current) return;
+    const scroll = restoreScroll.current;
+    const frame = requestAnimationFrame(() => {
+      if (scroll.page > 0) window.scrollTo(0, scroll.page);
+      if (gridRef.current) { gridRef.current.scrollTop = scroll.timelineTop; gridRef.current.scrollLeft = scroll.timelineLeft; }
+      restoredScroll.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loading, error]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -504,6 +539,15 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
          </button>
        </div>
      </aside>
+    {isMobile && <details className="mobile-calendar-filters"><summary>Visible calendars</summary>
+      {calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible(current => { const next = new Set(current); if (next.has(calendar.id)) next.delete(calendar.id); else next.add(calendar.id); return next; })} />{calendar.name ?? "Busy calendar"}</label>)}
+    </details>}
+    {isMobile && view === "agenda" ? <MobileCalendar
+      snapshot={navigation?.snapshot ?? { view, anchorDate: dateKey(date), selectedDay: dateKey(date), visibleCalendarIds: [...visible], scroll: { page: 0, timelineTop: 0, timelineLeft: 0 } }}
+      events={displayed} calendars={calendars} loading={loading} error={error} canCreate={!!firstWritable}
+      onViewChange={setView} onNavigate={direction => setDate(current => addDays(current, direction * 31))}
+      onToday={() => setDate(startOfDay(new Date()))} onOpenEvent={setSelected} onCreate={openNew} onRetry={() => void reload()}
+    /> : <>
     <header className="event-ui__toolbar">
       <h2 id="events-heading" className="typography-headline-md">Events</h2>
       <button type="button" className="event-ui__new-btn" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event">
@@ -574,7 +618,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
           </>
         )}
         {view === "day" && (
-          <div ref={gridRef} className="event-ui__day" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
+          <div ref={gridRef} onScroll={event => captureScroll?.({ page: Math.max(0, window.scrollY), timelineTop: event.currentTarget.scrollTop, timelineLeft: event.currentTarget.scrollLeft })} className="event-ui__day" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
             <div className="event-ui__allday-label"><span className="typography-label-md">All day</span></div>
             <div className="event-ui__allday-events">{displayed.filter((e) => allDayCovers(e, dateKey(date))).map((event) => renderEvent(event))}</div>
             <div className="event-ui__time-column">
@@ -625,7 +669,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {view === "week" && (() => {
           const weekMonday = addDays(startOfDay(date), -startOfDay(date).getDay());
           return (
-          <div ref={gridRef} className="event-ui__week" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
+          <div ref={gridRef} onScroll={event => captureScroll?.({ page: Math.max(0, window.scrollY), timelineTop: event.currentTarget.scrollTop, timelineLeft: event.currentTarget.scrollLeft })} className="event-ui__week" onWheel={(e) => e.currentTarget.scrollTop += e.deltaY} onPointerMove={onGridPointerMove} onPointerUp={onGridPointerUp} onPointerCancel={cancelDrag}>
             <div className="event-ui__allday-label"><span className="typography-label-md">All day</span></div>
             {Array.from({ length: 7 }, (_, dayIndex) => {
               const dayKey = dateKey(new Date(weekMonday.getFullYear(), weekMonday.getMonth(), weekMonday.getDate() + dayIndex));
@@ -695,6 +739,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {displayed.length === 0 && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', textAlign: 'center', padding: '2rem 0' }}>No events in this range.</p>}
       </section>
     }
+    </>}
     {selected && <aside className="event-ui__detail" aria-label="Event details">
       <div className="event-ui__detail-header">
         <span className="event-ui__detail-accent" style={{ background: calendarFor(selected)?.color || 'var(--color-primary)' }} />
@@ -779,9 +824,9 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       </div>
     </form>}
     {/* Mobile FAB */}
-    <button type="button" className="event-ui__fab" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event mobile">
+    {!(isMobile && view === "agenda") && <button type="button" className="event-ui__fab" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event mobile">
       <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>add</span>
-    </button>
+    </button>}
   </section>;
 }
 

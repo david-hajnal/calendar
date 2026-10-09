@@ -1,9 +1,20 @@
 .mobile-calendar { width: 100%; min-width: 0; padding: 1rem 1rem calc(6rem + env(safe-area-inset-bottom)); font-size: 1rem; line-height: 1.5; color: var(--color-on-surface); background: var(--color-surface); overflow-wrap: anywhere; }
-.mobile-calendar h2 { font-size: 1.75rem; }
+.mobile-calendar h2 { margin: 0 0 1rem; font-size: 1.75rem; }
 .mobile-calendar h3 { font-size: 1.25rem; }
-.mobile-calendar h4 { margin: 0; font-size: 1.125rem; }
 .mobile-calendar p { margin: .5rem 0; }
 .mobile-calendar button { min-height: 44px; padding: .75rem 1rem; font: inherit; color: var(--color-on-surface); background: var(--color-surface-container); border: 1px solid var(--color-outline); border-radius: .75rem; cursor: pointer; }
 .mobile-calendar :focus-visible { outline: 3px solid var(--color-primary); outline-offset: 3px; }
 .mobile-calendar__events { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: .75rem; }
-.mobile-calendar__events article { padding: 1rem; border: 1px solid var(--color-outline); border-left: 4px solid var(--color-primary); border-radius: .75rem; }
+.mobile-calendar__views, .mobile-calendar__date-nav { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.mobile-calendar__views button[aria-selected="true"] { color: var(--color-on-primary); background: var(--color-primary); }
+.mobile-calendar button.mobile-calendar__event { display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left; gap: .4rem; padding: 1rem; border-left: 4px solid var(--color-primary); background: var(--color-surface); }
+.mobile-calendar__event strong { font-size: 1.125rem; }
+.mobile-calendar__event span { font-size: 1rem; }
+@media (max-width: 48rem) {
+  .mobile-calendar-filters { padding: 1rem; font-size: 1rem; }
+  .mobile-calendar-filters summary { min-height: 44px; cursor: pointer; }
+  .mobile-calendar-filters label { display: flex; align-items: center; gap: .5rem; min-height: 44px; overflow-wrap: anywhere; }
+}
+
+.mobile-calendar__views { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mobile-calendar__views button { min-width: 0; padding-inline: .25rem; overflow-wrap: anywhere; }

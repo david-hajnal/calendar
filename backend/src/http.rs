@@ -1772,7 +1772,9 @@ async fn response_security_headers(
     next: Next,
 ) -> Response {
     let is_public = request.uri().path().starts_with("/api/v1/public/");
-    let is_authentication = request.uri().path().starts_with("/api/v1/auth/");
+    let is_authentication = request.uri().path().starts_with("/api/v1/auth/")
+        || request.uri().path() == "/consent"
+        || request.uri().path().starts_with("/consent/");
     let is_invitation_page = matches!(
         request.uri().path(),
         "/invitations/accept" | "/invitations/consume" | "/password-reset" | "/email/confirm"

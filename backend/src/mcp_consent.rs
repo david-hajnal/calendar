@@ -163,18 +163,7 @@ async fn consent_page(
 <p>Client ID: {}</p><p>Requested permissions:</p><ul>{}</ul><p>Select calendars to share:</p>
 <form id="consent" data-handoff="{}" data-csrf="{}">{}
 <button type="submit" value="approve">Approve</button><button type="submit" value="deny">Deny</button></form><p id="error" role="alert"></p>
-<script>
-document.getElementById('consent').addEventListener('submit', async (event) => {{
- event.preventDefault(); const form = event.currentTarget; const decision = event.submitter.value;
- const calendar_ids = Array.from(form.querySelectorAll('input:checked'), input => Number(input.value));
- const buttons = form.querySelectorAll('button'); buttons.forEach(button => button.disabled = true);
- try {{
-  const response = await fetch('/consent/decision', {{method:'POST',credentials:'same-origin',headers:{{'content-type':'application/json','x-csrf-token':form.dataset.csrf}},body:JSON.stringify({{handoff:form.dataset.handoff,decision,calendar_ids}})}});
-  const result = await response.json(); if (!response.ok) throw new Error('Authorization failed. Please restart authorization.');
-  window.location.assign(result.resume_url);
- }} catch (error) {{ document.getElementById('error').textContent = error.message; buttons.forEach(button => button.disabled = false); }}
-}});
-</script></body></html>"#,
+<script src="/consent/script.js" defer></script></body></html>"#,
         escape_html(&view.client_name),
         escape_html(&view.client_id),
         scopes_html,
@@ -397,9 +386,17 @@ async fn consent_session(
         Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
     }
 }
+async fn consent_script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("mcp_consent.js"),
+    )
+}
+
 pub fn build_consent_router(state: ConsentState) -> Router {
     Router::new()
         .route("/consent", get(consent_page))
+        .route("/consent/script.js", get(consent_script))
         .route("/consent/decision", post(consent_decision))
         .route("/consent/login-continue", get(login_continue))
         .layer(axum::middleware::from_fn_with_state(
@@ -762,15 +759,18 @@ mod tests {
             key,
             crate::sessions::SessionSecurityConfig::new(3600, 60, "http://localhost").unwrap(),
         );
-        let router = build_consent_router(ConsentState {
-            pool: pool.clone(),
-            session_manager: manager,
-            bridge: McpBridgeClient::new(
-                format!("http://{addr}"),
-                std::time::Duration::from_secs(2),
-                "bridge-secret".into(),
-            ),
-        });
+        let router = crate::http::secure_responses(
+            build_consent_router(ConsentState {
+                pool: pool.clone(),
+                session_manager: manager,
+                bridge: McpBridgeClient::new(
+                    format!("http://{addr}"),
+                    std::time::Duration::from_secs(2),
+                    "bridge-secret".into(),
+                ),
+            }),
+            crate::http::ResponseSecurityConfig::local_http(),
+        );
         BrowserFixture {
             pool,
             router,
@@ -842,6 +842,11 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        assert_eq!(
+            response.headers()[header::CONTENT_SECURITY_POLICY],
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+        );
         let html = String::from_utf8(
             to_bytes(response.into_body(), usize::MAX)
                 .await
@@ -849,7 +854,35 @@ mod tests {
                 .to_vec(),
         )
         .unwrap();
-        assert!(html.contains("'x-csrf-token':form.dataset.csrf"));
+        assert!(html.contains("<script src=\"/consent/script.js\" defer></script>"));
+        assert!(!html.contains("<script>"));
+        let script = f
+            .router
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/consent/script.js")
+                    .header(header::COOKIE, &f.cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(script.status(), StatusCode::OK);
+        assert_eq!(
+            script.headers()[header::CONTENT_TYPE],
+            "text/javascript; charset=utf-8"
+        );
+        let javascript = String::from_utf8(
+            to_bytes(script.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(javascript.contains("event.preventDefault()"));
+        assert!(javascript.contains("'x-csrf-token':form.dataset.csrf"));
+        assert!(javascript.contains("handoff:form.dataset.handoff"));
         assert!(html.contains("data-csrf=\""));
         assert!(html.contains("Personal"));
         assert!(html.contains("Work"));

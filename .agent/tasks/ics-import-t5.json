@@ -1,0 +1,22 @@
+{
+  "id": "ics-import-t5",
+  "title": "Deliver the accessible calendar import flow \u2014 docs/plans/ics-import/04-task-slices.md#t5",
+  "priority": 1,
+  "depends_on": [
+    "ics-import-t4"
+  ],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T5 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: Owners, managers, and editors can select, validate, upload, and acknowledge an ICS import from an active calendar card.",
+    "Scope: `frontend/src/calendar/CalendarManagement.tsx`, `frontend/src/calendar/CalendarManagement.css`, `frontend/src/calendar/CalendarManagement.test.tsx`",
+    "Changes: Add the event-creation permission helper and per-card import action; implement the import dialog and its file-size/extension validation, pending, success, safe-error, Escape, focus, and access-change behavior; style it using existing calendar-dialog conventions; add all approved component tests.",
+    "Out of scope: Backend changes, event-list refresh mechanics, calendar creation during import, preview or event selection, E2E fixture.",
+    "Acceptance: Only active detail-access owner/manager/editor cards show Import; editors gain no management controls; invalid local files make no request; a valid file submits once; all pending controls are safe; success shows the returned count until acknowledgement; stable failure codes show actionable copy without backend text; access denial refreshes calendars; Escape and close restore focus to the correct card.",
+    "Verify: `pnpm --dir frontend test -- CalendarManagement.test.tsx`",
+    "Handoff: Completed visible flow and selectors/accessibility names needed by the E2E packet.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": false,
+  "status": "blocked",
+  "unblock_when_dependencies_complete": true
+}

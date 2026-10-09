@@ -1,0 +1,22 @@
+{
+  "id": "ics-import-t2",
+  "title": "Convert an ICS file into a native event batch \u2014 docs/plans/ics-import/04-task-slices.md#t2",
+  "priority": 1,
+  "depends_on": [
+    "ics-import-t1"
+  ],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T2 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: Bounded valid ICS bytes become native event batches with preserved standalone, all-day, timed, recurrence-exclusion, and detached-override semantics.",
+    "Scope: new `backend/src/ics_import.rs`, `backend/src/lib.rs`, recurrence and parser-limit cases in `backend/tests/ics_import.rs`",
+    "Changes: Add `IcsImportService`, import constants, summary, and errors; invoke the existing parser with the 1,000-event policy; normalize status and timing; group components by UID; attach `EXDATE` and `RECURRENCE-ID` values; reject orphan, mismatched, conflicting, unknown-status, malformed, duplicate, and over-limit input before persistence; delegate once to `create_batch`; export the module.",
+    "Out of scope: HTTP body/media-type handling, route mounting, rate limiting, browser API or UI, changes to external-feed ingestion or the generic parser.",
+    "Acceptance: Timed and all-day standalone events import with correct fields; a recurring master stores deletions and replacements under the correct keys; every semantic or parser failure maps to the approved error category and leaves all persistence tables unchanged; re-import creates another editable native copy; summary counts top-level events separately from exceptions.",
+    "Verify: `cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_service`",
+    "Handoff: Callable `IcsImportService::import`, stable summary/error contract, content-free failure categories, and tested constants for T3.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": false,
+  "status": "blocked",
+  "unblock_when_dependencies_complete": true
+}

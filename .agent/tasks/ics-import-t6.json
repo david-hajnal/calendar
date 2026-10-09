@@ -1,0 +1,23 @@
+{
+  "id": "ics-import-t6",
+  "title": "Prove the integrated user journey and document it \u2014 docs/plans/ics-import/04-task-slices.md#t6",
+  "priority": 1,
+  "depends_on": [
+    "ics-import-t3",
+    "ics-import-t5"
+  ],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T6 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: A browser-level test proves a real ICS file becomes editable native events, and public project documentation describes the new capability.",
+    "Scope: new `e2e/support/import.ics`, `e2e/tests/desktop-mvp.spec.ts`, `README.md`, final integrated verification",
+    "Changes: Add the deterministic two-event fixture; drive the visible import dialog; assert the success count; verify both events through the API as native and writable; update the README feature list and API overview; run focused and full relevant checks and fix only regressions caused by this feature.",
+    "Out of scope: Expanding import behavior, deduplication, provider connections, external-feed changes, unrelated cleanup or pre-existing failures.",
+    "Acceptance: The desktop E2E flow imports one timed and one all-day event and proves they are not external/read-only; README clearly distinguishes one-time import from feed subscription; backend and frontend suites, formatting, linting, typechecking, build, and the focused E2E test pass together.",
+    "Verify: `pnpm --dir e2e test -- desktop-mvp.spec.ts --project=desktop`",
+    "Handoff: Final test evidence, any environment-specific E2E notes, and confirmation that all six packet acceptance conditions pass together.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": true,
+  "status": "blocked",
+  "unblock_when_dependencies_complete": true
+}

@@ -1,0 +1,13 @@
+{
+  "id": "code-quality-hardening-reconcile",
+  "title": "Reconcile historical findings \u2014 docs/plans/code-quality-hardening/plan.md",
+  "priority": 1,
+  "depends_on": [],
+  "acceptance": [
+    "Inventory every finding in docs/plans/code-quality-hardening/plan.md against current source and existing completed tasks; record implemented, outstanding, superseded, or invalid with evidence.",
+    "For outstanding findings, create bounded packets with dependencies, acceptance and verification using orchestrator-factory; retain original findings and references.",
+    "Manual hold: these historical proposals have no reliable completion ledger; do not apply stale recommendations or bypass unapproved planning gates."
+  ],
+  "docs_required": true,
+  "status": "blocked"
+}

@@ -96,7 +96,7 @@ kubectl config current-context             # confirm the intended cluster
 NAMESPACE=commoncal bash deploy/provision-auth-tls.sh
 ```
 
-This command needs kubectl, Python 3 and OpenSSL with `x509 -checkhost` support
+This command needs kubectl, Python 3 and OpenSSL with `verify -verify_hostname` support
 (OpenSSL 1.1.1+ or 3.x). It requires no host Node.js, auth credentials, Helm,
 Docker or Flux commands. It creates only `commoncal-auth-tls` if absent, using
 RSA 2048, SHA-256, a 365-day lifetime and the `auth.hajnal.space` SAN. It reuses

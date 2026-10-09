@@ -1,0 +1,17 @@
+{
+  "id": "mcp-connector-slice-13",
+  "title": "OpenCode compatibility \u2014 docs/plans/cross-client-mcp-connector/04-slices.md",
+  "priority": 1,
+  "depends_on": [
+    "mcp-connector-slice-12"
+  ],
+  "acceptance": [
+    "Read slice 13 and approved gates in docs/plans/cross-client-mcp-connector/.",
+    "repeat clean configuration, DCR/browser authorization, schema discovery, calendar read, refresh, denial/revocation, removal, recovery, and minimum-version proof for released OpenCode; verify both deterministic configuration and any documented interactive path before choosing README instructions.",
+    "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
+    "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
+    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+  ],
+  "docs_required": false,
+  "status": "blocked"
+}

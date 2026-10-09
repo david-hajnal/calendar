@@ -1,0 +1,17 @@
+{
+  "id": "mcp-connector-slice-10",
+  "title": "Production resilience and controlled issuer cutover \u2014 docs/plans/cross-client-mcp-connector/04-slices.md",
+  "priority": 1,
+  "depends_on": [
+    "mcp-connector-slice-9"
+  ],
+  "acceptance": [
+    "Read slice 10 and approved gates in docs/plans/cross-client-mcp-connector/.",
+    "provision operator-supplied managed PostgreSQL/secrets/DNS/TLS, deploy the authorization service and CommonCal bridge without changing the issuer, run discovery/DCR/S256/resource/token/JWKS/interaction smoke tests, restart it, restore a backup into a clean target, rotate overlapping keys, then explicitly switch the MCP issuer and prove a read-only call plus immediate grant revocation; record the exact rollback boundary and stop for operator review before client support claims.",
+    "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
+    "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
+    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+  ],
+  "docs_required": false,
+  "status": "blocked"
+}

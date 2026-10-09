@@ -1,0 +1,19 @@
+{
+  "id": "ics-import-t4",
+  "title": "Add the typed browser import API \u2014 docs/plans/ics-import/04-task-slices.md#t4",
+  "priority": 1,
+  "depends_on": [],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T4 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: Frontend callers can upload a `File` as raw calendar content and receive typed counts or a safe typed failure code.",
+    "Scope: `frontend/src/calendar/api.ts`, `frontend/src/calendar/api.test.ts`",
+    "Changes: Add `IcsImportSummary`, error-code type, `IcsImportApiError`, and `importIcs`; send the `File` body with the approved media type; parse only `error.code`; fall back safely for malformed or unknown error responses; add focused request/response tests.",
+    "Out of scope: Dialog state, card permissions, file prevalidation, styling, backend implementation.",
+    "Acceptance: The client uses the exact approved route, method, content type, and unmodified `File` body; successful counts are returned; recognized codes are typed; unknown bodies never surface server-provided text.",
+    "Verify: `pnpm --dir frontend test -- api.test.ts`",
+    "Handoff: Stable `importIcs` function, summary, and safe error class for T5.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": false,
+  "status": "ready"
+}

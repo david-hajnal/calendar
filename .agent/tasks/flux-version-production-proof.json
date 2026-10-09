@@ -1,0 +1,13 @@
+{
+  "id": "flux-version-production-proof",
+  "title": "Verify version-tagged Flux production rollout \u2014 docs/plans/flux-version-tag-deployments.md",
+  "priority": 1,
+  "depends_on": [],
+  "acceptance": [
+    "Read docs/plans/flux-version-tag-deployments.md and its referenced runbooks; preserve completed local implementation.",
+    "Prove the outstanding live deployment, recovery and acceptance conditions and record evidence in the source plan.",
+    "Manual hold: requires operator environment and production rollout gates; do not deploy or publish as part of task migration."
+  ],
+  "docs_required": true,
+  "status": "blocked"
+}

@@ -1,0 +1,22 @@
+{
+  "id": "ics-import-t3",
+  "title": "Expose the authenticated, limited import endpoint \u2014 docs/plans/ics-import/04-task-slices.md#t3",
+  "priority": 1,
+  "depends_on": [
+    "ics-import-t2"
+  ],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T3 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: Authorized callers can POST raw `text/calendar` bytes and receive the approved summary or stable safe error codes through the production router.",
+    "Scope: `backend/src/http.rs`, `backend/src/rate_limiter.rs`, HTTP and role cases in `backend/tests/ics_import.rs`",
+    "Changes: Mount and implement `POST /api/v1/calendars/:calendar_id/import-ics`; verify media type and non-empty body; call `IcsImportService`; map errors; emit content-free structured timing logs; classify the route as Standard write rate; add authenticated role, response-envelope, media-type, 1 MiB limit, and classifier tests.",
+    "Out of scope: service conversion rules, database schema, frontend behavior, application-state or router-builder signature expansion.",
+    "Acceptance: Owner, manager, and editor receive 201 for valid input; viewer, free/busy viewer, and unrelated caller receive non-enumerating 404; malformed and limit failures expose only their stable codes; incorrect media type and empty input are 400; oversized input is 413; the route is Standard-rate limited; logs contain no calendar content, UID, filename, title, description, or location.",
+    "Verify: `cargo test --manifest-path backend/Cargo.toml --locked ics_import`",
+    "Handoff: Final backend endpoint contract and complete integration-test evidence for the browser and E2E packets.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": false,
+  "status": "blocked",
+  "unblock_when_dependencies_complete": true
+}

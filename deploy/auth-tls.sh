@@ -3,7 +3,11 @@
 validate_auth_tls_files() {
   local cert_pub key_pub
   openssl x509 -in "$auth_tls_dir/tls.crt" -noout >/dev/null 2>&1 || { echo 'ERROR: auth TLS certificate is malformed or missing.' >&2; return 1; }
-  openssl x509 -in "$auth_tls_dir/tls.crt" -noout -checkhost auth.hajnal.space >/dev/null 2>&1 || { echo 'ERROR: auth TLS certificate does not cover auth.hajnal.space.' >&2; return 1; }
+  # Older x509 -checkhost versions exit zero even for a hostname mismatch.
+  # Verification enforces the hostname through its exit status; dates are checked below.
+  openssl verify -no-CAfile -no-CApath -partial_chain -no_check_time \
+    -trusted "$auth_tls_dir/tls.crt" -verify_hostname auth.hajnal.space \
+    "$auth_tls_dir/tls.crt" >/dev/null 2>&1 || { echo 'ERROR: auth TLS certificate does not cover auth.hajnal.space.' >&2; return 1; }
   cert_pub=$(openssl x509 -in "$auth_tls_dir/tls.crt" -noout -pubkey 2>/dev/null) || return
   key_pub=$(openssl pkey -in "$auth_tls_dir/tls.key" -pubout 2>/dev/null) || { echo 'ERROR: auth TLS private key is malformed or missing.' >&2; return 1; }
   [[ -n "$key_pub" && "$cert_pub" == "$key_pub" ]] || { echo 'ERROR: auth TLS certificate and private key do not match.' >&2; return 1; }

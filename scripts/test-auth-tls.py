@@ -8,6 +8,7 @@ import sys
 import signal
 import time
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -103,6 +104,18 @@ else: sys.exit('unexpected mutation')
 
     def test_wrong_host(self):
         self.existing(self.cert('cal.hajnal.space'))
+        self.assertIn('does not cover', self.run_helper(False).stderr)
+
+    def test_wrong_host_with_legacy_checkhost_exit_status(self):
+        # Older OpenSSL x509 -checkhost reports a mismatch but exits zero.
+        self.existing(self.cert('cal.hajnal.space'))
+        openssl = shutil.which('openssl')
+        wrapper = self.root/'bin/openssl'
+        wrapper.write_text('#!'+sys.executable+'\n'+
+                           'import subprocess,sys\n'+
+                           'result=subprocess.run(['+repr(openssl)+']+sys.argv[1:])\n'+
+                           'sys.exit(0 if "-checkhost" in sys.argv else result.returncode)\n')
+        wrapper.chmod(0o755)
         self.assertIn('does not cover', self.run_helper(False).stderr)
 
     def test_mismatched_key(self):

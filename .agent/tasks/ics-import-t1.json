@@ -1,0 +1,19 @@
+{
+  "id": "ics-import-t1",
+  "title": "Atomically create a native event batch \u2014 docs/plans/ics-import/04-task-slices.md#t1",
+  "priority": 1,
+  "depends_on": [],
+  "acceptance": [
+    "Read the approved gates in docs/plans/ics-import/ and execute only packet T1 in docs/plans/ics-import/04-task-slices.md.",
+    "Outcome: `EventService` can create multiple ordinary or recurring native events and their occurrence exceptions as one authorized, audited transaction.",
+    "Scope: `backend/src/event.rs`; initial batch-persistence cases in `backend/tests/ics_import.rs`",
+    "Changes: Add the approved `EventCreateBatch`, item, exception, recurrence-key, and result types; implement `EventService::create_batch`; reuse existing event validation, recurrence validation, authorization, audit, CalDAV change, and notification-replanner helpers; add focused service tests for atomic rollback, exception persistence, side-effect counts, and native editability.",
+    "Out of scope: ICS parsing or UID grouping, HTTP routes, parser error mapping, rate-limit classification, frontend work.",
+    "Acceptance: A valid mixed batch commits all top-level events and exceptions; invalid input or a database failure commits none; authorization is checked as `CreateEvent`; every top-level row has one create audit and CalDAV change; imported-style rows have no external mapping and remain editable; notification replanning occurs only after commit.",
+    "Verify: `cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_batch`",
+    "Handoff: Stable batch input/result types and proven transactional semantics for the ICS coordinator; record exact type names if implementation-required Rust adjustments preserve the approved meanings.",
+    "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
+  ],
+  "docs_required": false,
+  "status": "ready"
+}

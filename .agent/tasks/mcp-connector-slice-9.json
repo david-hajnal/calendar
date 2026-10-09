@@ -1,0 +1,15 @@
+{
+  "id": "mcp-connector-slice-9",
+  "title": "MCP and OAuth resource-server hardening \u2014 docs/plans/cross-client-mcp-connector/04-slices.md",
+  "priority": 1,
+  "depends_on": [],
+  "acceptance": [
+    "Read slice 9 and approved gates in docs/plans/cross-client-mcp-connector/.",
+    "finish Streamable HTTP lifecycle behavior, exact protected-resource metadata/challenge, all nine schemas, Origin enforcement, claim failure cases, bounded metadata/JWKS caching and overlap, provider outage behavior, safe errors, rate limits, and optional\u2014not required\u2014DPoP advertisement; prove the complete black-box protocol/security suite.",
+    "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
+    "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
+    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+  ],
+  "docs_required": false,
+  "status": "blocked"
+}

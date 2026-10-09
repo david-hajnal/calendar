@@ -1,0 +1,17 @@
+{
+  "id": "mcp-connector-slice-11",
+  "title": "Codex compatibility \u2014 docs/plans/cross-client-mcp-connector/04-slices.md",
+  "priority": 1,
+  "depends_on": [
+    "mcp-connector-slice-10"
+  ],
+  "acceptance": [
+    "Read slice 11 and approved gates in docs/plans/cross-client-mcp-connector/.",
+    "using a temporary supported Codex configuration, verify the released add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery paths without copied tokens or client secrets; record the callback shape and minimum version, extend the DCR policy only as narrowly required, and add non-secret checks to the opt-in harness.",
+    "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
+    "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
+    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+  ],
+  "docs_required": false,
+  "status": "blocked"
+}

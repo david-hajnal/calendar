@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { useIsMobile } from "./useIsMobile";
+import { SampleAgenda } from "./calendar/MobileCalendar";
+
 import type { Fetcher } from "./auth/api";
 import { AuthProvider, useAuth } from "./auth/session";
 import { ThemeProvider } from "./theme/themeContext";
@@ -54,20 +57,6 @@ function useLocation() {
     return () => window.removeEventListener("popstate", update);
   }, []);
   return location;
-}
-
-const MOBILE_QUERY = "(max-width: 48rem)";
-
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(() => (typeof window.matchMedia === "function" ? window.matchMedia(MOBILE_QUERY).matches : window.innerWidth <= 768));
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia(MOBILE_QUERY);
-    const update = (event: MediaQueryListEvent) => setIsMobile(event.matches);
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
-  return isMobile;
 }
 
 function LoginRequestPage() {
@@ -360,6 +349,9 @@ function AuthenticatedShell() {
 }
 
 function CalendarPage({ api }: { api: ReturnType<typeof useAuth>["api"] }) {
+  const isMobile = useIsMobile();
+  const [preview, setPreview] = useState(false);
+  const previewButton = useRef<HTMLButtonElement>(null);
   const [calendars, setCalendars] = useState<Calendar[] | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => {
@@ -367,9 +359,13 @@ function CalendarPage({ api }: { api: ReturnType<typeof useAuth>["api"] }) {
     void listCalendars(api).then((result) => { if (active) setCalendars(result); }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [api]);
+  if (isMobile && preview) return <SampleAgenda onReturn={() => { setPreview(false); requestAnimationFrame(() => previewButton.current?.focus()); }} />;
   if (error) return <p role="alert">We could not load your calendars. Please try again.</p>;
   if (calendars === null) return <p role="status">Loading calendars…</p>;
-  return <CalendarEventUI api={api} calendars={calendars} />;
+  return <>
+    {isMobile && <button ref={previewButton} className="app-button" type="button" onClick={() => setPreview(true)}>Preview mobile Agenda</button>}
+    <CalendarEventUI api={api} calendars={calendars} />
+  </>;
 }
 
 function LoginRedirect({ location }: { location: string }) {

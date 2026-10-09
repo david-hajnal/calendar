@@ -18,6 +18,7 @@ function renderAt(path: string, fetcher: Fetcher) {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   window.history.replaceState({}, "", "/");
 });
 
@@ -283,4 +284,24 @@ it("password login links to recovery and reset pages do not load an existing ses
   expect(await screen.findByRole("heading", { name: "Set a new password" })).toBeInTheDocument();
   expect(window.location.search).toBe("");
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+// Gate 4 tracer: the authenticated application is the approved test seam.
+describe("mobile Agenda preview", () => {
+  it("opens clearly labeled sample content and returns without event mutations", async () => {
+    vi.stubGlobal("innerWidth", 390);
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(
+      JSON.stringify(String(input) === "/api/v1/auth/session" && (!_init?.method || _init.method === "GET") ? session : []),
+      { status: 200 },
+    ));
+    renderAt("/dashboard", fetcher);
+    fireEvent.click(await screen.findByRole("button", { name: "Preview mobile Agenda" }));
+    expect(screen.getByRole("heading", { name: "Sample Agenda" })).toBeInTheDocument();
+    expect(screen.getByText("Sample events only — this preview does not change your calendar.")).toBeInTheDocument();
+    expect(screen.getByText("Design review and next week’s priorities")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Return to your calendar" }));
+    expect(screen.queryByRole("heading", { name: "Sample Agenda" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Preview mobile Agenda" })).toBeInTheDocument();
+    expect(fetcher.mock.calls.every(([, init]) => !init || !init.method || init.method === "GET")).toBe(true);
+  });
 });

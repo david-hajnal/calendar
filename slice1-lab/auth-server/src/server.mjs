@@ -49,9 +49,9 @@ const SCOPE_CATALOG = [
   'commoncal.reminder.read',
   'commoncal.reminder.write',
 ];
-// OIDC scopes (ID-token / refresh). The CommonCal catalog scopes are RESOURCE
-// scopes, declared on the resource server below — putting them here would make
-// the provider treat them as OIDC scopes and loop on consent.
+// DCR validates client metadata against configuration.scopes, even for resource
+// scopes. Admit the known catalog there, but reject its OIDC interpretation at
+// consent so CommonCal permissions remain specific to the resource server.
 const OIDC_SCOPES = ['openid', 'offline_access'];
 
 const storage = PRODUCTION ? new SQLiteStorage(production.sqlitePath) : null;
@@ -215,7 +215,7 @@ const configuration = {
   adapter: Adapter,
   clients: [],
   claims: { amr: null },
-  scopes: OIDC_SCOPES,
+  scopes: [...OIDC_SCOPES, ...SCOPE_CATALOG],
   responseTypes: ['code'],
   grantTypes: ['authorization_code', 'refresh_token'],
   subjectTypes: ['public'],
@@ -265,7 +265,12 @@ const configuration = {
     deviceFlow: { enabled: false },
     resourceIndicators: {
       enabled: true,
-      defaultResource: async () => undefined,
+      defaultResource: async (ctx) => {
+        if (approvedResourceScopes(ctx.oidc.params.scope).length > 0) {
+          throw new errors.InvalidTarget('CommonCal scopes require an explicit resource');
+        }
+        return undefined;
+      },
       useGrantedResource: async () => false,
       getResourceServerInfo: async (_ctx, indicator) => {
         if (indicator !== RESOURCE) throw new errors.InvalidTarget('unknown resource');
@@ -419,6 +424,10 @@ async function resumeInteraction(req, res, url) {
         { mergeWithLastSubmission: false },
       );
     }
+    // The provider also encounters catalog scopes in its OIDC consent checks
+    // because DCR requires them in configuration.scopes. Mark that branch as
+    // rejected without granting an OIDC permission or repeating consent.
+    grant.rejectOIDCScope(approved);
     grant.addResourceScope(RESOURCE, approved);
     if (scopes.has('openid')) grant.addOIDCScope('openid');
     if (scopes.has('offline_access')) grant.addOIDCScope('offline_access');
@@ -484,8 +493,12 @@ const publicServer = createServer(async (req, res) => {
       // method, and url plus a fresh body stream.
       const bodyBuffer = Buffer.from(JSON.stringify(body));
       const bodyStream = Readable.from(bodyBuffer);
+      // Parsing and reserialization can change whitespace and byte length.
+      // The replay is buffered, so replace the incoming framing headers.
+      const replayHeaders = { ...req.headers, 'content-length': String(bodyBuffer.length) };
+      delete replayHeaders['transfer-encoding'];
       const replayed = Object.assign(bodyStream, {
-        headers: req.headers,
+        headers: replayHeaders,
         method: req.method,
         url: req.url,
         socket: req.socket,

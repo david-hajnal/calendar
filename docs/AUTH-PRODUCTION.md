@@ -6,6 +6,33 @@ calendar database; auth has a separate file/PVC. No PostgreSQL server, database
 passwords or database TLS are needed. The candidate remains dormant; no live
 conversion or deployment has been performed. Existing PostgreSQL data is preserved.
 
+## CommonCal scopes in dynamic client registration
+
+OAuth clients such as Codex include their requested API scope in DCR metadata.
+The installed `oidc-provider` validates that metadata against its configured
+scopes before custom metadata validation. The configured set therefore includes
+both OIDC scopes and the known CommonCal catalog; unknown scopes remain invalid.
+During consent, CommonCal scopes are explicitly rejected as OIDC permissions and
+granted only for the exact configured resource. Requests for CommonCal scopes
+without a resource fail with `invalid_target`. Calendar selections remain enforced
+by the separate core grant and MCP calendar filtering.
+
+Run `./scripts/dev.sh auth-check` for DCR and production OAuth integration, and
+`./scripts/dev.sh auth-storage-check` to build and verify the Node 22 auth image,
+including encrypted SQLite recovery. The DCR proof checks metadata-only client
+registration, unknown scopes, client scope restrictions, signed resource tokens,
+and required resource/consent boundaries. Backend browser consent tests and the
+MCP calendar metadata integration test verify calendar selections independently.
+
+To release this fix, publish the reviewed source through the normal main promotion
+workflow. It builds `Dockerfile.auth` and the core/MCP images, scans all three,
+publishes immutable `sha-<commit>` tags, and promotes the production Flux manifests.
+Wait for the workflow and auth rollout/readiness checks before retrying
+`codex mcp login commoncal --oauth-client-registration dcr --scopes commoncal.calendar.metadata.read`.
+The fix needs no schema migration, issuer configuration, callback-policy, Secret,
+or PVC changes. After browser consent, verify an authenticated read-only calendar
+metadata tool call; successful registration alone does not prove a working MCP connection.
+
 ## Server setup
 
 1. Before publishing to main, pause the actual root Flux Kustomization if you

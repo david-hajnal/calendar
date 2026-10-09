@@ -1,0 +1,17 @@
+services:
+  proof:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    network_mode: none
+    read_only: true
+    user: "${AUTH_RESTORE_UID:?}:${AUTH_RESTORE_GID:?}"
+    entrypoint: [node, /app/tests/restore-live-proof.mjs]
+    tmpfs:
+      - /tmp:uid=${AUTH_RESTORE_UID},gid=${AUTH_RESTORE_GID},mode=0700,size=67108864
+    volumes:
+      - ${AUTH_RESTORE_INPUT_DIR:?Set private restore input directory}:/inputs:ro
+      - ./slice1-lab/auth-server/tests/restore-live-proof.mjs:/app/tests/restore-live-proof.mjs:ro
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m

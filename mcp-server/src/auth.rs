@@ -136,7 +136,11 @@ pub async fn auth_middleware(
         }
     };
 
-    match state.validator.validate(&token, &state.issuer, &state.resource).await {
+    match state
+        .validator
+        .validate(&token, &state.issuer, &state.resource)
+        .await
+    {
         Ok(result) => {
             let identity = Identity::from(&result);
             tracing::debug!(

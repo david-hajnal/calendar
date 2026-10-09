@@ -94,7 +94,7 @@ async fn calendar_list_uses_authorized_core_grant_to_filter_calendars() {
     let token = TokenValidationResult {
         user_id: 42,
         oauth_client_id: "client-1".to_string(),
-        scopes: vec![],
+        scopes: vec!["commoncal.calendar.metadata.read".to_string()],
         auth_strength: AuthStrength::Passwordless,
         auth_time: 0,
         token_id: "token-1".to_string(),
@@ -140,6 +140,30 @@ async fn calendar_list_uses_authorized_core_grant_to_filter_calendars() {
 
     assert!(output.to_string().contains("Allowed"));
     assert!(!output.to_string().contains("Denied"));
+
+    // A resource token's metadata scope never widens the calendar consent.
+    let empty_grant = McpGrant {
+        allowed_calendar_ids: vec![],
+        ..grant
+    };
+    let empty_context = AuthorizedToolContext {
+        token: &token,
+        grant: &empty_grant,
+        internal_client: &client,
+    };
+    let response = calendar_list(
+        &empty_context,
+        CalendarListParams {
+            include_access: false,
+        },
+    )
+    .await
+    .expect("empty consent should return no calendars");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(metadata["calendars"], serde_json::json!([]));
 }
 
 const CREATE_GRANT: &str = r#"[{"grant_id":"grant-2","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":true,"allow_update":false,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
@@ -745,15 +769,19 @@ async fn phase3_valid_token_with_standard_claims() {
     let jwks_uri = format!("{}/jwks", mock_issuer);
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -785,7 +813,9 @@ async fn phase3_valid_token_with_standard_claims() {
     let token = sign_jwt(&private_key, "test-key-1", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
 
     let result = result.expect("valid token should validate");
     assert_eq!(result.user_id, 42);
@@ -797,7 +827,10 @@ async fn phase3_valid_token_with_standard_claims() {
             "commoncal.event.read.basic".to_string(),
         ]
     );
-    assert_eq!(result.auth_strength, mcp_server::oauth::AuthStrength::Passwordless);
+    assert_eq!(
+        result.auth_strength,
+        mcp_server::oauth::AuthStrength::Passwordless
+    );
     assert!(!result.token_id.is_empty());
 }
 
@@ -810,15 +843,19 @@ async fn phase3_wrong_issuer_rejected() {
     let mock = wiremock::MockServer::start().await;
     let jwks_uri = format!("{}/jwks", mock.uri());
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -850,7 +887,9 @@ async fn phase3_wrong_issuer_rejected() {
     let token = sign_jwt(&private_key, "test-key-2", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(result.is_err(), "wrong issuer must be rejected");
 }
 
@@ -863,15 +902,19 @@ async fn phase3_wrong_audience_rejected() {
     let mock = wiremock::MockServer::start().await;
     let jwks_uri = format!("{}/jwks", mock.uri());
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -902,7 +945,9 @@ async fn phase3_wrong_audience_rejected() {
     let token = sign_jwt(&private_key, "test-key-3", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(result.is_err(), "wrong audience must be rejected");
 }
 
@@ -915,15 +960,19 @@ async fn phase3_expired_token_rejected() {
     let jwks_uri = format!("{}/jwks", mock_issuer);
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -954,7 +1003,9 @@ async fn phase3_expired_token_rejected() {
     let token = sign_jwt(&private_key, "test-key-4", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(
         matches!(result, Err(mcp_server::error::TokenError::Expired)),
         "expired token must be rejected with Expired error, got: {:?}",
@@ -971,15 +1022,19 @@ async fn phase3_non_numeric_sub_rejected() {
     let mock = wiremock::MockServer::start().await;
     let jwks_uri = format!("{}/jwks", mock.uri());
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1010,11 +1065,10 @@ async fn phase3_non_numeric_sub_rejected() {
     let token = sign_jwt(&private_key, "test-key-5", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
-    assert!(
-        result.is_err(),
-        "non-numeric sub must be rejected"
-    );
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
+    assert!(result.is_err(), "non-numeric sub must be rejected");
 }
 
 /// Phase 3: missing client_id is rejected.
@@ -1026,15 +1080,19 @@ async fn phase3_missing_client_id_rejected() {
     let mock = wiremock::MockServer::start().await;
     let jwks_uri = format!("{}/jwks", mock.uri());
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1064,11 +1122,10 @@ async fn phase3_missing_client_id_rejected() {
     let token = sign_jwt(&private_key, "test-key-6", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
-    assert!(
-        result.is_err(),
-        "missing client_id must be rejected"
-    );
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
+    assert!(result.is_err(), "missing client_id must be rejected");
 }
 
 /// Phase 3: key rotation — token signed with a key present in JWKS validates.
@@ -1087,15 +1144,19 @@ async fn phase3_key_rotation_overlap_validates() {
     let jwks_uri = format!("{}/jwks", mock_issuer);
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1130,7 +1191,9 @@ async fn phase3_key_rotation_overlap_validates() {
     let token = sign_jwt(&new_key, "new-key", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(
         result.is_ok(),
         "token signed with key in JWKS overlap should validate, got: {:?}",
@@ -1149,15 +1212,19 @@ async fn phase3_stale_key_rejected_after_refresh() {
     let jwks_uri = format!("{}/jwks", mock_issuer);
 
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1191,7 +1258,9 @@ async fn phase3_stale_key_rejected_after_refresh() {
     let token = sign_jwt(&stale_key, "stale-key", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(
         result.is_err(),
         "token signed with removed key must be rejected"
@@ -1207,15 +1276,19 @@ async fn phase3_discovery_issuer_mismatch_rejected() {
 
     // Metadata returns a different issuer than what we configure.
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": "https://different-issuer.example.com",
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": "https://different-issuer.example.com",
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1250,15 +1323,19 @@ async fn phase3_future_iat_rejected() {
     let mock = wiremock::MockServer::start().await;
     let jwks_uri = format!("{}/jwks", mock.uri());
     wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+        .and(wiremock::matchers::path(
+            "/.well-known/oauth-authorization-server",
+        ))
         .respond_with(
             wiremock::ResponseTemplate::new(200)
                 .insert_header("content-type", "application/json")
-                .set_body_string(serde_json::json!({
-                    "issuer": mock_issuer,
-                    "jwks_uri": jwks_uri,
-                })
-                .to_string()),
+                .set_body_string(
+                    serde_json::json!({
+                        "issuer": mock_issuer,
+                        "jwks_uri": jwks_uri,
+                    })
+                    .to_string(),
+                ),
         )
         .mount(&mock)
         .await;
@@ -1290,7 +1367,9 @@ async fn phase3_future_iat_rejected() {
     let token = sign_jwt(&private_key, "test-key-9", &claims);
 
     let validator = TokenValidator::new();
-    let result = validator.validate(&token, &mock_issuer, TEST_RESOURCE).await;
+    let result = validator
+        .validate(&token, &mock_issuer, TEST_RESOURCE)
+        .await;
     assert!(
         result.is_err(),
         "iat in the future beyond clock skew must be rejected"
@@ -1373,7 +1452,10 @@ async fn phase3_real_auth_server_token_validates() {
         .as_str()
         .expect("access_token present")
         .to_string();
-    let issuer = parsed["issuer"].as_str().expect("issuer present").to_string();
+    let issuer = parsed["issuer"]
+        .as_str()
+        .expect("issuer present")
+        .to_string();
     let resource = parsed["resource"]
         .as_str()
         .expect("resource present")
@@ -1391,15 +1473,22 @@ async fn phase3_real_auth_server_token_validates() {
         .expect("token issued by the real auth server must validate");
 
     // Standard claims parsed correctly.
-    assert_eq!(result.user_id, 1, "numeric sub must parse to the CommonCal user id");
+    assert_eq!(
+        result.user_id, 1,
+        "numeric sub must parse to the CommonCal user id"
+    );
     assert_eq!(result.oauth_client_id, client_id);
     assert!(
-        result.scopes.contains(&"commoncal.calendar.metadata.read".to_string()),
+        result
+            .scopes
+            .contains(&"commoncal.calendar.metadata.read".to_string()),
         "granted scope must be present: {:?}",
         result.scopes
     );
     assert!(
-        result.scopes.contains(&"commoncal.event.read.basic".to_string()),
+        result
+            .scopes
+            .contains(&"commoncal.event.read.basic".to_string()),
         "granted scope must be present: {:?}",
         result.scopes
     );

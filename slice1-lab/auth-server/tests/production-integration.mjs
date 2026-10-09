@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, writeFile, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
@@ -47,7 +47,8 @@ async function request(path, options = {}) {
 async function privateRequest(path, options = {}) { return fetch(`http://127.0.0.1:${privatePort}${path}`, { ...options, headers: { authorization: `Bearer ${bridge}`, ...options.headers } }); }
 const redirectUri = 'http://127.0.0.1:19876/mcp/oauth/callback';
 async function register(uri = redirectUri) {
-  return request('/reg', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'production proof', redirect_uris: [uri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
+  // Exercise whitespace and multibyte text: replay framing must use the new byte length.
+  return request('/reg', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'production proof — recovery', redirect_uris: [uri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }, null, 2) });
 }
 async function token(params) {
   const response = await request('/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params) });
@@ -108,6 +109,19 @@ try {
     const archive=await encryptedBackup({AUTH_SQLITE_PATH:databasePath,AUTH_BACKUP_DIR:backupDirectory,AGE_RECIPIENT:recipient,TMPDIR:directory});
     execFileSync('age',['--decrypt','--identity',identity,'--output',backupPath,resolve(backupDirectory,archive)],{stdio:'ignore'});
   } else await snapshot(databasePath,backupPath);
+  const restoreInputs = resolve(directory, 'restore-inputs');
+  await mkdir(restoreInputs, { mode: 0o700 });
+  await copyFile(backupPath, resolve(restoreInputs, 'auth.sqlite'));
+  await writeFile(resolve(restoreInputs, 'auth-secret.json'), JSON.stringify({ data: Object.fromEntries(Object.entries({
+    AUTH_JWKS: await readFile(keyFile, 'utf8'), AUTH_BRIDGE_KEY: bridge, AUTH_COOKIE_KEYS: cookies, AUTH_SIGNING_KID: activeKid,
+  }).map(([key, value]) => [key, Buffer.from(value).toString('base64')])) }), { mode: 0o600 });
+  await writeFile(resolve(restoreInputs, 'auth-config.json'), JSON.stringify({ data: {
+    AUTH_ISSUER: issuer, AUTH_RESOURCE_URL: resource, AUTH_COMMONCAL_URL: commoncal,
+    AUTH_TRUST_PROXY: 'true', AUTH_DCR_LOOPBACK_HOSTS: '127.0.0.1', AUTH_DCR_CALLBACK_PATH: '/mcp/oauth/callback',
+  } }), { mode: 0o600 });
+  await writeFile(resolve(restoreInputs, 'proof.json'), JSON.stringify({ issuer, resource, client_id: client.client_id, tokens: issued.body }), { mode: 0o600 });
+  const restoreOutput = execFileSync(process.execPath, ['tests/restore-live-proof.mjs', restoreInputs], { cwd: base, encoding: 'utf8' });
+  assert.match(restoreOutput, /PASS: restored schema/);
   await stop();
   await pool.end();
   await rm(databasePath+'-wal',{force:true}); await rm(databasePath+'-shm',{force:true});

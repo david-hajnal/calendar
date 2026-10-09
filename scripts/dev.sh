@@ -200,6 +200,7 @@ cmd_clean() {
 # Production auth checks use a disposable SQLite directory, without a database server.
 cmd_auth_check() (
   cd slice1-lab/auth-server
+  node tests/dcr-scopes-integration.mjs
   node tests/production-integration.mjs
 )
 
@@ -258,6 +259,7 @@ ${YELLOW}Commands:${NC}
   status    Show container and volume status
   auth-storage-check Verify SQLite backup/recovery in the non-root Node 22 auth image
   auth-image-scan Scan the production auth image using the publication security gate
+  auth-restore-check Verify private restored OAuth state with Docker networking disabled
   auth-import-check Verify optional legacy PostgreSQL-to-SQLite import
   auth-check Run production auth proofs with disposable SQLite storage
   clean     Stop, remove volumes, prune build cache (interactive)
@@ -282,5 +284,11 @@ case "${1:-}" in
   auth-storage-check) cmd_auth_storage_check ;;
   auth-import-check) cmd_auth_import_check ;;
   auth-image-scan) cmd_auth_image_scan ;;
+  auth-restore-check)
+    : "${AUTH_RESTORE_INPUT_DIR:?Set AUTH_RESTORE_INPUT_DIR to private restored inputs}"
+    export AUTH_RESTORE_INPUT_DIR
+    export AUTH_RESTORE_UID="$(id -u)" AUTH_RESTORE_GID="$(id -g)"
+    ensure_auth_docker
+    docker compose -p happening-auth-restore-proof -f docker-compose.auth-restore-proof.yml run --build --rm proof ;;
   *)        usage ;;
 esac

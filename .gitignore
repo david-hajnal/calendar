@@ -38,3 +38,5 @@ docs/TLS-IMPLEMENTATION-PLAN.md
 
 # Local Kubernetes credentials
 .kube/
+# Local production deployment command record
+/docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md

@@ -226,10 +226,7 @@ impl TokenValidator {
                 );
                 jwks = self.refresh_jwks(&jwks_uri).await?;
                 find_jwk(&jwks.keys, &header.kid).ok_or_else(|| {
-                    TokenError::InvalidToken(format!(
-                        "no matching key for kid: {:?}",
-                        header.kid
-                    ))
+                    TokenError::InvalidToken(format!("no matching key for kid: {:?}", header.kid))
                 })?
             }
         };
@@ -246,14 +243,15 @@ impl TokenValidator {
         validation.leeway = CLOCK_SKEW_SECS;
 
         // Step 7: Decode and validate the token.
-        let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
-            .map_err(|e| match e.kind() {
+        let token_data = decode::<TokenClaims>(token, &decoding_key, &validation).map_err(|e| {
+            match e.kind() {
                 JwtErrorKind::ExpiredSignature => TokenError::Expired,
                 JwtErrorKind::InvalidIssuer => TokenError::InvalidIssuer,
                 JwtErrorKind::InvalidAudience => TokenError::InvalidAudience,
                 JwtErrorKind::InvalidSignature => TokenError::InvalidToken(e.to_string()),
                 _ => TokenError::InvalidToken(e.to_string()),
-            })?;
+            }
+        })?;
 
         // Step 8: Validate iat (not in the future beyond clock skew).
         let now = current_time_secs();
@@ -323,8 +321,14 @@ impl TokenValidator {
         }
 
         // Try RFC 8414 location first, then OIDC fallback.
-        let rfc8414_url = format!("{}/.well-known/oauth-authorization-server", issuer.trim_end_matches('/'));
-        let oidc_url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+        let rfc8414_url = format!(
+            "{}/.well-known/oauth-authorization-server",
+            issuer.trim_end_matches('/')
+        );
+        let oidc_url = format!(
+            "{}/.well-known/openid-configuration",
+            issuer.trim_end_matches('/')
+        );
 
         let metadata = match self.fetch_metadata(&rfc8414_url).await {
             Ok(m) => m,
@@ -426,7 +430,9 @@ impl TokenValidator {
             .map_err(|e| TokenError::InvalidToken(format!("failed to parse JWKS: {e}")))?;
 
         if jwks.keys.is_empty() {
-            return Err(TokenError::InvalidToken("JWKS contains no keys".to_string()));
+            return Err(TokenError::InvalidToken(
+                "JWKS contains no keys".to_string(),
+            ));
         }
 
         // Update cache.
@@ -676,7 +682,10 @@ fn derive_auth_strength(amr: Option<&[String]>) -> AuthStrength {
     let Some(amr) = amr else {
         return AuthStrength::Passwordless;
     };
-    if amr.iter().any(|m| m == "passkey" || m == "fido2" || m == "webauthn") {
+    if amr
+        .iter()
+        .any(|m| m == "passkey" || m == "fido2" || m == "webauthn")
+    {
         AuthStrength::Passkey
     } else if amr.iter().any(|m| m == "mfa" || m == "otp" || m == "totp") {
         AuthStrength::Mfa
@@ -986,8 +995,22 @@ mod tests {
     #[test]
     fn find_jwk_finds_matching_kid() {
         let keys = vec![
-            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n1".into(), e: "AQAB".into(), kid: "key-1".into() },
-            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n2".into(), e: "AQAB".into(), kid: "key-2".into() },
+            Jwk {
+                kty: "RSA".into(),
+                alg: "RS256".into(),
+                _key_use: None,
+                n: "n1".into(),
+                e: "AQAB".into(),
+                kid: "key-1".into(),
+            },
+            Jwk {
+                kty: "RSA".into(),
+                alg: "RS256".into(),
+                _key_use: None,
+                n: "n2".into(),
+                e: "AQAB".into(),
+                kid: "key-2".into(),
+            },
         ];
         assert!(find_jwk(&keys, &Some("key-1".to_string())).is_some());
         assert!(find_jwk(&keys, &Some("key-2".to_string())).is_some());
@@ -996,9 +1019,14 @@ mod tests {
 
     #[test]
     fn find_jwk_no_kid_returns_first() {
-        let keys = vec![
-            Jwk { kty: "RSA".into(), alg: "RS256".into(), _key_use: None, n: "n1".into(), e: "AQAB".into(), kid: "key-1".into() },
-        ];
+        let keys = vec![Jwk {
+            kty: "RSA".into(),
+            alg: "RS256".into(),
+            _key_use: None,
+            n: "n1".into(),
+            e: "AQAB".into(),
+            kid: "key-1".into(),
+        }];
         assert!(find_jwk(&keys, &None).is_some());
     }
 

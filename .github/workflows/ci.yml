@@ -122,6 +122,8 @@ jobs:
         working-directory: slice1-lab/auth-server
       - run: pnpm test
         working-directory: slice1-lab/auth-server
+      - run: node tests/dcr-scopes-integration.mjs
+        working-directory: slice1-lab/auth-server
       - run: node tests/production-integration.mjs
         working-directory: slice1-lab/auth-server
       - name: Verify SQLite authorization image and encrypted recovery

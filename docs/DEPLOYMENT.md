@@ -90,7 +90,7 @@ Production TLS uses a two-hop model:
 
 The deploy script manages the origin Secret:
 
-- **First run:** if `commoncal-tls` is absent or invalid, the script generates
+- **First run:** if `commoncal-tls` is absent, the script generates
   a self-signed RSA 2048-bit / SHA-256 certificate (365 days) covering both
   `DOMAIN` and `MCP_DOMAIN`, and creates the Secret in the `commoncal`
   namespace. The private key is never logged.
@@ -98,7 +98,7 @@ The deploy script manages the origin Secret:
   matching key, both SANs present, more than 30 days to expiry), the script
   reuses it and does not regenerate.
 - **30-day expiry guard:** if the existing certificate expires within 30 days,
-  the script regenerates it.
+  the script aborts without overwriting it; rotate explicitly.
 - **Manual rotation:** delete the Secret (`kubectl delete secret commoncal-tls
   -n commoncal`) and re-run the deploy script to force regeneration.
 
@@ -335,7 +335,9 @@ Then add to each HelmRelease's `imagePullSecrets`.
   `AUTH_COOKIE_KEYS`, `AUTH_SIGNING_KID`, and private `AUTH_JWKS`.
 - `commoncal-auth-backup` — public age recipient under `AGE_RECIPIENT`;
   keep the private age identity recoverable outside the cluster.
-- `commoncal-auth-tls` — public TLS for `auth.hajnal.space`.
+- `commoncal-auth-tls` — self-signed origin TLS for `auth.hajnal.space`;
+  provision independently with `bash deploy/provision-auth-tls.sh` (see
+  [auth setup and rotation](AUTH-PRODUCTION.md)).
 - `commoncal-session` — session encryption (key: `SESSION_SECRET`) and backup encryption (key: `BACKUP_ENCRYPTION_KEY_HEX`)
 - `commoncal-mcp-secrets` — the shared internal API key, MCP session secret, and HTTPS OAuth issuer (`mcp-oauth-issuer`)
 - `commoncal-tls` — self-signed TLS certificate for the origin hop (covers both `cal.hajnal.space` and `mcal.hajnal.space`)

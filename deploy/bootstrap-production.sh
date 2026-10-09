@@ -112,6 +112,9 @@ kubectl create secret generic commoncal-mcp-secrets \
   -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+source "$(dirname "${BASH_SOURCE[0]}")/auth-tls.sh"
+auth_tls_secret "$NAMESPACE" provision
+
 echo "==> Creating auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;
 # it is created here out-of-band and referenced by the Helm chart.

@@ -37,6 +37,11 @@ case "${1:-} ${2:-} ${3:-}" in
   "get namespace "*)
     ;;
   "get secret "*)
+    if [ "$3" = commoncal-auth-tls ]; then
+      # Auth TLS validation has independent real-certificate tests.
+      printf '%s\n' '{"type":"kubernetes.io/tls","data":{"tls.crt":"ZHVtbXk=","tls.key":"ZHVtbXk="}}'
+      exit 0
+    fi
     if [ "$3" = commoncal-auth-backup ]; then
       # Fixture starts without a backup Secret; no operator secrets are read.
       exit 0
@@ -211,6 +216,7 @@ case "$cmd" in
     done
     case "$mode" in
       checkhost)
+        [ "$host" != auth.hajnal.space ] || exit 0
         sans=$(printf '%s' "${TLS_CERT_SANS:-}" | tr -d '[:space:]')
         case ",$sans," in
           *",DNS:$host,"*) exit 0 ;;

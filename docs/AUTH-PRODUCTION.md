@@ -21,8 +21,11 @@ conversion or deployment has been performed. Existing PostgreSQL data is preserv
    StorageClass for local/block storage. SQLite WAL needs reliable filesystem
    locking; do not use NFS/shared network storage. Confirm the real ingress
    controller namespace matches the NetworkPolicy. Point `auth.hajnal.space` at
-   ingress and provision public TLS in `commoncal-auth-tls` using your existing
-   certificate process. No database certificates are needed.
+   the existing proxied ingress. Browser → Cloudflare uses the publicly trusted
+   Cloudflare edge certificate. Cloudflare → Traefik uses the self-signed origin
+   certificate in `commoncal-auth-tls`, covering `auth.hajnal.space`. Keep the
+   existing Cloudflare proxying and **Full** mode. The origin Secret is not the
+   public edge certificate. No ACME or database certificates are needed.
 4. Preserve your age identity outside the repository and cluster, in recoverable
    secure storage. The identity already generated for PostgreSQL backups is
    reusable. Export its public recipient as `AUTH_BACKUP_AGE_RECIPIENT`.
@@ -40,7 +43,8 @@ conversion or deployment has been performed. Existing PostgreSQL data is preserv
    bash deploy/bootstrap-auth-sqlite.sh
    ```
 
-   This creates `commoncal-auth-secrets` and `commoncal-auth-backup`, and refuses
+   This first provisions or validates `commoncal-auth-tls`, then creates
+   `commoncal-auth-secrets` and `commoncal-auth-backup`, and refuses
    silent backup recipient changes and validates the complete recipient with age. `AUTH_DATABASE_URL`, PostgreSQL passwords,
    and `deploy/bootstrap-auth-postgres.sh` are obsolete for this setup.
 6. If PostgreSQL already contains OAuth state, perform the offline import below
@@ -80,6 +84,68 @@ conversion or deployment has been performed. Existing PostgreSQL data is preserv
 
 Do not use the old PostgreSQL setup steps from earlier chat messages. Do not
 remove existing PostgreSQL Secrets/PVCs as part of this transition.
+
+## Auth-only origin TLS provisioning for an existing installation
+
+On the production host, from a checkout containing this fix, run only:
+
+```bash
+set +x
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml  # use the actual kubeconfig
+kubectl config current-context             # confirm the intended cluster
+NAMESPACE=commoncal bash deploy/provision-auth-tls.sh
+```
+
+This command needs kubectl, Python 3 and OpenSSL with `x509 -checkhost` support
+(OpenSSL 1.1.1+ or 3.x). It requires no host Node.js, auth credentials, Helm,
+Docker or Flux commands. It creates only `commoncal-auth-tls` if absent, using
+RSA 2048, SHA-256, a 365-day lifetime and the `auth.hajnal.space` SAN. It reuses
+an existing Secret only after checking its TLS type, decoded certificate/key,
+matching public keys, hostname, current validity and at least 30 days remaining.
+Invalid or expiring Secrets cause an error and are never overwritten. Cluster
+read errors also abort. `DRY_RUN=1` performs server dry-run creation if missing.
+Key material stays in private temporary files and is removed on exit/signals.
+
+For the existing installation, do not rerun the full stack deployment or secret
+bootstrap merely to fill this TLS gap. The auth-only command preserves signing,
+cookie and bridge keys, backup credentials, `commoncal-tls`, SQLite PVCs, SMTP
+settings and all Flux suspension states. Traefik watches the Secret; no workload
+restart or release reconciliation is needed. If auth is already running, verify:
+
+```bash
+kubectl get secret commoncal-auth-tls -n commoncal -o jsonpath='{.type}{"\n"}'
+curl --fail https://auth.hajnal.space/ready
+curl --fail https://auth.hajnal.space/.well-known/openid-configuration
+# Inspect the origin directly, using the real origin IP (not Cloudflare's IP):
+openssl s_client -connect <ORIGIN_IP>:443 -servername auth.hajnal.space </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+The origin should present the self-signed auth certificate. Public requests see
+Cloudflare's trusted edge certificate. If auth remains suspended, leave it in
+that state and continue the staged setup gates separately when ready.
+
+## Origin TLS rotation
+
+Only when the helper reports an invalid/expiring existing Secret, schedule an
+explicit rotation. Securely back up that Secret (the backup contains its private
+key), then delete only the auth TLS Secret and rerun the auth-only helper:
+
+```bash
+set +x
+umask 077
+backup_dir=$(mktemp -d)
+kubectl get secret commoncal-auth-tls -n commoncal -o json > "$backup_dir/auth-tls.json"
+# Move this backup to protected storage before proceeding.
+kubectl delete secret commoncal-auth-tls -n commoncal
+NAMESPACE=commoncal bash deploy/provision-auth-tls.sh
+```
+
+Deletion/recreation can briefly interrupt origin TLS. Verify the origin SNI and
+public endpoints above. If replacement fails, restore with
+`kubectl apply -f <protected-backup>/auth-tls.json`. Retain the backup securely
+for rollback, then remove it according to your key retention policy. Never
+delete `commoncal-tls`, auth signing/cookie Secrets or PVCs for TLS rotation.
 
 ## Migration initContainer fails after switching to SQLite
 

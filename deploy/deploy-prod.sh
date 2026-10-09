@@ -307,6 +307,10 @@ fi
 
 echo "==> Ensuring TLS secret '$NAMESPACE/$TLS_SECRET_NAME'..."
 ensure_tls_secret
+source "$DEPLOY_DIR/auth-tls.sh"
+auth_tls_args=()
+if ((dry_run)); then auth_tls_args=(--dry-run=server); fi
+auth_tls_secret "$NAMESPACE" provision ${auth_tls_args[@]+"${auth_tls_args[@]}"}
 
 source "$DEPLOY_DIR/core-secret.sh"
 core_secret_create_args=()

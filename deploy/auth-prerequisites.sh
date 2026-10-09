@@ -4,6 +4,8 @@ set -euo pipefail
 set +x
 : "${KUBECONFIG:?Set KUBECONFIG to the intended production cluster}"
 namespace=${NAMESPACE:-commoncal}
+source "$(dirname "${BASH_SOURCE[0]}")/auth-tls.sh"
+auth_tls_secret "$namespace" validate
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 umask 077
@@ -16,7 +18,7 @@ pods=json.load(open(sys.argv[1])).get('items',[])
 if not any(any(c.get('type')=='Ready' and c.get('status')=='True' for c in p.get('status',{}).get('conditions',[])) for p in pods):
     raise SystemExit('No Ready Traefik controller in the configured ingress namespace')
 PYCONTROLLER
-for name in commoncal-auth-secrets commoncal-auth-backup commoncal-auth-tls; do
+for name in commoncal-auth-secrets commoncal-auth-backup; do
   kubectl get secret "$name" -n "$namespace" -o json > "$work_dir/$name.json"
 done
 python3 - "$work_dir" "$namespace" <<'PY'
@@ -38,13 +40,9 @@ recipient = data('commoncal-auth-backup','AGE_RECIPIENT').decode()
 if not recipient.startswith('age1'):
     raise SystemExit('Encrypted backup recipient is missing')
 (root/'backup-recipient').write_text(recipient)
-for name,host in [('commoncal-auth-tls','auth.hajnal.space')]:
-    (root/(name+'.crt')).write_bytes(data(name,'tls.crt'))
-    data(name,'tls.key')
 PY
 command -v age >/dev/null 2>&1 || { echo "age is required to validate the backup recipient" >&2; exit 1; }
 age --encrypt --recipient "$(cat "$work_dir/backup-recipient")" --output "$work_dir/recipient-proof.age" </dev/null
-openssl x509 -in "$work_dir/commoncal-auth-tls.crt" -noout -checkhost auth.hajnal.space -checkend 86400 >/dev/null
 kubectl rollout status deployment/commoncal-auth -n "$namespace" --timeout=30s
 kubectl get deployment commoncal-auth -n "$namespace" -o json > "$work_dir/deployment.json"
 kubectl get pvc commoncal-auth-data -n "$namespace" -o json > "$work_dir/pvc.json"

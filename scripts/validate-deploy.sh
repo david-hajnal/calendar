@@ -290,6 +290,8 @@ else
   echo "SKIP: test-sqlite-prod.sh not found"
 fi
 
+python3 scripts/test-auth-tls.py || { echo "FAIL: test-auth-tls.py"; ERRORS=$((ERRORS+1)); }
+
 if [ -f "scripts/test-deploy-prod.sh" ]; then
   sh scripts/test-deploy-prod.sh || { echo "FAIL: test-deploy-prod.sh"; ERRORS=$((ERRORS+1)); }
 else

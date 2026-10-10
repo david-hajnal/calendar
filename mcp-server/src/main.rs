@@ -8,9 +8,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use rmcp::transport::{
-    StreamableHttpServerConfig,
-    streamable_http_server::{session::local::LocalSessionManager, tower::StreamableHttpService},
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, tower::StreamableHttpService,
 };
 use tower_http::trace::TraceLayer;
 
@@ -59,7 +58,7 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         StreamableHttpService::new(
             move || Ok(server.clone()),
             LocalSessionManager::default().into(),
-            StreamableHttpServerConfig::default(),
+            mcp_server::transport::server_config(&config.public_resource_url)?,
         );
 
     // Auth state for the bearer-token middleware. The protected-resource

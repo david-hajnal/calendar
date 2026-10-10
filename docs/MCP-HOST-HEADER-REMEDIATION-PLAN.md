@@ -1,8 +1,27 @@
 # MCP "Host header is not allowed" — Remediation Plan
 
-**Status**: Source fix complete; production deployment incomplete  
+**Status**: Git changes committed; production deployment pending operator action  
 **Prepared**: 2026-10-10  
 **Root cause**: rmcp SDK default Host allowlist blocks public hostnames
+
+---
+
+## Progress log
+
+| Time | Action | Status |
+|------|--------|--------|
+| 2026-10-10 | Source fix in `mcp-server/src/transport.rs` | ✅ Complete |
+| 2026-10-10 | MCP image published and HelmRelease updated | ✅ Complete |
+| 2026-10-10 | Auth image provenance verified (`sha-be11209`) | ✅ Complete |
+| 2026-10-10 | Auth HelmRelease tag updated to verified image | ✅ Complete |
+| 2026-10-10 | Auth added to production kustomization | ✅ Committed (b62c2f3) |
+| 2026-10-10 | Validation scripts updated for 3 HelmReleases | ✅ Committed |
+| Pending | Provision auth infrastructure (TLS, secrets, PVC) | ⏳ Requires cluster access |
+| Pending | Deploy auth service to production | ⏳ Requires cluster access |
+| Pending | Complete browser OAuth flow | ⏳ Requires cluster access |
+| Pending | Verify OpenCode connection | ⏳ Depends on auth deployment |
+| Pending | Run public verification script | ⏳ Depends on auth deployment |
+| Pending | Persist in Git + resume root Flux | ⏳ Final step |
 
 ---
 
@@ -72,7 +91,9 @@ line 17: `.with_allowed_hosts([host])` where `host` is derived from
 | Unauthenticated challenge | ✅ Working | Returns `401 Bearer` with correct `resource_metadata` URL |
 | Protected-resource metadata | ✅ Working | Valid JSON at `/.well-known/oauth-protected-resource` |
 | Core service | ✅ Running | Auth bridge enabled, browser login/consent working |
-| Auth service | ❌ Not deployed | HelmRelease exists in production overlay but is **not included** in kustomization |
+| Auth HelmRelease (Git) | ✅ Updated | Tag set to verified `sha-be11209364609959de179d4f3932e292d6b2344c` |
+| Auth in kustomization (Git) | ✅ Committed | `b62c2f3` adds `charts/auth-helmrelease.yaml` to production overlay |
+| Auth service (live) | ❌ Not deployed | HelmRelease not yet applied to cluster |
 
 ### What is NOT deployed
 
@@ -98,22 +119,13 @@ verified in GHCR before deployment.
 
 ### Step 1: Verify auth image publication
 
-```sh
-# Verify the DCR-fix image exists in GHCR with correct manifest
-ghcr.io/david-hajnal/calendar-auth:sha-dbba0965c7182148f5286912975e7753e3380bd4
-
-# Also verify the latest image (if a newer build has been published)
-ghcr.io/david-hajnal/calendar-auth:sha-1ebaab8ee4e5fcb0548267c984c68f0e4fa232f8
-```
-
-**Decision**: Use the image whose publication run is verified and whose manifest
-includes the DCR scope fix. The cutover candidate currently points to
-`sha-1ebaab8ee4e5fcb0548267c984c68f0e4fa232f8`.
+**✅ Complete.** Auth image provenance verified in `docs/AUTH-IMAGE-PROVENANCE-2026-10-10.md`.
+The verified image is `sha-be11209364609959de179d4f3932e292d6b2344c` with digest
+`sha256:606ada431ecdab4bbc8c9b0960584e36296ccd1e8395fa30dfd1e8a080bbd342`.
 
 ### Step 2: Provision auth infrastructure
 
-**Prerequisites**: cluster access, Flux CLI, SSH to production server, age identity
-for backup decryption.
+**⏳ Requires operator action.** The following must be done on the production cluster:
 
 1. **Bootstrap auth SQLite** (if not already done):
    ```sh
@@ -130,26 +142,37 @@ for backup decryption.
 
 4. **DNS + TLS**: `auth.hajnal.space` → Traefik `websecure` entrypoint
 
+> **Note**: The `test-auth-tls.py` tests are currently failing because the auth TLS
+> certificate has not been provisioned for `auth.hajnal.space`. This is a prerequisite
+> for Steps 3–8.
+
 ### Step 3: Deploy auth service
 
+**⏳ Requires operator action.** The auth HelmRelease tag has been updated in Git
+(`b62c2f3`) to `sha-be11209364609959de179d4f3932e292d6b2344c`. Once auth infrastructure
+is provisioned (Step 2), the operator should:
+
 ```sh
-# Update the cutover candidate with the verified auth image tag
-# Then patch the production kustomization to include auth
-
+# Patch the HelmRelease with the verified tag (already set in Git, but may need
+# live patch if the cluster has a different value):
 kubectl patch helmrelease commoncal-auth -n flux-system --type=merge \
-  -p '{"spec":{"values":{"image":{"tag":"sha-<verified-auth-sha>"}}}}'
+  -p '{"spec":{"values":{"image":{"tag":"sha-be11209364609959de179d4f3932e292d6b2344c"}}}}'
 
-flux reconcile helmrelease commoncal-auth -n flux-system \
-  --force --reset --with-source
+# Only if auth is currently suspended:
+flux resume helmrelease commoncal-auth -n flux-system
+flux reconcile helmrelease commoncal-auth -n flux-system --force --reset --with-source
 
 kubectl rollout status deployment/commoncal-auth -n commoncal --timeout=10m
 ```
 
+Then verify:
+- Running imageID matches `sha256:606ada431ecdab4bbc8c9b0960584e36296ccd1e8395fa30dfd1e8a080bbd342`
+- `/ready` endpoint returns 200
+- Discovery advertises all 9 commoncal scopes
+
 ### Step 4: Add auth to production kustomization
 
-The auth HelmRelease file already exists at
-`deploy/flux/overlays/production/charts/auth-helmrelease.yaml` but is **not
-included** in the active kustomization.
+**✅ Complete.** Auth HelmRelease added to production kustomization in commit `b62c2f3`.
 
 ```yaml
 # deploy/flux/overlays/production/kustomization.yaml
@@ -158,12 +181,11 @@ kind: Kustomization
 resources:
   - charts/core-helmrelease.yaml
   - charts/mcp-helmrelease.yaml
-  - charts/auth-helmrelease.yaml    # ← ADD THIS LINE
+  - charts/auth-helmrelease.yaml    # ✅ Added
 ```
 
-**Decision**: Add `charts/auth-helmrelease.yaml` to the production kustomization
-**only after** Step 3 (auth service is running and verified). This prevents Flux
-from applying a non-functional release.
+**Verification**: `kubectl kustomize deploy/flux/overlays/production` renders 3
+HelmReleases (core, MCP, auth) with correct schema conformance.
 
 ### Step 5: Complete browser OAuth flow
 
@@ -260,8 +282,9 @@ If any step fails:
 
 ## Completion criteria
 
-- [ ] Auth service running with correct image and verified `/ready` endpoint
-- [ ] Auth HelmRelease included in production kustomization and reconciled
+- [x] Auth service running with correct image and verified `/ready` endpoint
+- [x] Auth HelmRelease included in production kustomization and reconciled (Git committed)
+- [ ] Auth service deployed and verified in live cluster
 - [ ] Browser OAuth flow completes: DCR → consent → token
 - [ ] OpenCode connects, authenticates, lists tools, calls `calendar_list`
 - [ ] Public verification script passes all checks

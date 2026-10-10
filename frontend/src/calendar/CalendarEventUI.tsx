@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 
 import { useIsMobile } from "../useIsMobile";
 import { MobileCalendar } from "./MobileCalendar";
-import { dateKey, calendarWritable as writable, eventExternal as external, eventEditable as editable, eventTitle as title, type CalendarView } from "./calendarModel";
+import { shiftDate, dateKey, calendarWritable as writable, eventExternal as external, eventEditable as editable, eventTitle as title, type CalendarView } from "./calendarModel";
 import { useOptionalCalendarNavigation } from "./calendarNavigation";
 
 import type { ApiClient } from "../auth/api";
@@ -165,18 +165,20 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const visibleCalendarIds = useMemo(() => calendars.filter((calendar) => visible.has(calendar.id)).map((calendar) => calendar.id), [calendars, visible]);
   const visibleCalendarKey = visibleCalendarIds.join(",");
 
+  const rangeFrom = Math.floor(range.from.getTime() / 1000);
+  const rangeTo = Math.floor(range.to.getTime() / 1000);
   const reloadGeneration = useRef(0);
   const reload = useCallback(async () => {
     const generation = ++reloadGeneration.current;
     setLoading(true); setError(null);
     try {
-      const result = await listExpandedEvents(api, visibleCalendarIds, { from: Math.floor(range.from.getTime() / 1000), to: Math.floor(range.to.getTime() / 1000) });
+      const result = await listExpandedEvents(api, visibleCalendarIds, { from: rangeFrom, to: rangeTo });
       if (generation !== reloadGeneration.current) return;
       setEvents([...new Map(result.map((item) => [`${item.calendar_id}:${item.id}:${item.recurrence_id ?? item.recurrence_date ?? "base"}`, item])).values()]);
     }
     catch { if (generation === reloadGeneration.current) setError("We could not load events. Please try again."); }
     finally { if (generation === reloadGeneration.current) setLoading(false); }
-  }, [api, range.from, range.to, visibleCalendarIds, visibleCalendarKey]);
+  }, [api, rangeFrom, rangeTo, visibleCalendarIds, visibleCalendarKey]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -542,10 +544,11 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     {isMobile && <details className="mobile-calendar-filters"><summary>Visible calendars</summary>
       {calendars.map(calendar => <label key={calendar.id}><input type="checkbox" checked={visible.has(calendar.id)} onChange={() => setVisible(current => { const next = new Set(current); if (next.has(calendar.id)) next.delete(calendar.id); else next.add(calendar.id); return next; })} />{calendar.name ?? "Busy calendar"}</label>)}
     </details>}
-    {isMobile && view === "agenda" ? <MobileCalendar
+    {isMobile && (view === "agenda" || view === "month") ? <MobileCalendar
       snapshot={navigation?.snapshot ?? { view, anchorDate: dateKey(date), selectedDay: dateKey(date), visibleCalendarIds: [...visible], scroll: { page: 0, timelineTop: 0, timelineLeft: 0 } }}
       events={displayed} calendars={calendars} loading={loading} error={error} canCreate={!!firstWritable}
-      onViewChange={setView} onNavigate={direction => setDate(current => addDays(current, direction * 31))}
+      onViewChange={setView} onNavigate={direction => setDate(dateFromKey(shiftDate(dateKey(date), view, direction)))}
+      onSelectDay={day => navigation ? navigation.selectDay(day) : setDate(dateFromKey(day))}
       onToday={() => setDate(startOfDay(new Date()))} onOpenEvent={setSelected} onCreate={openNew} onRetry={() => void reload()}
     /> : <>
     <header className="event-ui__toolbar">
@@ -560,9 +563,9 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {(Object.keys(viewLabels) as CalendarView[]).map((item) => <button key={item} type="button" role="tab" aria-pressed={view === item} className="segmented-control__button" onClick={() => setView(item)}>{viewLabels[item]}</button>)}
       </div>
       <div className="event-ui__date-nav">
-        <button type="button" className="event-ui__nav-btn" onClick={() => setDate((current) => addDays(current, view === "month" ? -30 : -1))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_left</span></button>
+        <button type="button" className="event-ui__nav-btn" aria-label={`Previous ${view === "month" ? "month" : view === "week" ? "week" : view === "day" ? "day" : "range"}`} onClick={() => setDate((current) => dateFromKey(shiftDate(dateKey(current), view, -1)))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_left</span></button>
         <strong className="typography-body-lg" aria-live="polite">{formatRange(view, date)}</strong>
-        <button type="button" className="event-ui__nav-btn" onClick={() => setDate((current) => addDays(current, view === "month" ? 30 : 1))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_right</span></button>
+        <button type="button" className="event-ui__nav-btn" aria-label={`Next ${view === "month" ? "month" : view === "week" ? "week" : view === "day" ? "day" : "range"}`} onClick={() => setDate((current) => dateFromKey(shiftDate(dateKey(current), view, 1)))}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>chevron_right</span></button>
         <button type="button" className="event-ui__today-btn" onClick={() => setDate(new Date())}>Today</button>
       </div>
     </div>
@@ -824,7 +827,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       </div>
     </form>}
     {/* Mobile FAB */}
-    {!(isMobile && view === "agenda") && <button type="button" className="event-ui__fab" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event mobile">
+    {!(isMobile && (view === "agenda" || view === "month")) && <button type="button" className="event-ui__fab" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event mobile">
       <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>add</span>
     </button>}
   </section>;

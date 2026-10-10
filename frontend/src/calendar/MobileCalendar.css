@@ -16,5 +16,12 @@
   .mobile-calendar-filters label { display: flex; align-items: center; gap: .5rem; min-height: 44px; overflow-wrap: anywhere; }
 }
 
-.mobile-calendar__views { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.mobile-calendar__views button { min-width: 0; padding-inline: .25rem; overflow-wrap: anywhere; }
+.mobile-calendar__views { display: grid; grid-template-columns: repeat(4, auto); }
+.mobile-calendar__views button { min-width: 0; padding-inline: .25rem; white-space: nowrap; }
+.mobile-calendar__month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); margin: 1rem 0; text-align: center; }
+.mobile-calendar__month abbr { padding-block: .5rem; font-size: .875rem; text-decoration: none; }
+.mobile-calendar__month button { padding: .25rem 0; min-width: 0; min-height: 52px; border: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: .5rem; background: var(--color-surface); }
+.mobile-calendar__month button[aria-pressed="true"] { background: var(--color-primary); color: var(--color-on-primary); }
+.mobile-calendar__count { font-size: .875rem; }
+.mobile-calendar__other-month { color: var(--color-on-surface-variant) !important; }
+.mobile-calendar__month { width: calc(100% + 4rem); margin-inline: -2rem; }

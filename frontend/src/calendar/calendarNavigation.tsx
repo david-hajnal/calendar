@@ -14,6 +14,7 @@ export interface CalendarNavigation {
   snapshot: CalendarSnapshot;
   setView(view: CalendarView): void;
   setDate(date: DateKey): void;
+  selectDay(date: DateKey): void;
   setVisibleCalendars(ids: readonly number[]): void;
   reconcileCalendars(ids: readonly number[]): void;
   captureScroll(scroll: CalendarSnapshot["scroll"]): void;
@@ -93,6 +94,7 @@ export function CalendarNavigationProvider({ userId, children }: { userId: numbe
     snapshot,
     setView(view) { update({ view }); },
     setDate(date) { if (validDateKey(date)) update({ anchorDate: date, selectedDay: date }); },
+    selectDay(date) { if (validDateKey(date)) update({ anchorDate: date, selectedDay: date }); },
     setVisibleCalendars(ids) { update({ visibleCalendarIds: [...new Set(ids)] }); },
     reconcileCalendars(ids) {
       const current = latest.current.visibleCalendarIds;

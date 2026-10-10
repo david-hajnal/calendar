@@ -26,3 +26,22 @@ export function eventEditable(event: EventProjection, calendar: Calendar | undef
   return calendarWritable(calendar) && event.access === "details" && !eventExternal(event) && event.version !== undefined;
 }
 export function eventTitle(event: EventProjection) { return event.access === "details" ? event.title ?? "Busy" : "Busy"; }
+
+export function shiftDate(date: DateKey, view: CalendarView, direction: -1 | 1): DateKey {
+  const next = new Date(`${date}T00:00:00`);
+  if (view === "month") {
+    const day = next.getDate();
+    next.setDate(1); next.setMonth(next.getMonth() + direction);
+    const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+    next.setDate(Math.min(day, lastDay));
+  } else next.setDate(next.getDate() + direction * (view === "week" ? 7 : view === "agenda" ? 31 : 1));
+  return dateKey(next);
+}
+
+export function eventsOnDay(events: readonly EventProjection[], day: DateKey): EventProjection[] {
+  const from = new Date(`${day}T00:00:00`);
+  const to = new Date(from); to.setDate(to.getDate() + 1);
+  return events.filter(event => event.event_kind === "all_day"
+    ? event.start_date != null && event.end_date != null && event.start_date <= day && day < event.end_date
+    : event.start_utc != null && event.end_utc != null && event.start_utc < to.getTime() / 1000 && event.end_utc > from.getTime() / 1000);
+}

@@ -853,3 +853,16 @@ it("mobile Agenda offers a retry after a failed live read", async () => {
   expect(await screen.findByRole("button", { name: /Planning/ })).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("mobile Month selects readable day events without creating and New uses that day", async () => {
+  vi.stubGlobal("innerWidth", 390);
+  const api = apiWithEvents();
+  render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+  await screen.findByRole("button", { name: /Planning/ });
+  fireEvent.click(screen.getByRole("tab", { name: "Month" }));
+  fireEvent.click(await screen.findByRole("button", { name: /June 17, 2025.*0 events/ }));
+  expect(screen.queryByRole("form", { name: "Create event" })).not.toBeInTheDocument();
+  expect(screen.getByText("No events on this day.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "New event" }));
+  expect(screen.getByLabelText("Start")).toHaveValue("2025-06-17T09:00");
+});

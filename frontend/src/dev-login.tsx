@@ -1,11 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { navigate } from "./navigation";
 import { useAuth } from "./auth/session";
-
-function navigate(target: string) {
-  window.history.replaceState({}, "", target);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
 
 export function DevLoginPage() {
   const { completeAuthentication } = useAuth();
@@ -43,7 +39,7 @@ export function DevLoginPage() {
       if (!response.ok) throw new Error("dev login failed");
       const location = response.headers.get("location");
       if (location) {
-        navigate(location);
+        navigate(location, { mode: "replace" });
       }
     } catch {
       setError("We could not complete the sign-in. Please try again.");

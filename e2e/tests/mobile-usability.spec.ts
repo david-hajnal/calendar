@@ -58,3 +58,47 @@ test("live mobile Agenda preserves calendar context through Settings", async ({ 
   await expect(page.locator(".mobile-calendar-filters").getByRole("checkbox", { name: "Mobile Work" })).not.toBeChecked();
   await writeFile(`${evidence}slice-02-browser.json`, JSON.stringify({ browser: "WebKit", viewport: { width: 390, height: 664 }, source: "isolated live backend", liveEvents: 8, metrics, restoredScroll: scroll, settingsReturn: true, retainedDate: "2026-10-09", retainedView: "day", emptyFiltersRetained: true }, null, 2));
 });
+
+test("signed-in mobile Back and Forward follow sections without returning to login", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "Mobile navigation journey");
+  await page.goto("/forgot-password");
+  await page.goto("/login?redirect=%2Fdashboard%3Fview%3Dagenda%26date%3D2026-10-09");
+  await page.getByRole("button", { name: "Password", exact: true }).click();
+  await page.getByLabel("Email address").fill("admin@localhost");
+  await page.getByLabel("Password", { exact: true }).fill("admin-default-password-2026");
+  const beforeSignIn = await page.evaluate(() => history.length);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Agenda", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => history.length)).toBe(beforeSignIn);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => history.length)).toBe(beforeSignIn + 1);
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Agenda", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/date=2026-10-09/);
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toHaveCount(0);
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("region", { name: "Agenda", exact: true })).toBeVisible();
+  // The entry predecessor remains leaveable, without fabricating a Back loop.
+  await page.goBack();
+  await expect(page).toHaveURL(/forgot-password$/);
+  await page.goto("/login?redirect=%2Fsettings%2Faccount");
+  await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toHaveCount(0);
+  const evidence = new URL("../../docs/plans/mobile-usability/evidence/", import.meta.url).pathname;
+  await page.screenshot({ path: `${evidence}slice-03-signed-in-login-return.png`, scale: "css" });
+  await page.goto("/login?redirect=%2Flogin%2Fconsume%3Ftoken%3Dnever-use");
+  await expect(page.getByRole("region", { name: "Agenda", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/dashboard/);
+  let consentDocumentNavigation = false;
+  await page.route("**/consent?handoff=mobile-test", async route => {
+    consentDocumentNavigation = route.request().isNavigationRequest();
+    await route.fulfill({ contentType: "text/html", body: "<h1>Core consent fixture</h1>" });
+  });
+  await page.goto("/login?redirect=%2Fconsent%3Fhandoff%3Dmobile-test");
+  await expect(page.getByRole("heading", { name: "Core consent fixture" })).toBeVisible();
+  expect(consentDocumentNavigation).toBe(true);
+  await writeFile(`${evidence}slice-03-browser.json`, JSON.stringify({ browser: "WebKit", passwordLoginReplaces: true, settingsPushes: true, nativeBackForward: true, calendarContext: "agenda / 2026-10-09", entryCanLeave: true, authenticatedLoginGuard: true, consumptionLoopRejected: true, consentDocumentNavigation }, null, 2));
+});

@@ -24,32 +24,34 @@ afterEach(() => {
 
 describe("authentication pages", () => {
   it("preserves a consent continuation in the emailed login request", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 })).mockResolvedValueOnce(new Response("{}", { status: 200 }));
     renderAt("/login?redirect=%2Fconsent%3Fhandoff%3Dabc", fetcher);
-    fireEvent.change(screen.getByLabelText(/Email address/), { target: { value: "person@example.test" } });
+    fireEvent.change(await screen.findByLabelText(/Email address/), { target: { value: "person@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
     await screen.findByRole("status");
     expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/login-links", expect.objectContaining({ body: JSON.stringify({ email: "person@example.test", redirect: "/consent?handoff=abc" }) }));
   });
 
   it("ignores an external continuation in the emailed login request", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 401 })).mockResolvedValueOnce(new Response("{}", { status: 200 }));
     renderAt("/login?redirect=https%3A%2F%2Fevil.example", fetcher);
-    fireEvent.change(screen.getByLabelText(/Email address/), { target: { value: "person@example.test" } });
+    fireEvent.change(await screen.findByLabelText(/Email address/), { target: { value: "person@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
     await screen.findByRole("status");
     expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/login-links", expect.objectContaining({ body: JSON.stringify({ email: "person@example.test" }) }));
   });
 
-  it("password login exposes the exact password label without its decorative icon", () => {
-    renderAt("/login", vi.fn());
+  it("password login exposes the exact password label without its decorative icon", async () => {
+    renderAt("/login", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+    await screen.findByRole("heading", { name: "Sign in" });
     fireEvent.click(screen.getByRole("button", { name: "Password" }));
     const password = screen.getByLabelText("Password", { exact: true });
     expect(password).toHaveAccessibleName("Password");
   });
 
   it("exposes stable application and card styling hooks on the login page", async () => {
-    const { container } = renderAt("/login", vi.fn());
+    const { container } = renderAt("/login", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+    await screen.findByRole("heading", { name: "Sign in" });
 
     expect(screen.getByRole("main")).toHaveClass("app-page", "app-page--auth");
     expect(container.querySelector(".auth-card")).toBeInTheDocument();
@@ -130,7 +132,7 @@ describe("authentication pages", () => {
     );
     renderAt("/login", fetcher);
 
-    fireEvent.change(screen.getByRole("textbox", { name: /Email address/ }), { target: { value: "unknown@example.test" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: /Email address/ }), { target: { value: "unknown@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Email me a login link" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Check your email for a login link if the account is eligible.");
@@ -322,4 +324,39 @@ it("preserves an explicit mobile view, date, extra query, and empty filters thro
   expect(new URLSearchParams(window.location.search).get("source")).toBe("bookmark");
   expect(screen.getAllByRole("checkbox", { name: "Work" }).at(-1)).not.toBeChecked();
   expect(window.history.state.commoncalCalendar.snapshot.visibleCalendarIds).toEqual([]);
+});
+
+it("waits for session resolution at login and replaces signed-in login with its continuation", async () => {
+  let resolveSession!: (response: Response) => void;
+  const fetcher = vi.fn((input: RequestInfo | URL) => String(input) === "/api/v1/auth/session"
+    ? new Promise<Response>(resolve => { resolveSession = resolve; })
+    : Promise.resolve(new Response("[]", { status: 200 })));
+  renderAt("/login?redirect=%2Fsettings%2Faccount", fetcher);
+  expect(screen.queryByRole("heading", { name: "Sign in" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Loading your session");
+  resolveSession(new Response(JSON.stringify(session), { status: 200 }));
+  expect(await screen.findByRole("heading", { name: "Account" })).toBeInTheDocument();
+  expect(window.location.pathname).toBe("/settings/account");
+  expect(screen.queryByRole("heading", { name: "Sign in" })).not.toBeInTheDocument();
+});
+
+it("keeps the authenticated shell and its notification polling stable across section navigation", async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input) === "/api/v1/auth/session" ? session : []), { status: 200 }));
+  renderAt("/calendars", fetcher);
+  await screen.findByRole("heading", { name: "CommonCal" });
+  const shell = screen.getByRole("main");
+  const notifications = fetcher.mock.calls.filter(([url]) => String(url).includes("/notifications")).length;
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  await screen.findByRole("heading", { name: "Account" });
+  expect(screen.getByRole("main")).toBe(shell);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/notifications")).length).toBe(notifications);
+});
+
+it("offers session retry at login instead of showing credentials after a session-read error", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 500 })).mockResolvedValueOnce(new Response(null, { status: 401 }));
+  renderAt("/login", fetcher);
+  expect(await screen.findByRole("alert")).toHaveTextContent("We could not load your session");
+  expect(screen.queryByLabelText("Email address")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
 });

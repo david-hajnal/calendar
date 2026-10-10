@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { navigate, safeContinuation, useLocation } from "./navigation";
 import { useIsMobile } from "./useIsMobile";
 import { CalendarNavigationProvider, useOptionalCalendarNavigation } from "./calendar/calendarNavigation";
 
@@ -25,43 +26,18 @@ interface ConsumptionResponse {
   csrf_token: string;
 }
 
-function safeRedirectTarget(value: string | null): string | null {
-  if (value === null || !value.startsWith("/") || value.startsWith("//")) return null;
-  try {
-    const target = new URL(value, window.location.origin);
-    return target.origin === window.location.origin ? `${target.pathname}${target.search}${target.hash}` : null;
-  } catch {
-    return null;
-  }
-}
-
 function resumeAfterAuthentication(target: string) {
   // Consent is rendered by core, so returning to it requires HTTP navigation.
   if (new URL(target, window.location.origin).pathname.startsWith("/consent")) {
     window.location.assign(target);
   } else {
-    navigate(target);
+    navigate(target, { mode: "replace" });
   }
-}
-
-function navigate(target: string) {
-  window.history.replaceState({}, "", target);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
-
-function useLocation() {
-  const [location, setLocation] = useState(() => `${window.location.pathname}${window.location.search}${window.location.hash}`);
-  useEffect(() => {
-    const update = () => setLocation(`${window.location.pathname}${window.location.search}${window.location.hash}`);
-    window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
-  }, []);
-  return location;
 }
 
 function LoginRequestPage() {
   const { api, completeAuthentication } = useAuth();
-  const [redirect] = useState(() => safeRedirectTarget(new URLSearchParams(window.location.search).get("redirect")));
+  const [redirect] = useState(() => safeContinuation(new URLSearchParams(window.location.search).get("redirect")));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [method, setMethod] = useState<"link" | "password">("link");
@@ -175,7 +151,7 @@ function TokenConsumptionPage() {
   const [{ token, redirect }] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedRedirect = params.get("redirect");
-    return { token: params.get("token"), redirect: safeRedirectTarget(requestedRedirect) ?? (requestedRedirect === null ? null : "/") };
+    return { token: params.get("token"), redirect: safeContinuation(requestedRedirect) ?? (requestedRedirect === null ? null : "/") };
   });
   const endpoint = "/api/v1/auth/login-links/consume";
   const failure = "Login link is invalid or expired.";
@@ -248,7 +224,7 @@ function ThemeToggle() {
 }
 
 function AuthenticatedShell() {
-  const { state, api, reloadSession, logout } = useAuth();
+  const { state, api, logout } = useAuth();
   const location = useLocation();
   const isMobile = useIsMobile();
   const calendarNavigation = useOptionalCalendarNavigation();
@@ -295,9 +271,8 @@ function AuthenticatedShell() {
     return () => { if (interval) clearInterval(interval); };
   }, [api]);
 
-  if (state.status === "loading") return <main className="app-page app-page--state" aria-busy="true"><section className="state-card"><p className="app-message app-message--status" role="status">Loading your session…</p></section></main>;
-  if (state.status === "error") return <main className="app-page app-page--state"><section className="state-card"><p className="app-message app-message--error" role="alert">We could not load your session.</p><button className="app-button app-button--primary" type="button" onClick={() => void reloadSession()}>Retry</button></section></main>;
-  if (state.status === "unauthenticated") return <LoginRedirect location={location} />;
+  if (state.status === "loading" || state.status === "error") return <SessionStatus />;
+  if (state.status === "unauthenticated") return <LoginRedirect location={location.href} />;
 
   const name = state.session.user.display_name ?? state.session.user.email;
   const initials = name.split(/[\s.]+/).slice(0, 2).map((n) => n[0]).join('').toUpperCase().slice(0, 2);
@@ -368,17 +343,40 @@ function CalendarPage({ api }: { api: ReturnType<typeof useAuth>["api"] }) {
 function LoginRedirect({ location }: { location: string }) {
   useEffect(() => {
     if (window.location.pathname === "/login") return;
-    const target = safeRedirectTarget(location) ?? "/dashboard";
-    navigate(`/login?redirect=${encodeURIComponent(target)}`);
+    const target = safeContinuation(location) ?? "/dashboard";
+    navigate(`/login?redirect=${encodeURIComponent(target)}`, { mode: "replace" });
   }, [location]);
   return <main className="app-page app-page--state" aria-busy="true"><section className="state-card"><p className="app-message app-message--status" role="status">Redirecting to sign in…</p></section></main>;
+}
+
+function SessionStatus() {
+  const { state, reloadSession } = useAuth();
+  return <main className="app-page app-page--state" aria-busy={state.status === "loading"}><section className="state-card">
+    {state.status === "error" ? <><p className="app-message app-message--error" role="alert">We could not load your session.</p><button className="app-button app-button--primary" type="button" onClick={() => void reloadSession()}>Retry</button></>
+      : <p className="app-message app-message--status" role="status">Loading your session…</p>}
+  </section></main>;
+}
+
+function SignedInLoginRedirect() {
+  useEffect(() => {
+    const target = safeContinuation(new URLSearchParams(window.location.search).get("redirect")) ?? "/dashboard";
+    resumeAfterAuthentication(target);
+  }, []);
+  return <main className="app-page app-page--state" aria-busy="true"><p role="status">Returning to your calendar…</p></main>;
+}
+
+function LoginRoute() {
+  const { state } = useAuth();
+  if (state.status === "authenticated") return <SignedInLoginRedirect />;
+  if (state.status === "unauthenticated") return <LoginRequestPage />;
+  return <SessionStatus />;
 }
 
 function AuthRoutes() {
   const location = useLocation();
   const { state } = useAuth();
-  const pathname = window.location.pathname;
-  if (pathname === "/login") return <LoginRequestPage />;
+  const pathname = location.pathname;
+  if (pathname === "/login") return <LoginRoute key={location.href} />;
   if (pathname === "/dev-login") return <DevLoginPage />;
   if (pathname === "/forgot-password") return <PasswordRecoveryRequest />;
   if (pathname === "/email/confirm") return <EmailConfirmation />;
@@ -386,8 +384,8 @@ function AuthRoutes() {
   if (pathname === "/invitations/consume" || pathname === "/invitations/accept") return <InvitationPage />;
   if (pathname === "/login/consume") return <TokenConsumptionPage />;
   return state.status === "authenticated"
-    ? <CalendarNavigationProvider key={state.session.user.id} userId={state.session.user.id}><AuthenticatedShell key={location} /></CalendarNavigationProvider>
-    : <AuthenticatedShell key={location} />;
+    ? <CalendarNavigationProvider key={state.session.user.id} userId={state.session.user.id}><AuthenticatedShell /></CalendarNavigationProvider>
+    : state.status === "unauthenticated" ? <LoginRedirect location={location.href} /> : <SessionStatus />;
 }
 
 export function App({ fetcher }: { fetcher?: Fetcher }) {

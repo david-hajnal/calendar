@@ -27,6 +27,13 @@ MCP calendar metadata integration test verify calendar selections independently.
 To release this fix, publish the reviewed source through the normal main promotion
 workflow. It builds `Dockerfile.auth` and the core/MCP images, scans all three,
 publishes immutable `sha-<commit>` tags, and promotes the production Flux manifests.
+The production Kustomization currently excludes `charts/auth-helmrelease.yaml`;
+updating its tag does not reconcile auth. The last recorded live rollout used
+`sha-e239a1c511c2991f0caf03198e56dedc1a9e57ef`, before the scope fix in
+`dbba0965c7182148f5286912975e7753e3380bd4`. Verify the current live image and
+publication before deploying. Preserve the documented root Flux pause and live
+configuration; do not activate the stale, suspended cutover candidate unchanged.
+See [the 2026-10-10 investigation and operator steps](OAUTH-DCR-INVESTIGATION-2026-10-10.md).
 Wait for the workflow and auth rollout/readiness checks before retrying
 `codex mcp login commoncal --oauth-client-registration dcr --scopes commoncal.calendar.metadata.read`.
 The fix needs no schema migration, issuer configuration, callback-policy, Secret,

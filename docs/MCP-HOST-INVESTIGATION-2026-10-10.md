@@ -1,7 +1,7 @@
 # MCP public host fix — 2026-10-10
 
-Status: deployed implementation inspected; source fix and local checks complete.
-Image publication, operator rollout and authenticated public verification remain
+Status: deployed implementation inspected; source fix, local checks and image
+publication complete. Operator rollout and authenticated public verification remain
 pending. No calendar events have been accessed or changed, and no token,
 credential, cookie or authorization code has been printed.
 
@@ -61,6 +61,8 @@ Local results:
   token transport tests exercise the actual authentication middleware.
 - Four transport regression tests passed after the fix.
 - Five offline public-checker tests passed; formatting passed.
+- Four binary readiness tests and Clippy with warnings denied passed.
+- GitHub CI passed, including auth-runtime and deployment-validation jobs.
 
 Live public requests before rollout reject missing/invalid tokens for both
 initialize and tools/list: four HTTP 401 responses with exact
@@ -78,6 +80,14 @@ Unexpected public Host rejection may happen at ingress, so the local transport
 regression independently establishes rmcp rejection.
 
 ## Deployment
+
+Fixed source: `935009319ffd7d873ea5fd8f9a7afd52d23a1195`.
+Normal build, scan, publication and promotion
+[run 38064025628](https://github.com/david-hajnal/calendar/actions/runs/38064025628)
+completed successfully. Independently verified published image:
+`ghcr.io/david-hajnal/calendar-mcp:sha-935009319ffd7d873ea5fd8f9a7afd52d23a1195`,
+digest `sha256:f3e81796aa63f11ad9ef6cb7b965b26d2a6ce6b35fc46cfc2fe6f533ab474a2d`.
+Promotion commit: `45a7aec`.
 
 The inspected MCP HelmRelease is active and retains the deployed image above.
 Root Flux Kustomization is suspended at

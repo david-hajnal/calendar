@@ -109,15 +109,20 @@ def check(args):
         return 2
     for host in (HOST, f"{HOST}:443"):
         status, headers, body = request(initialize(), token, host)
+        print(f"CHECK: authenticated initialize for {host} returned HTTP {status}", flush=True)
+        if status == 403 and body.strip() == b"Forbidden: Host header is not allowed":
+            print("FAIL: transport still rejects the public Host; verify deployed image and proxy forwarding.", flush=True)
         result = rpc_result(status, body, 1)
         protocol = result["protocolVersion"]
         session = next((v for k, v in headers.items() if k.lower() == "mcp-session-id"), None)
         print(f"PASS: authenticated initialize for {host}")
         status, _, _ = request({"jsonrpc": "2.0", "method": "notifications/initialized"},
                                token, host, session, protocol)
+        print(f"CHECK: initialized notification returned HTTP {status}", flush=True)
         if status not in (200, 202, 204):
             raise ValueError("initialization notification rejected")
         status, _, body = request(listing, token, host, session, protocol)
+        print(f"CHECK: authenticated tools/list for {host} returned HTTP {status}", flush=True)
         result = rpc_result(status, body, 2)
         if not isinstance(result.get("tools"), list):
             raise ValueError("tools/list result missing tools")

@@ -30,7 +30,7 @@ spec:
     replicaCount: 1
     image:
       repository: ghcr.io/david-hajnal/calendar-auth
-      tag: "sha-be11209364609959de179d4f3932e292d6b2344c"
+      tag: "sha-757a344f589686e0690cfbabfab09382ae6125e1"
       pullPolicy: IfNotPresent
     config:
       issuer: https://auth.hajnal.space

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 
 import { useIsMobile } from "../useIsMobile";
 import { MobileCalendar } from "./MobileCalendar";
-import { shiftDate, dateKey, calendarWritable as writable, eventExternal as external, eventEditable as editable, eventTitle as title, type CalendarView } from "./calendarModel";
+import { identityOf, sameIdentity, type EventIdentity, shiftDate, dateKey, calendarWritable as writable, eventExternal as external, eventEditable as editable, eventTitle as title, type CalendarView } from "./calendarModel";
 import { useOptionalCalendarNavigation } from "./calendarNavigation";
 
 import type { ApiClient } from "../auth/api";
@@ -26,7 +26,6 @@ type DragState = {
   sourceDate?: string;
   targetDate?: string;
 };
-type EventIdentity = { calendarId: number; eventId: number; recurrenceId?: string | number };
 
 const DRAG_THRESHOLD_PX = 5;
 const viewLabels: Record<CalendarView, string> = { month: "Month", week: "Week", day: "Day", agenda: "Agenda" };
@@ -51,12 +50,6 @@ function moveDateKey(value: string, days: number) { return dateKey(addDays(dateF
 function recurrenceIdentity(event: EventProjection) { return event.recurrence_id ?? event.recurrence_date; }
 function sameProjection(left: EventProjection, right: EventProjection) {
   return left.calendar_id === right.calendar_id && left.id === right.id && recurrenceIdentity(left) === recurrenceIdentity(right);
-}
-function identityOf(event: EventProjection): EventIdentity {
-  return { calendarId: event.calendar_id, eventId: event.id, recurrenceId: recurrenceIdentity(event) };
-}
-function sameIdentity(left: EventProjection, identity: EventIdentity) {
-  return left.calendar_id === identity.calendarId && left.id === identity.eventId && recurrenceIdentity(left) === identity.recurrenceId;
 }
 function sameIdentityPair(a: EventIdentity, b: EventIdentity) {
   return a.calendarId === b.calendarId && a.eventId === b.eventId && a.recurrenceId === b.recurrenceId;
@@ -148,7 +141,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const [events, setEvents] = useState<EventProjection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<EventProjection | null>(null);
+  const [localSelected, setSelected] = useState<EventProjection | null>(null);
   const [editing, setEditing] = useState<EventProjection | "new" | null>(null);
   const [slotHighlight, setSlotHighlight] = useState<{ dayIndex: number; hour: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -216,6 +209,27 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dragging]);
+  const detailIdentity = isMobile && navigation?.surface.kind === "detail" ? navigation.surface.identity : null;
+  const mobileDetail = isMobile && (detailIdentity !== null || localSelected !== null) && editing === null;
+  const resolved = detailIdentity ? events.find(event => visible.has(event.calendar_id) && calendars.some(calendar => calendar.id === event.calendar_id) && sameIdentity(event, detailIdentity)) ?? null : localSelected;
+  const selected = resolved && calendars.find(calendar => calendar.id === resolved.calendar_id)?.access !== "details" ? { ...resolved, access: "free_busy" as const } : resolved;
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const invokingControl = useRef<HTMLElement | null>(null);
+  const previousDetail = useRef(false);
+  function openDetail(event: EventProjection, control?: HTMLElement) {
+    invokingControl.current = control ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    if (isMobile && navigation) navigation.openDetail(identityOf(event)); else setSelected(event);
+  }
+  function closeDetail() { if (isMobile && navigation) navigation.closeSurface(); else setSelected(null); }
+  useEffect(() => {
+    if (mobileDetail) { window.scrollTo(0, 0); detailHeading.current?.focus({ preventScroll: true }); }
+    else if (previousDetail.current && !loading) {
+      const target = invokingControl.current?.isConnected ? invokingControl.current : document.getElementById("events-heading");
+      target?.focus({ preventScroll: true });
+      if (navigation) window.scrollTo(0, navigation.snapshot.scroll.page);
+    }
+    if (mobileDetail || !loading) previousDetail.current = mobileDetail;
+  }, [mobileDetail, selected?.id, loading]);
   const displayed = events.filter((event) => visible.has(event.calendar_id)).sort((a, b) => eventTime(a) - eventTime(b));
   const calendarFor = (event: EventProjection) => calendars.find((calendar) => calendar.id === event.calendar_id);
   const isSaving = (event: EventProjection) => savingIdentity !== null && sameIdentity(event, savingIdentity);
@@ -491,7 +505,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         className="event-chip__text"
         draggable={monthDate ? false : !readonly}
         onDragStart={(drag) => { if (!readonly) drag.dataTransfer.setData("text/plain", String(event.id)); }}
-        onClick={(click) => { click.stopPropagation(); setSelected(event); }}
+        onClick={(click) => { click.stopPropagation(); openDetail(event); }}
         onDoubleClick={(doubleClick) => { doubleClick.stopPropagation(); openEdit(event); }}
         onPointerDown={monthDate ? (pointer) => onMonthPointerDown(event, monthDate, pointer) : undefined}
         onPointerMove={monthDate ? onMonthPointerMove : undefined}
@@ -518,6 +532,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
    }, [date]);
    const miniCalMonth = `${date.toLocaleString('default', { month: 'short' })} ${date.getFullYear()}`;
    return <section className="event-ui" aria-labelledby="events-heading">
+     <div className="event-ui__calendar-content" hidden={mobileDetail}>
      {/* Desktop sidebar */}
      <aside className="event-ui__sidebar">
        <div className="event-ui__sidebar-header">
@@ -549,10 +564,10 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       events={displayed} calendars={calendars} loading={loading} error={error} canCreate={!!firstWritable}
       onViewChange={setView} onNavigate={direction => setDate(dateFromKey(shiftDate(dateKey(date), view, direction)))}
       onSelectDay={day => navigation ? navigation.selectDay(day) : setDate(dateFromKey(day))}
-      onToday={() => setDate(startOfDay(new Date()))} onOpenEvent={setSelected} onCreate={openNew} onRetry={() => void reload()}
+      onToday={() => setDate(startOfDay(new Date()))} onOpenEvent={openDetail} onCreate={openNew} onRetry={() => void reload()}
     /> : <>
     <header className="event-ui__toolbar">
-      <h2 id="events-heading" className="typography-headline-md">Events</h2>
+      <h2 id="events-heading" tabIndex={-1} className="typography-headline-md">Events</h2>
       <button type="button" className="event-ui__new-btn" onClick={openNew} disabled={!calendars.some(writable)} aria-label="New event">
         <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
         New event
@@ -648,14 +663,14 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                     key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
                     className={`event-ui__event-block ${isSaving(event) ? "event-ui__event-block--saving" : ""}`}
                     style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor, opacity: isDragging ? 0.6 : 1, cursor: isDragging ? "grabbing" : dragging && canEdit ? "grab" : "pointer", zIndex: isDragging ? 10 : 2 }}
-                    onClick={() => setSelected(event)}
+                    onClick={() => openDetail(event)}
                     onDoubleClick={() => openEdit(event)}
                     onPointerDown={(e) => onPointerDown(event, e, 0)}
                   >
                     {canEdit && height > 30 && (
                       <div className="event-ui__resize-handle event-ui__resize-handle--top" onPointerDown={(e) => onResizeHandleDown(event, "top", e)} />
                     )}
-                    <button type="button" className="event-chip__text" draggable={false} onClick={(click) => { click.stopPropagation(); setSelected(event); }}>
+                    <button type="button" className="event-chip__text" draggable={false} onClick={(click) => { click.stopPropagation(); openDetail(event); }}>
                       {title(event)}
                     </button>
                     {canEdit && height > 30 && (
@@ -712,14 +727,14 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
                         key={`${event.id}-${event.recurrence_id ?? event.recurrence_date ?? ""}`}
                          className={`event-ui__event-block ${isSaving(event) ? "event-ui__event-block--saving" : ""}`}
                          style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: accentColor, background: bgColor, opacity: isDragging ? 0.6 : 1, cursor: isDragging ? "grabbing" : dragging && canEdit ? "grab" : "pointer", zIndex: isDragging ? 10 : 2 }}
-                         onClick={() => setSelected(event)}
+                         onClick={() => openDetail(event)}
                          onDoubleClick={() => openEdit(event)}
                          onPointerDown={(e) => onPointerDown(event, e, dayIndex)}
                       >
                         {canEdit && height > 30 && (
                           <div className="event-ui__resize-handle event-ui__resize-handle--top" onPointerDown={(e) => onResizeHandleDown(event, "top", e)} />
                         )}
-                        <button type="button" className="event-chip__text" draggable={false} onClick={(click) => { click.stopPropagation(); setSelected(event); }}>
+                        <button type="button" className="event-chip__text" draggable={false} onClick={(click) => { click.stopPropagation(); openDetail(event); }}>
                           {title(event)}
                         </button>
                         {canEdit && height > 30 && (
@@ -743,12 +758,15 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       </section>
     }
     </>}
-    {selected && <aside className="event-ui__detail" aria-label="Event details">
+    </div>
+    {mobileDetail && !selected && <aside className="event-ui__detail event-ui__detail--mobile" aria-label="Event details"><h3 ref={detailHeading} tabIndex={-1}>{loading ? "Loading event…" : "Event unavailable"}</h3><p>{error ?? (!loading ? "This event is no longer available in your calendar." : "")}</p><button type="button" onClick={closeDetail}>Back to calendar</button></aside>}
+    {selected && <aside className={`event-ui__detail${mobileDetail ? " event-ui__detail--mobile" : ""}`} aria-label="Event details">
+      {isMobile && <button type="button" className="app-button" onClick={closeDetail}>Back to calendar</button>}
       <div className="event-ui__detail-header">
         <span className="event-ui__detail-accent" style={{ background: calendarFor(selected)?.color || 'var(--color-primary)' }} />
         <div className="event-ui__detail-title-row">
-          <h3 className="typography-headline-md" style={{ margin: 0 }}>{title(selected)}</h3>
-          <button type="button" className="event-ui__detail-close" onClick={() => setSelected(null)} aria-label="Close event details"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span></button>
+          <h3 ref={detailHeading} tabIndex={-1} className="typography-headline-md" style={{ margin: 0 }}>{title(selected)}</h3>
+          {!isMobile && <button type="button" className="event-ui__detail-close" onClick={closeDetail} aria-label={isMobile ? "Back to calendar" : "Close event details"}><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span></button>}
         </div>
       </div>
       {external(selected) && <p className="typography-body-md" style={{ color: 'var(--color-on-surface-variant)', fontStyle: 'italic' }}>This external event is read-only.</p>}
@@ -763,17 +781,17 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {selected.start_utc && selected.end_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>schedule</span>{new Date(selected.start_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(selected.end_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}
         {selected.start_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{new Date(selected.start_utc * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
       </div>
-      {selected.location && <div className="event-ui__detail-location">
+      {selected.access === "details" && selected.location && <div className="event-ui__detail-location">
         <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>location_on</span>{selected.location}</p>
       </div>}
-      {selected.description && <div className="event-ui__detail-description">
+      {selected.access === "details" && selected.description && <div className="event-ui__detail-description">
         <p className="typography-body-md">{selected.description}</p>
       </div>}
       {editable(selected, calendarFor(selected)) && <button type="button" className="app-button" style={{ fontSize: '0.8125rem', marginTop: '0.5rem' }} onClick={() => window.open(`/api/v1/calendars/${selected.calendar_id}/events/${selected.id}/add-to-calendar`, '_blank')}>
         <span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle' }}>calendar_add_on</span>
         Add to Apple Calendar
       </button>}
-      <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} />
+      {selected.access === "details" && <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} />}
     </aside>}
     {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
       <div className="event-ui__editor-header">

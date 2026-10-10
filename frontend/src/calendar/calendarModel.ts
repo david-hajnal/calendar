@@ -45,3 +45,12 @@ export function eventsOnDay(events: readonly EventProjection[], day: DateKey): E
     ? event.start_date != null && event.end_date != null && event.start_date <= day && day < event.end_date
     : event.start_utc != null && event.end_utc != null && event.start_utc < to.getTime() / 1000 && event.end_utc > from.getTime() / 1000);
 }
+
+
+export interface EventIdentity { calendarId: number; eventId: number; recurrenceId?: string | number }
+export function identityOf(event: EventProjection): EventIdentity {
+  return { calendarId: event.calendar_id, eventId: event.id, ...(event.recurrence_id != null || event.recurrence_date != null ? { recurrenceId: event.recurrence_id ?? event.recurrence_date } : {}) };
+}
+export function sameIdentity(event: EventProjection, identity: EventIdentity) {
+  return event.calendar_id === identity.calendarId && event.id === identity.eventId && (event.recurrence_id ?? event.recurrence_date) === identity.recurrenceId;
+}

@@ -15,7 +15,7 @@ interface MobileCalendarProps {
   onNavigate(direction: -1 | 1): void;
   onToday(): void;
   onSelectDay(day: string): void;
-  onOpenEvent(event: EventProjection): void;
+  onOpenEvent(event: EventProjection, control: HTMLButtonElement): void;
   onCreate(): void;
   onRetry(): void;
 }
@@ -39,7 +39,7 @@ export function MobileCalendar(props: MobileCalendarProps) {
   const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
   return <section className="mobile-calendar" aria-label={month ? "Month calendar" : "Agenda"}>
-    <h2 id="events-heading">Events</h2>
+    <h2 id="events-heading" tabIndex={-1}>Events</h2>
     <div className="mobile-calendar__views" role="tablist" aria-label="Calendar view">
       {(["agenda", "month", "day", "week"] as const).map(view => <button key={view} type="button" role="tab" aria-selected={props.snapshot.view === view} onClick={() => props.onViewChange(view)}>{view[0].toUpperCase() + view.slice(1)}</button>)}
     </div>
@@ -70,7 +70,7 @@ export function MobileCalendar(props: MobileCalendarProps) {
         const external = eventExternal(event);
         const readonly = !eventEditable(event, calendar);
         return <li key={`${event.calendar_id}:${event.id}:${event.recurrence_id ?? event.recurrence_date ?? "base"}`}>
-          <button className="mobile-calendar__event" type="button" onClick={() => props.onOpenEvent(event)} style={{ borderLeftColor: calendar?.color ?? "var(--color-primary)" }}>
+          <button className="mobile-calendar__event" type="button" onClick={click => props.onOpenEvent(event, click.currentTarget)} style={{ borderLeftColor: calendar?.color ?? "var(--color-primary)" }}>
             <strong>{name}</strong>
             <span>{event.event_kind === "all_day" ? "All day" : `${event.start_utc == null ? "" : timeFormat.format(new Date(event.start_utc * 1000))}–${event.end_utc == null ? "" : timeFormat.format(new Date(event.end_utc * 1000))}`}</span>
             <span>{calendar?.access === "details" ? calendar.name : "Busy calendar"}{details && event.location ? ` · ${event.location}` : ""}</span>

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiClient } from "../auth/api";
 import { CalendarEventUI } from "./CalendarEventUI";
+import { CalendarNavigationProvider } from "./calendarNavigation";
 import type { Calendar } from "./CalendarManagement";
 
 const calendars: Calendar[] = [
@@ -865,4 +866,36 @@ it("mobile Month selects readable day events without creating and New uses that 
   expect(screen.getByText("No events on this day.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "New event" }));
   expect(screen.getByLabelText("Start")).toHaveValue("2025-06-17T09:00");
+});
+
+
+it("mobile details hide the calendar, focus the heading, and return through history", async () => {
+  vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  window.history.replaceState({}, "", "/dashboard?view=agenda&date=2025-06-16");
+  render(<CalendarNavigationProvider userId={7}><CalendarEventUI api={apiWithEvents()} calendars={calendars} /></CalendarNavigationProvider>);
+  const card = await screen.findByRole("button", { name: /Planning/ });
+  vi.stubGlobal("scrollTo", vi.fn());
+  card.focus(); fireEvent.click(card);
+  const heading = await screen.findByRole("heading", { name: "Planning" });
+  await waitFor(() => expect(heading).toHaveFocus());
+  expect(screen.queryByRole("region", { name: "Agenda" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Back to calendar" }));
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Event details" })).not.toBeInTheDocument());
+  await waitFor(() => expect(card).toHaveFocus());
+});
+
+
+it("revoked mobile detail identity shows unavailable instead of another calendar event", async () => {
+  vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  vi.stubGlobal("scrollTo", vi.fn());
+  window.history.replaceState({}, "", "/dashboard?view=agenda&date=2025-06-16");
+  const api = apiWithEvents();
+  const { rerender } = render(<CalendarNavigationProvider userId={7}><CalendarEventUI api={api} calendars={calendars} /></CalendarNavigationProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: /Planning/ }));
+  await screen.findByRole("heading", { name: "Planning" });
+  rerender(<CalendarNavigationProvider userId={7}><CalendarEventUI api={api} calendars={[calendars[1]]} /></CalendarNavigationProvider>);
+  expect(await screen.findByRole("heading", { name: "Event unavailable" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Edit event" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Back to calendar" }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Events" })).toHaveFocus());
 });

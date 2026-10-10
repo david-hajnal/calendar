@@ -4,7 +4,10 @@ import { CalendarNavigationProvider, parseCalendarQuery, useCalendarNavigation }
 
 function Controls() {
   const nav = useCalendarNavigation();
-  return <><output>{JSON.stringify(nav.snapshot)}</output>
+  return <><span data-testid="surface">{nav.surface?.kind ?? "missing"}</span>
+    <button onClick={() => nav.openDetail({ calendarId: 1, eventId: 10 })}>Open detail</button>
+    <button onClick={() => nav.closeSurface()}>Return</button>
+    <output>{JSON.stringify(nav.snapshot)}</output>
     <button onClick={() => nav.setVisibleCalendars([])}>Hide all</button>
     <button onClick={() => nav.setVisibleCalendars([1, 2])}>Choose calendars</button>
     <button onClick={() => nav.reconcileCalendars([2, 3])}>Reconcile</button>
@@ -43,4 +46,18 @@ it("does not resurrect another user's filters or invalid scroll values", () => {
   window.history.replaceState(state, "", "/dashboard?view=agenda&date=2026-10-09");
   render(<CalendarNavigationProvider userId={7}><Controls /></CalendarNavigationProvider>);
   expect(JSON.parse(screen.getByRole("status").textContent!).scroll.page).toBe(0);
+});
+
+
+it("pushes identity-only detail state and discards surfaces on a fresh chain", () => {
+  window.history.replaceState({}, "", "/dashboard?view=agenda&date=2025-06-16");
+  render(<CalendarNavigationProvider userId={7}><Controls /></CalendarNavigationProvider>);
+  const before = window.history.length;
+  fireEvent.click(screen.getByRole("button", { name: "Open detail" }));
+  expect(screen.getByTestId("surface")).toHaveTextContent("detail");
+  expect(window.history.length).toBe(before + 1);
+  expect(window.history.state.commoncalCalendar.surface).toEqual({ kind: "detail", identity: { calendarId: 1, eventId: 10 } });
+  cleanup();
+  render(<CalendarNavigationProvider userId={7}><Controls /></CalendarNavigationProvider>);
+  expect(screen.getByTestId("surface")).toHaveTextContent("calendar");
 });

@@ -1,6 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useIsMobile } from "../useIsMobile";
-import { dateKey, validDateKey, validView, type CalendarView, type DateKey } from "./calendarModel";
+import { dateKey, validDateKey, validView, type CalendarView, type DateKey, type EventIdentity } from "./calendarModel";
+
+import { navigate } from "../navigation";
+
+export type CalendarSurface = { kind: "calendar" } | { kind: "detail"; identity: EventIdentity };
 
 export interface CalendarSnapshot {
   view: CalendarView;
@@ -12,6 +16,9 @@ export interface CalendarSnapshot {
 
 export interface CalendarNavigation {
   snapshot: CalendarSnapshot;
+  surface: CalendarSurface;
+  openDetail(identity: EventIdentity): void;
+  closeSurface(): void;
   setView(view: CalendarView): void;
   setDate(date: DateKey): void;
   selectDay(date: DateKey): void;
@@ -49,6 +56,23 @@ const Context = createContext<CalendarNavigation | null>(null);
 
 export function CalendarNavigationProvider({ userId, children }: { userId: number; children: ReactNode }) {
   const mobile = useIsMobile();
+  const chainId = useRef(crypto.randomUUID());
+  const index = useRef(0);
+  const visited = useRef(new Set([0]));
+  const [surface, setSurface] = useState<CalendarSurface>({ kind: "calendar" });
+  const surfaceRef = useRef(surface);
+  const origin = useRef<number | null>(null);
+  const readSurface = useCallback((state: unknown): CalendarSurface => {
+    const entry = (state as { commoncalCalendar?: { version?: number; userId?: number; chainId?: string; index?: number; originIndex?: number; surface?: CalendarSurface } } | null)?.commoncalCalendar;
+    if (!entry || entry.version !== 1 || entry.userId !== userId || entry.chainId !== chainId.current || !Number.isSafeInteger(entry.index) || !visited.current.has(entry.index!)) return { kind: "calendar" };
+    index.current = entry.index!;
+    origin.current = Number.isSafeInteger(entry.originIndex) && visited.current.has(entry.originIndex!) ? entry.originIndex! : null;
+    const value = entry.surface;
+    if (value?.kind !== "detail") return { kind: "calendar" };
+    const identity = value.identity;
+    if (!identity || !Number.isSafeInteger(identity.calendarId) || identity.calendarId <= 0 || !Number.isSafeInteger(identity.eventId) || identity.eventId <= 0 || (identity.recurrenceId !== undefined && typeof identity.recurrenceId !== "string" && typeof identity.recurrenceId !== "number")) return { kind: "calendar" };
+    return { kind: "detail", identity: { calendarId: identity.calendarId, eventId: identity.eventId, ...(identity.recurrenceId === undefined ? {} : { recurrenceId: identity.recurrenceId }) } };
+  }, [userId]);
   const [snapshot, setSnapshot] = useState<CalendarSnapshot>(() => ({
     ...(readSnapshot(window.history.state, userId) ?? { visibleCalendarIds: null, scroll: { page: 0, timelineTop: 0, timelineLeft: 0 } }),
     ...parseCalendarQuery(window.location.search, mobile, dateKey(new Date())),
@@ -64,7 +88,7 @@ export function CalendarNavigationProvider({ userId, children }: { userId: numbe
   const persist = useCallback((value: CalendarSnapshot) => {
     if (!isCalendarRoute()) return;
     const state = window.history.state;
-    window.history.replaceState({ ...(state && typeof state === "object" ? state : {}), commoncalCalendar: { version: 1, userId, snapshot: value } }, "", href(value, window.location.pathname));
+    window.history.replaceState({ ...(state && typeof state === "object" ? state : {}), commoncalCalendar: { version: 1, userId, snapshot: value, chainId: chainId.current, index: index.current, originIndex: origin.current, surface: surfaceRef.current } }, "", href(value, window.location.pathname));
   }, [href, userId]);
   const update = useCallback((change: Partial<CalendarSnapshot>) => {
     const next = { ...latest.current, ...change };
@@ -77,21 +101,36 @@ export function CalendarNavigationProvider({ userId, children }: { userId: numbe
       if (!isCalendarRoute()) return;
       query.current = new URLSearchParams(window.location.search);
       hash.current = window.location.hash;
+      const nextSurface = readSurface(window.history.state);
+      surfaceRef.current = nextSurface; setSurface(nextSurface);
       const saved = readSnapshot(window.history.state, userId);
       const next = { ...(saved ?? latest.current), ...parseCalendarQuery(window.location.search, mobile, dateKey(new Date())) };
       latest.current = next; persist(next); setSnapshot(next);
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [mobile, persist, userId]);
+  }, [mobile, persist, userId, readSurface]);
 
   const captureScroll = useCallback((scroll: CalendarSnapshot["scroll"]) => {
-    if (!isCalendarRoute()) return;
+    if (!isCalendarRoute() || surfaceRef.current.kind !== "calendar") return;
     latest.current = { ...latest.current, scroll }; persist(latest.current);
   }, [persist]);
 
   const value = useMemo<CalendarNavigation>(() => ({
-    snapshot,
+    snapshot, surface,
+    openDetail(identity) {
+      persist(latest.current);
+      const originIndex = index.current;
+      const nextIndex = originIndex + 1;
+      for (const known of visited.current) if (known >= nextIndex) visited.current.delete(known);
+      visited.current.add(nextIndex);
+      navigate(href(latest.current), { state: { commoncalCalendar: { version: 1, userId, chainId: chainId.current, index: nextIndex, originIndex, snapshot: latest.current, surface: { kind: "detail", identity } } } });
+    },
+    closeSurface() {
+      const target = origin.current;
+      if (target !== null && visited.current.has(target) && index.current === target + 1) window.history.back();
+      else { surfaceRef.current = { kind: "calendar" }; setSurface(surfaceRef.current); origin.current = null; persist(latest.current); }
+    },
     setView(view) { update({ view }); },
     setDate(date) { if (validDateKey(date)) update({ anchorDate: date, selectedDay: date }); },
     selectDay(date) { if (validDateKey(date)) update({ anchorDate: date, selectedDay: date }); },
@@ -104,7 +143,7 @@ export function CalendarNavigationProvider({ userId, children }: { userId: numbe
     },
     captureScroll,
     calendarHref() { return href(latest.current); },
-  }), [snapshot, update, href, captureScroll]);
+  }), [snapshot, surface, update, href, captureScroll, persist, userId]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

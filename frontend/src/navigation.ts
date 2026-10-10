@@ -44,13 +44,13 @@ export function safeContinuation(value: string | null): string | null {
   return `${target.pathname}${target.search}${target.hash}`;
 }
 
-export function navigate(target: string, options: { mode?: NavigationMode } = {}): void {
+export function navigate(target: string, options: { mode?: NavigationMode; state?: unknown } = {}): void {
   const destination = localTarget(target);
   if (!destination) throw new Error("Navigation requires a local URL");
   const href = `${destination.pathname}${destination.search}${destination.hash}`;
   const mode = options.mode ?? "push";
-  if (mode === "push" && href === currentLocation().href) return;
-  if (mode === "replace") window.history.replaceState({}, "", href);
-  else window.history.pushState({}, "", href);
+  if (mode === "push" && href === currentLocation().href && options.state === undefined) return;
+  if (mode === "replace") window.history.replaceState(options.state ?? {}, "", href);
+  else window.history.pushState(options.state ?? {}, "", href);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }

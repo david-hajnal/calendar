@@ -129,6 +129,39 @@ test("mobile Month selects covered days without refetching or opening creation",
   await expect(month.getByRole("button", { name: /Multi-day trip/ })).toBeAttached();
   await expect(page.getByRole("form", { name: "Create event" })).toHaveCount(0);
   expect(reads).toBe(initialReads);
+  const card = month.getByRole("button", { name: /Overnight planning/ });
+  await card.click();
+  const detail = page.getByRole("complementary", { name: "Event details" });
+  await expect(detail.getByRole("heading", { name: /Overnight planning/ })).toBeFocused();
+  await expect(month).toBeHidden();
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const box = await detail.boundingBox();
+    expect(box!.width).toBeGreaterThan(width - 40);
+    await page.screenshot({ path: new URL(`../../docs/plans/mobile-usability/evidence/slice-05-detail-${width}-light.png`, import.meta.url).pathname, scale: "css" });
+  }
+  await page.evaluate(() => localStorage.setItem("theme", "dark"));
+  // A fresh load discards surfaces; reopen from current authorized data.
+  await page.reload();
+  await card.click();
+  await page.screenshot({ path: new URL("../../docs/plans/mobile-usability/evidence/slice-05-detail-430-dark.png", import.meta.url).pathname, scale: "css" });
+  await page.goBack();
+  await expect(month).toBeVisible();
+  await expect(card).toBeFocused();
+  await page.goForward();
+  await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: "Back to calendar" }).click();
+  await expect(month).toBeVisible();
+  await card.click();
+  await page.reload();
+  await expect(month).toBeVisible();
+  await expect(detail).toHaveCount(0);
+  await page.evaluate(() => localStorage.setItem("theme", "light"));
+  await page.reload();
+  await expect(month).toBeVisible();
+  await writeFile(new URL("../../docs/plans/mobile-usability/evidence/slice-05-browser.json", import.meta.url), JSON.stringify({ source: "live isolated backend", browser: "WebKit", nativeBackForward: true, explicitReturn: true, reloadDiscardsSurface: true, headingAndReturnFocus: true, fullWidth: [320, 390, 430] }, null, 2));
+
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.goBack();
   await expect(month.getByRole("button", { name: /Saturday, October 10, 2026 · 2 events/ })).toHaveAttribute("aria-pressed", "true");

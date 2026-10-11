@@ -67,6 +67,16 @@ spec:
       schedule: "0 2 * * *"
       persistence:
         size: 5Gi
+    mail:
+      host: smtp.zoho.com
+      port: 587
+      from: cal.endar@hajnal.space
+      existingSecret:
+        name: commoncal-mail
+        usernameKey: SMTP_USERNAME
+        passwordKey: SMTP_PASSWORD
+      egressCIDRs:
+        - 0.0.0.0/0
     networkPolicy:
       enabled: true
       ingress:

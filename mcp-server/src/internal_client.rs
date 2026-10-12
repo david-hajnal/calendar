@@ -413,10 +413,7 @@ impl InternalClient {
     ) -> Result<EventInfo, InternalError> {
         let url = self
             .api_base
-            .join(&format!(
-                "internal/mcp/events/{}/{}",
-                calendar_id, event_id
-            ))
+            .join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -815,7 +812,10 @@ mod tests {
         let resp: SearchEventsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.events.len(), 1);
         assert_eq!(resp.events[0].id, 100);
-        assert_eq!(resp.events[0].start_utc.as_deref(), Some("2026-10-12T06:00:00Z"));
+        assert_eq!(
+            resp.events[0].start_utc.as_deref(),
+            Some("2026-10-12T06:00:00Z")
+        );
         assert_eq!(resp.next_page_token, None);
     }
 

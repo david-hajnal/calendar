@@ -240,12 +240,7 @@ async fn event_create_forwards_timezone_to_core() {
     .await
     .expect("event_create with a valid grant should succeed");
 
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
     let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let metadata: serde_json::Value =
         serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
@@ -298,12 +293,7 @@ async fn event_search_extracts_events_from_core_envelope() {
     .await
     .expect("event_search with a valid grant should succeed");
 
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
     let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let metadata: serde_json::Value =
         serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
@@ -369,18 +359,16 @@ async fn event_update_patches_core_event_route() {
     .await
     .expect("event_update with a valid grant should succeed");
 
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
     let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let metadata: serde_json::Value =
         serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
 
     assert_eq!(metadata["event"]["id"], 11);
-    assert_eq!(metadata["event"]["title"], "MCP test — morning walk (updated)");
+    assert_eq!(
+        metadata["event"]["title"],
+        "MCP test — morning walk (updated)"
+    );
     assert_eq!(metadata["event"]["version"], 2);
 }
 

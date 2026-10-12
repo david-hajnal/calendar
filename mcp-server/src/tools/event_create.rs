@@ -57,15 +57,11 @@ pub fn validate_create_input(params: &EventCreateParams) -> Result<(), ToolError
     }
 
     if params.start_utc.is_none() {
-        return Err(ToolError::BadRequest(
-            "start_utc is required".to_string(),
-        ));
+        return Err(ToolError::BadRequest("start_utc is required".to_string()));
     }
 
     if params.end_utc.is_none() {
-        return Err(ToolError::BadRequest(
-            "end_utc is required".to_string(),
-        ));
+        return Err(ToolError::BadRequest("end_utc is required".to_string()));
     }
 
     if let Some(ref desc) = params.description

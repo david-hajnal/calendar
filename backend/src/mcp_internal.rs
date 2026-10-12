@@ -541,10 +541,8 @@ pub async fn search_events(
     Path(calendar_id): Path<i64>,
     Query(params): Query<SearchEventsQuery>,
 ) -> Result<Json<SearchEventsResponse>, (StatusCode, String)> {
-    let from_ts = parse_utc_timestamp(&params.from)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let to_ts = parse_utc_timestamp(&params.to)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let from_ts = parse_utc_timestamp(&params.from).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let to_ts = parse_utc_timestamp(&params.to).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     if to_ts <= from_ts {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -578,10 +576,10 @@ pub async fn create_event(
     Path(calendar_id): Path<i64>,
     Json(payload): Json<CreateEventPayload>,
 ) -> Result<Json<CreateEventResponse>, (StatusCode, String)> {
-    let timed_start = parse_utc_timestamp(&payload.start_utc)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    let timed_end = parse_utc_timestamp(&payload.end_utc)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let timed_start =
+        parse_utc_timestamp(&payload.start_utc).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let timed_end =
+        parse_utc_timestamp(&payload.end_utc).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     if timed_end <= timed_start {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1289,7 +1287,11 @@ mod tests {
         };
         let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
         assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
-        assert_eq!(count_events(&pool).await, 0, "rejected create must not write");
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
     }
 
     #[tokio::test]
@@ -1307,7 +1309,11 @@ mod tests {
         };
         let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
         assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
-        assert_eq!(count_events(&pool).await, 0, "rejected create must not write");
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
     }
 
     #[tokio::test]
@@ -1325,7 +1331,11 @@ mod tests {
         };
         let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
         assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
-        assert_eq!(count_events(&pool).await, 0, "rejected create must not write");
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
     }
 
     #[tokio::test]
@@ -1343,7 +1353,11 @@ mod tests {
         };
         let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
         assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
-        assert_eq!(count_events(&pool).await, 0, "rejected create must not write");
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
     }
 
     #[tokio::test]
@@ -1371,13 +1385,12 @@ mod tests {
         assert_eq!(response.version, 1);
 
         // The timezone must be persisted in the DB.
-        let stored_tz: String = sqlx::query_scalar(
-            "SELECT event_timezone FROM events WHERE id = ?",
-        )
-        .bind(response.id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let stored_tz: String =
+            sqlx::query_scalar("SELECT event_timezone FROM events WHERE id = ?")
+                .bind(response.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(stored_tz, "Europe/Budapest");
     }
 

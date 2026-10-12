@@ -244,6 +244,42 @@ mod tests {
     }
 
     #[test]
+    fn validate_create_input_rejects_missing_start_utc() {
+        let params = EventCreateParams {
+            calendar_id: 1,
+            title: "Meeting".to_string(),
+            description: None,
+            location: None,
+            start_utc: None,
+            end_utc: Some("2024-01-01T11:00:00Z".to_string()),
+            timezone: None,
+            operation_id: None,
+        };
+        let result = validate_create_input(&params);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("start_utc"));
+    }
+
+    #[test]
+    fn validate_create_input_rejects_missing_end_utc() {
+        let params = EventCreateParams {
+            calendar_id: 1,
+            title: "Meeting".to_string(),
+            description: None,
+            location: None,
+            start_utc: Some("2024-01-01T10:00:00Z".to_string()),
+            end_utc: None,
+            timezone: None,
+            operation_id: None,
+        };
+        let result = validate_create_input(&params);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("end_utc"));
+    }
+
+    #[test]
     fn validate_create_input_rejects_long_description() {
         let params = EventCreateParams {
             calendar_id: 1,

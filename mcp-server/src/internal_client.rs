@@ -414,7 +414,7 @@ impl InternalClient {
         let url = self
             .api_base
             .join(&format!(
-                "internal/mcp/calendars/{}/events/{}",
+                "internal/mcp/events/{}/{}",
                 calendar_id, event_id
             ))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;

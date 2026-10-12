@@ -12,8 +12,11 @@ use mcp_server::mcp_grant::McpGrant;
 use mcp_server::oauth::{AuthStrength, TokenValidationResult};
 use mcp_server::tools::AuthorizedToolContext;
 use mcp_server::tools::calendar_list::{CalendarListParams, handle as calendar_list};
+use mcp_server::tools::event_create::{EventCreateParams, handle as event_create};
+use mcp_server::tools::event_search::{EventSearchParams, handle as event_search};
+use mcp_server::tools::event_update::{EventUpdateParams, handle as event_update};
 use wiremock::MockServer;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_partial_json, method, path};
 
 const CORE_GRANT: &str = r#"[{"grant_id":"grant-1","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":false,"allow_update":false,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
 
@@ -167,6 +170,219 @@ async fn calendar_list_uses_authorized_core_grant_to_filter_calendars() {
 }
 
 const CREATE_GRANT: &str = r#"[{"grant_id":"grant-2","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":true,"allow_update":false,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
+
+fn tool_token() -> TokenValidationResult {
+    TokenValidationResult {
+        user_id: 42,
+        oauth_client_id: "client-1".to_string(),
+        scopes: vec![],
+        auth_strength: AuthStrength::Passwordless,
+        auth_time: 0,
+        token_id: "token-1".to_string(),
+        expires_at: i64::MAX,
+    }
+}
+
+fn tool_grant(json: &str) -> McpGrant {
+    let grants: Vec<mcp_server::internal_client::McpGrantResponse> =
+        serde_json::from_str(json).expect("grant fixture should parse");
+    McpGrant::from(grants.into_iter().next().expect("one grant in fixture"))
+}
+
+/// Regression: event_create forwards the IANA timezone to CommonCal core.
+#[tokio::test]
+async fn event_create_forwards_timezone_to_core() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(CREATE_GRANT))
+        .mount(&mock_server)
+        .await;
+    wiremock::Mock::given(method("POST"))
+        .and(path("/internal/mcp/events/1"))
+        .and(body_partial_json(serde_json::json!({
+            "title": "MCP test — morning walk",
+            "start_utc": "2026-10-12T06:00:00Z",
+            "end_utc": "2026-10-12T06:30:00Z",
+            "timezone": "Europe/Budapest"
+        })))
+        .respond_with(
+            wiremock::ResponseTemplate::new(201).set_body_string(
+                r#"{"id":11,"calendar_id":1,"title":"MCP test — morning walk","description":"Created for local MCP validation","location":null,"status":"confirmed","event_kind":"timed","start_utc":"2026-10-12T06:00:00Z","end_utc":"2026-10-12T06:30:00Z","version":1}"#,
+            ),
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let client = internal_client(&mock_server);
+    let token = tool_token();
+    let grant = tool_grant(CREATE_GRANT);
+    let context = AuthorizedToolContext {
+        token: &token,
+        grant: &grant,
+        internal_client: &client,
+    };
+
+    let response = event_create(
+        &context,
+        EventCreateParams {
+            calendar_id: 1,
+            title: "MCP test — morning walk".to_string(),
+            description: Some("Created for local MCP validation".to_string()),
+            location: None,
+            start_utc: Some("2026-10-12T06:00:00Z".to_string()),
+            end_utc: Some("2026-10-12T06:30:00Z".to_string()),
+            timezone: Some("Europe/Budapest".to_string()),
+            operation_id: None,
+        },
+    )
+    .await
+    .expect("event_create with a valid grant should succeed");
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
+
+    assert_eq!(metadata["event"]["id"], 11);
+    assert_eq!(metadata["event"]["start_utc"], "2026-10-12T06:00:00Z");
+    assert_eq!(metadata["event"]["end_utc"], "2026-10-12T06:30:00Z");
+    assert_eq!(metadata["event"]["event_kind"], "timed");
+}
+
+/// Regression: event_search consumes Core's `{ events, next_page_token }`
+/// envelope and surfaces the events with RFC 3339 timestamps.
+#[tokio::test]
+async fn event_search_extracts_events_from_core_envelope() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(CORE_GRANT))
+        .mount(&mock_server)
+        .await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/calendars/1/events/search"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string(
+                r#"{"events":[{"id":11,"calendar_id":1,"title":"MCP test — morning walk","description":"Created for local MCP validation","location":null,"status":"confirmed","event_kind":"timed","start_utc":"2026-10-12T06:00:00Z","end_utc":"2026-10-12T06:30:00Z","version":1}],"next_page_token":null}"#,
+            ),
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let client = internal_client(&mock_server);
+    let token = tool_token();
+    let grant = tool_grant(CORE_GRANT);
+    let context = AuthorizedToolContext {
+        token: &token,
+        grant: &grant,
+        internal_client: &client,
+    };
+
+    let response = event_search(
+        &context,
+        EventSearchParams {
+            calendar_id: 1,
+            from: "2026-10-12T00:00:00Z".to_string(),
+            to: "2026-10-13T00:00:00Z".to_string(),
+            query: None,
+        },
+    )
+    .await
+    .expect("event_search with a valid grant should succeed");
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
+
+    assert_eq!(metadata["events"].as_array().unwrap().len(), 1);
+    assert_eq!(metadata["events"][0]["id"], 11);
+    assert_eq!(metadata["events"][0]["title"], "MCP test — morning walk");
+    assert_eq!(metadata["events"][0]["start_utc"], "2026-10-12T06:00:00Z");
+    assert_eq!(metadata["events"][0]["end_utc"], "2026-10-12T06:30:00Z");
+}
+
+const UPDATE_GRANT: &str = r#"[{"grant_id":"grant-3","user_id":42,"oauth_client_id":"client-1","allowed_calendar_ids":[1],"allow_availability":true,"allow_event_titles":true,"allow_event_details":false,"allow_create":false,"allow_update":true,"allow_delete":false,"created_at":1700000000,"last_used_at":null,"expires_at":null,"revoked_at":null}]"#;
+
+/// Regression: event_update must PATCH Core's `/internal/mcp/events/:calendar_id/:event_id`
+/// route (not the get_event path `/internal/mcp/calendars/:calendar_id/events/:event_id`,
+/// which is GET-only and would return 405 Method Not Allowed).
+#[tokio::test]
+async fn event_update_patches_core_event_route() {
+    let mock_server = MockServer::start().await;
+    wiremock::Mock::given(method("GET"))
+        .and(path("/internal/mcp/mcp-grants"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(UPDATE_GRANT))
+        .mount(&mock_server)
+        .await;
+    wiremock::Mock::given(method("PATCH"))
+        .and(path("/internal/mcp/events/1/11"))
+        .and(body_partial_json(serde_json::json!({
+            "title": "MCP test — morning walk (updated)",
+            "version": 1
+        })))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_string(
+                r#"{"id":11,"calendar_id":1,"title":"MCP test — morning walk (updated)","description":"Created for local MCP validation","location":null,"status":"confirmed","event_kind":"timed","start_utc":"2026-10-12T06:00:00Z","end_utc":"2026-10-12T06:30:00Z","version":2}"#,
+            ),
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let client = internal_client(&mock_server);
+    let token = tool_token();
+    let grant = tool_grant(UPDATE_GRANT);
+    let context = AuthorizedToolContext {
+        token: &token,
+        grant: &grant,
+        internal_client: &client,
+    };
+
+    let response = event_update(
+        &context,
+        EventUpdateParams {
+            calendar_id: 1,
+            event_id: 11,
+            title: Some("MCP test — morning walk (updated)".to_string()),
+            description: None,
+            location: None,
+            start_utc: None,
+            end_utc: None,
+            version: 1,
+            operation_id: None,
+        },
+    )
+    .await
+    .expect("event_update with a valid grant should succeed");
+
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let output: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_str(output["content"][0]["Text"]["text"].as_str().unwrap()).unwrap();
+
+    assert_eq!(metadata["event"]["id"], 11);
+    assert_eq!(metadata["event"]["title"], "MCP test — morning walk (updated)");
+    assert_eq!(metadata["event"]["version"], 2);
+}
 
 fn gateway_config(mock_server: &MockServer, database_path: std::path::PathBuf) -> Config {
     Config {

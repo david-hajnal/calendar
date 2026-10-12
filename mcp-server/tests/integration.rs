@@ -85,7 +85,7 @@ async fn calendar_list_uses_authorized_core_grant_to_filter_calendars() {
     wiremock::Mock::given(method("GET"))
         .and(path("/internal/mcp/users/42/calendars"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
-            r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"},{"id":2,"name":"Denied","role":"owner","access":"owner"}]"#,
+            r#"[{"id":1,"name":"Allowed","description":null,"acl_role":"owner"},{"id":2,"name":"Denied","description":null,"acl_role":"owner"}]"#,
         ))
         .mount(&mock_server)
         .await;
@@ -213,10 +213,9 @@ async fn successful_tool_call_appends_audit_row() {
         .await;
     wiremock::Mock::given(method("GET"))
         .and(path("/internal/mcp/users/42/calendars"))
-        .respond_with(
-            wiremock::ResponseTemplate::new(200)
-                .set_body_string(r#"[{"id":1,"name":"Allowed","role":"owner","access":"owner"}]"#),
-        )
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+            r#"[{"id":1,"name":"Allowed","description":null,"acl_role":"owner"}]"#,
+        ))
         .mount(&mock_server)
         .await;
 
@@ -358,7 +357,12 @@ async fn audit_failure_does_not_turn_completed_mutation_into_retryable_failure()
         "method": "tools/call",
         "params": {
             "name": "event_create",
-            "arguments": { "calendar_id": 1, "title": "Standup" },
+            "arguments": {
+                "calendar_id": 1,
+                "title": "Standup",
+                "start_utc": "2026-10-12T06:00:00Z",
+                "end_utc": "2026-10-12T06:30:00Z",
+            },
         },
     });
 

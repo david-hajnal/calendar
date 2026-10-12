@@ -63,7 +63,7 @@ pub async fn handle(
             id: c.id,
             name: c.name,
             color: String::new(),
-            access: c.access,
+            access: c.acl_role,
         })
         .collect();
 

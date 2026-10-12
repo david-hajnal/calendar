@@ -6,9 +6,9 @@
 // is the public protected-resource metadata URL derived from
 // `MCP_PUBLIC_RESOURCE_URL`. No loopback or lab URL is ever emitted.
 //
-// On success the validated identity is published to the request's task-local
-// (see `crate::identity`) for the duration of the downstream request, so the
-// rmcp tool handlers can authorize against it.
+// On success the validated identity is inserted into HTTP request extensions.
+// rmcp preserves those extensions in RequestContext across spawned tasks.
+// A task-local scope is retained for same-task compatibility consumers.
 
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::Next;
@@ -118,11 +118,11 @@ fn token_error_params(e: &TokenError) -> (&'static str, String) {
 }
 
 /// The auth middleware. Validates the bearer token and publishes the identity
-/// to the request's task-local for the downstream rmcp service.
+/// to HTTP request extensions for the downstream rmcp service.
 pub async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AuthState>,
     headers: HeaderMap,
-    request: Request<axum::body::Body>,
+    mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let token = match extract_bearer_token(&headers) {
@@ -148,6 +148,7 @@ pub async fn auth_middleware(
                 client_id = %identity.client_id,
                 "mcp request authorized"
             );
+            request.extensions_mut().insert(identity.clone());
             IDENTITY
                 .scope(Some(identity), async move { next.run(request).await })
                 .await

@@ -47,7 +47,7 @@
  *     Issuer host:
  *       every route -> CommonCal SPA HTML (the authorization service is not
  *          deployed; the advertised issuer host is handled by core's "/"
- *          ingress and falls through to the SPA — docs/MCP-PRODUCTION-FIX-PLAN.md)
+ *          ingress and falls through to the SPA — historical production investigation)
  *
  * The world is fixed at startup (MOCK_WORLD), so discovery, DCR, authorization,
  * token exchange, and the MCP lifecycle all agree regardless of request order.
@@ -492,7 +492,7 @@ const mcpServer = http.createServer((req, res) => {
 const issuerServer = http.createServer((req, res) => {
   // In the current world the authorization service is not deployed; the
   // advertised issuer host is handled by core's "/" ingress and falls through
-  // to the SPA (docs/MCP-PRODUCTION-FIX-PLAN.md). Every issuer route returns
+  // to the SPA (historical production investigation). Every issuer route returns
   // the SPA HTML.
   if (!COMPLIANT) {
     sendHtml(res, 200, SPA_HTML);

@@ -211,8 +211,9 @@ else
   echo "SKIP: no bundle to check bridge isolation"
 fi
 
-# 11. Dependency topology: auth is included in production, core must not depend on auth or
-#     configure the auth bridge. The mcp HelmRelease must still depend on core.
+# 11. Dependency topology: auth is active in production, core must depend on it.
+#     The mcp HelmRelease must still depend on core.
+#     Uses structural YAML checks (not grep) to verify dependsOn is at spec level.
 echo ""
 echo "--- Checking Flux dependency topology (auth -> core -> mcp) ---"
 CORE_HR="deploy/flux/overlays/production/charts/core-helmrelease.yaml"
@@ -224,41 +225,140 @@ else
   echo "FAIL: auth HelmRelease must be included in production"
   ERRORS=$((ERRORS+1))
 fi
-if [ -f "$CORE_HR" ] && ! grep -q 'name: commoncal-auth' "$CORE_HR"; then
-  echo "OK: core does not depend on commoncal-auth"
+
+# Check core dependsOn at spec level (not inside spec.values)
+if [ -f "$CORE_HR" ]; then
+  core_depends_on="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+deps = doc.get('spec', {}).get('dependsOn', [])
+names = [d.get('name') for d in deps] if deps else []
+print(','.join(names))
+" "$CORE_HR")"
+  if echo "$core_depends_on" | grep -q 'commoncal-auth'; then
+    echo "OK: core depends on commoncal-auth at spec.dependsOn (auth is active in production)"
+  else
+    echo "FAIL: core HelmRelease must depend on commoncal-auth at spec.dependsOn (auth is active, not suspended). Found: ${core_depends_on:-none}"
+    ERRORS=$((ERRORS+1))
+  fi
+
+  # Check authBridge.enabled is actually true (not just present)
+  auth_bridge_enabled="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+vals = doc.get('spec', {}).get('values', {})
+enabled = vals.get('authBridge', {}).get('enabled', False)
+print(str(enabled).lower())
+" "$CORE_HR")"
+  if [ "$auth_bridge_enabled" = "true" ]; then
+    echo "OK: core authBridge.enabled is true (auth is active in production)"
+  else
+    echo "FAIL: core authBridge.enabled must be true when auth is active. Found: ${auth_bridge_enabled}"
+    ERRORS=$((ERRORS+1))
+  fi
 else
-  echo "FAIL: core HelmRelease must not depend on suspended commoncal-auth"
-  ERRORS=$((ERRORS+1))
-fi
-if [ -f "$CORE_HR" ] && ! grep -q 'authBridge:' "$CORE_HR"; then
-  echo "OK: core does not configure authBridge"
-else
-  echo "FAIL: core HelmRelease must not configure authBridge while auth is suspended"
-  ERRORS=$((ERRORS+1))
-fi
-if [ -f "$MCP_HR" ] && grep -q 'name: commoncal' "$MCP_HR"; then
-  echo "OK: mcp depends on commoncal"
-else
-  echo "FAIL: mcp HelmRelease must depend on commoncal"
-  ERRORS=$((ERRORS+1))
-fi
-if [ -f "$MCP_HR" ] && ! grep -q 'oauthIssuerHoldKeyName:' "$MCP_HR"; then
-  echo "OK: mcp does not require suspended auth issuer hold secret"
-else
-  echo "FAIL: mcp must not require auth issuer hold secret while auth is suspended"
+  echo "FAIL: core HelmRelease file not found: $CORE_HR"
   ERRORS=$((ERRORS+1))
 fi
 
+# Check mcp dependsOn at spec level
+if [ -f "$MCP_HR" ]; then
+  mcp_depends_on="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+deps = doc.get('spec', {}).get('dependsOn', [])
+names = [d.get('name') for d in deps] if deps else []
+print(','.join(names))
+" "$MCP_HR")"
+  if echo "$mcp_depends_on" | grep -q 'commoncal'; then
+    echo "OK: mcp depends on commoncal at spec.dependsOn"
+  else
+    echo "FAIL: mcp HelmRelease must depend on commoncal at spec.dependsOn. Found: ${mcp_depends_on:-none}"
+    ERRORS=$((ERRORS+1))
+  fi
+
+  # Check mcp does not require auth issuer hold key (cutover is dormant)
+  mcp_has_hold_key="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+vals = doc.get('spec', {}).get('values', {})
+es = vals.get('existingSecret', {})
+has_hold = bool(es.get('oauthIssuerHoldKeyName'))
+print(str(has_hold).lower())
+" "$MCP_HR")"
+  if [ "$mcp_has_hold_key" = "false" ]; then
+    echo "OK: mcp does not require auth issuer hold key (cutover is dormant)"
+  else
+    echo "FAIL: mcp must not require auth issuer hold secret while cutover is suspended"
+    ERRORS=$((ERRORS+1))
+  fi
+else
+  echo "FAIL: mcp HelmRelease file not found: $MCP_HR"
+  ERRORS=$((ERRORS+1))
+fi
+
+# 11b. Negative coverage: verify dependsOn is NOT nested inside spec.values.
+#     This catches the bug where dependsOn is placed under values (where Helm
+#     charts read it but Flux ignores it).
+echo ""
+echo "--- Checking dependsOn is not nested inside spec.values ---"
+for hr_file in deploy/flux/overlays/production/charts/*-helmrelease.yaml; do
+  if [ ! -f "$hr_file" ]; then continue; fi
+  nested="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+vals = doc.get('spec', {}).get('values', {})
+has_dep = 'dependsOn' in vals
+print(str(has_dep).lower())
+" "$hr_file")"
+  if [ "$nested" = "true" ]; then
+    echo "FAIL: dependsOn is nested inside spec.values in $(basename "$hr_file") — Flux ignores it there"
+    ERRORS=$((ERRORS+1))
+  else
+    echo "OK: dependsOn is not nested inside spec.values in $(basename "$hr_file")"
+  fi
+done
+
 # 12. Issuer consistency: the primary issuer must be unchanged (no cutover).
-#     The MCP chart's primary issuer key must still be mcp-oauth-issuer.
+#     The MCP chart uses env.MCP_OAUTH_ISSUER (public issuer) rather than
+#     the retired Secret-based issuer path.
 echo ""
 echo "--- Checking issuer consistency (no cutover) ---"
 MCP_VALUES="deploy/values-mcp-production.yaml"
-if [ -f "$MCP_VALUES" ] && grep -q 'oauthIssuerKeyName: mcp-oauth-issuer' "$MCP_VALUES"; then
-  echo "OK: primary issuer key is unchanged (mcp-oauth-issuer)"
-else
-  echo "FAIL: primary issuer key must remain mcp-oauth-issuer (no cutover)"
-  ERRORS=$((ERRORS+1))
+if [ -f "$MCP_VALUES" ]; then
+  # Verify oauthIssuerKeyName is empty (issuer from env, not Secret)
+  issuer_key="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+es = doc.get('existingSecret', {})
+print(es.get('oauthIssuerKeyName', '') or '')
+" "$MCP_VALUES")"
+  if [ -z "$issuer_key" ]; then
+    echo "OK: issuer source is env.MCP_OAUTH_ISSUER (oauthIssuerKeyName is empty)"
+  else
+    echo "FAIL: oauthIssuerKeyName must be empty when using env.MCP_OAUTH_ISSUER. Found: ${issuer_key}"
+    ERRORS=$((ERRORS+1))
+  fi
+  # Verify env.MCP_OAUTH_ISSUER is set
+  mcp_issuer="$(python3 -c "
+import sys, yaml
+with open(sys.argv[1]) as f:
+    doc = yaml.safe_load(f)
+env = doc.get('env', {})
+print(env.get('MCP_OAUTH_ISSUER', '') or '')
+" "$MCP_VALUES")"
+  if [ -n "$mcp_issuer" ]; then
+    echo "OK: env.MCP_OAUTH_ISSUER is set to ${mcp_issuer}"
+  else
+    echo "FAIL: env.MCP_OAUTH_ISSUER must be set when oauthIssuerKeyName is empty"
+    ERRORS=$((ERRORS+1))
+  fi
 fi
 
 # 13. Check for cert-manager annotations in production-owned deployment files

@@ -1,0 +1,120 @@
+# Local MCP development stack: core + OAuth auth server + MCP server + PostgreSQL.
+# Start through ./scripts/dev.sh mcp-start.
+#
+# Public ports bind on 127.0.0.1 for host access. Container-to-container
+# communication uses service names on the shared network.
+#
+# All values are throwaway — never used in production.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: development
+      APP_ORIGIN: http://127.0.0.1:3000
+      PASSWORD_LOGIN_ENABLED: "1"
+      E2E_EMAIL_OUTBOX: /app/data/emails.jsonl
+      AUTH_BRIDGE_URL: http://auth:4001
+      AUTH_BRIDGE_SECRET: slice1-loopback-bridge-key
+      MCP_INTERNAL_API_KEY: mcp-internal-dev-key
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - sqlite-data:/app/data
+    networks:
+      - mcp-internal
+    restart: unless-stopped
+  # -----------------------------------------------------------------------
+  # PostgreSQL stores the development OAuth provider state.
+  # -----------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: auth_test
+      POSTGRES_PASSWORD: disposable-auth-check-password
+      POSTGRES_DB: auth_test
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - mcp-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_test -d auth_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - mcp-internal
+
+  # -----------------------------------------------------------------------
+  # OAuth authorization server — real slice1-lab auth-server entrypoint
+  # with PostgreSQL, test JWKS, and development configuration.
+  # -----------------------------------------------------------------------
+  auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    # Override the production entrypoint (src/production.mjs) with the
+    # development server entrypoint (src/server.mjs) that supports the
+    # lab loopback flow with PostgreSQL storage.
+    entrypoint: ["node", "src/server.mjs"]
+    environment:
+      AUTH_RUNTIME: development
+      LAB_ISSUER: http://127.0.0.1:4000
+      LAB_RESOURCE_URL: http://127.0.0.1:3001/mcp
+      LAB_COMMONCAL_URL: http://127.0.0.1:3000
+      LAB_BRIDGE_KEY: slice1-loopback-bridge-key
+      AUTH_SIGNING_KID: slice1-test-rs256
+      AUTH_COOKIE_KEYS: "slice1-cookie-key-a-not-production,slice1-cookie-key-b-not-production"
+      DATABASE_URL: postgres://auth_test:disposable-auth-check-password@postgres:5432/auth_test
+      AUTH_PUBLIC_BIND: 0.0.0.0
+      AUTH_PRIVATE_BIND: 0.0.0.0
+      AUTH_PUBLIC_PORT: 4000
+      AUTH_PRIVATE_PORT: 4001
+      LAB_LOOPBACK_REDIRECT: http://127.0.0.1/mcp/oauth/callback
+    ports:
+      # Public OIDC endpoint — accessible from host and containers.
+      - "127.0.0.1:4000:4000"
+      # MCP shares this network namespace so the public loopback issuer
+      # resolves identically during discovery and JWT validation.
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # Mount the test JWKS fixture (production Dockerfile omits this).
+      - ./slice1-lab/auth-server/test-jwks.json:/app/test-jwks.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mcp-internal
+
+  # -----------------------------------------------------------------------
+  # MCP server — built from Dockerfile.mcp, development config.
+  # -----------------------------------------------------------------------
+  mcp:
+    network_mode: "service:auth"
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    environment:
+      APP_ENV: development
+      BIND_ADDRESS: 0.0.0.0:3001
+      MCP_DATABASE_PATH: /app/data/mcp-server.db
+      MCP_PUBLIC_RESOURCE_URL: http://127.0.0.1:3001/mcp
+      MCP_OAUTH_ISSUER: http://127.0.0.1:4000
+      MCP_INTERNAL_API_BASE: http://app:3000
+      MCP_INTERNAL_API_KEY: mcp-internal-dev-key
+      MCP_SESSION_SECRET: mcp-session-dev-secret-change-in-production
+    volumes:
+      - mcp-data:/app/data
+    depends_on:
+      - auth
+
+networks:
+  mcp-internal:
+    driver: bridge
+
+volumes:
+  sqlite-data:
+  mcp-postgres-data:
+  mcp-data:

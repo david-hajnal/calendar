@@ -1,13 +1,12 @@
-// Request/session-safe validated identity context.
+// Validated identity for one authenticated HTTP request.
 //
-// The validated identity is stored in a `tokio` task-local so that each
-// in-flight request carries its own identity. This is concurrency-safe: two
-// concurrent clients are processed in distinct tasks, so neither can observe
-// the other's identity. This deliberately replaces the lab's global
-// `CURRENT_CLAIMS` slot, which is only safe for sequential traffic.
+// The auth middleware inserts Identity into HTTP request extensions. rmcp
+// passes the current request's Parts through RequestContext, preserving identity
+// across spawned SDK tasks without storing credentials in the MCP session.
 //
-// The auth middleware sets the value for the duration of the downstream
-// request; the rmcp tool handlers read it at call time.
+// The task-local accessor is retained for same-task compatibility consumers;
+// task-local values are not inherited by spawned tasks and must not be used by
+// rmcp tool handlers.
 
 use crate::oauth::AuthStrength;
 
@@ -49,8 +48,8 @@ tokio::task_local! {
 /// Read the validated identity for the current request.
 ///
 /// Returns `None` when no identity has been established for this task (i.e. the
-/// request did not pass the auth middleware). Tool handlers treat `None` as an
-/// authorization failure and fail closed.
+/// request did not pass the auth middleware in this task). rmcp handlers use
+/// HTTP request extensions instead.
 pub fn current() -> Option<Identity> {
     IDENTITY.try_with(|v| v.clone()).ok().flatten()
 }

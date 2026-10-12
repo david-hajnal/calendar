@@ -130,6 +130,39 @@
           }
         }
       }
+    },
+    "authBridge": {
+      "type": "object",
+      "description": "Authorization bridge configuration for private bridge calls.",
+      "required": [
+        "enabled",
+        "url",
+        "timeoutSecs",
+        "secretName",
+        "secretKey"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSecs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "secretName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }

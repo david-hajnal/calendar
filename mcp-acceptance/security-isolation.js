@@ -80,7 +80,7 @@ const DEFAULTS = {
 };
 
 // Maps each security/isolation case to the production-fix phase
-// (docs/MCP-PRODUCTION-FIX-PLAN.md) that will make it green.
+// (historical production investigation) that will make it green.
 const PHASE_MAP = {
   S1: "Phase 3 — Align discovery and access-token validation (exact iss)",
   S2: "Phase 3 — Align discovery and access-token validation (exact aud)",

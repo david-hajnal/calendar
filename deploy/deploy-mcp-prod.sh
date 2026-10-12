@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# Deploy commoncal-mcp to production with secrets from environment variables.
+# DEPRECATED: Deploy commoncal-mcp to production with secrets from environment variables.
+#
+# This script is obsolete. It assigns VALUES_FILE but never passes it to Helm,
+# overrides domain without synchronizing all default ingress/environment hosts,
+# and has no Flux ownership guard.
+#
+# Use deploy/deploy-prod.sh instead (Flux mode is the canonical path).
+# For MCP-only emergency deployment, use deploy-prod.sh --dry-run first to
+# validate, then deploy all three services together.
 #
 # Required env vars (loaded from deploy/.env when present):
 #   MCP_INTERNAL_API_BASE  - Internal API base URL (origin, no /api suffix)
@@ -13,6 +21,10 @@
 #   DRY_RUN                     - set to "1" for --dry-run
 
 set -euo pipefail
+
+echo "WARNING: deploy-mcp-prod.sh is DEPRECATED. Use deploy/deploy-prod.sh instead." >&2
+echo "This script has known issues: VALUES_FILE is assigned but never passed to Helm," >&2
+echo "domain override is incomplete, and there is no Flux ownership guard." >&2
 
 # Load .env file if it exists
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

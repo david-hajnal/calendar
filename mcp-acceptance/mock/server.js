@@ -253,7 +253,7 @@ const issuerServer = http.createServer((req, res) => {
       sendJson(res, 200, authorizationServerMetadata());
     } else {
       // Current production: the issuer host is handled by core's "/" ingress
-      // and falls through to the SPA (docs/MCP-PRODUCTION-FIX-PLAN.md).
+      // and falls through to the SPA (historical production investigation).
       sendHtml(res, 200, SPA_HTML);
     }
     return;

@@ -77,6 +77,12 @@ spec:
         passwordKey: SMTP_PASSWORD
       egressCIDRs:
         - 0.0.0.0/0
+    authBridge:
+      enabled: true
+      url: http://commoncal-auth-internal.commoncal.svc:80
+      timeoutSecs: 5
+      secretName: commoncal-auth-secrets
+      secretKey: AUTH_BRIDGE_KEY
     networkPolicy:
       enabled: true
       ingress:
@@ -91,3 +97,5 @@ spec:
       limits:
         cpu: 1000m
         memory: 512Mi
+  dependsOn:
+    - name: commoncal-auth

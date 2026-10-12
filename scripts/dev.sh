@@ -25,7 +25,7 @@ die() { err "$1"; exit 1; }
 check_prereqs() {
   command -v docker >/dev/null 2>&1 || die "docker not found"
   docker compose version >/dev/null 2>&1 || die "docker compose not found"
-  if [[ ! -f .env.local ]]; then
+  if [[ "${1:-core}" != "mcp" && ! -f .env.local ]]; then
     die ".env.local not found — copy .env.example to .env.local first"
   fi
 }
@@ -197,6 +197,97 @@ cmd_clean() {
   log "Cleaned"
 }
 
+# ---------------------------------------------------------------------------
+# MCP development stack
+# ---------------------------------------------------------------------------
+
+MCP_COMPOSE_FILES="-f docker-compose.mcp.yml"
+MCP_COMPOSE="docker compose ${MCP_COMPOSE_FILES}"
+
+cmd_mcp_start() {
+  check_prereqs mcp
+
+  log "Building MCP stack images..."
+  docker compose ${MCP_COMPOSE_FILES} build app auth mcp || die "Build failed"
+
+  log "Starting MCP stack (Core + OAuth + MCP server + PostgreSQL)..."
+  docker compose ${MCP_COMPOSE_FILES} up -d || die "Failed to start"
+
+  local endpoint service ready attempt
+  for service in core auth mcp; do
+    case "$service" in
+      core) endpoint="http://127.0.0.1:3000/health/ready" ;;
+      auth) endpoint="http://127.0.0.1:4000/ready" ;;
+      mcp) endpoint="http://127.0.0.1:3001/health/ready" ;;
+    esac
+    info "Waiting for $service readiness..."
+    ready=0
+    for ((attempt=0; attempt<30; attempt++)); do
+      if curl --max-time 2 -sf "$endpoint" >/dev/null 2>&1; then
+        ready=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "$ready" != 1 ]]; then
+      docker compose ${MCP_COMPOSE_FILES} logs --tail 50
+      die "$service did not become ready — inspect with: $0 mcp-logs"
+    fi
+    log "$service is ready!"
+  done
+
+  # Validate OAuth discovery + JWKS
+  info "Validating OAuth discovery..."
+  if curl --max-time 5 -sf http://127.0.0.1:4000/.well-known/openid-configuration >/dev/null 2>&1; then
+    log "OAuth discovery OK"
+  else
+    warn "OAuth discovery not reachable — check logs with: $0 mcp-logs"
+  fi
+
+  info "Validating MCP metadata..."
+  if curl --max-time 5 -sf http://127.0.0.1:3001/.well-known/oauth-protected-resource >/dev/null 2>&1; then
+    log "MCP metadata OK"
+  else
+    warn "MCP metadata not reachable — check logs with: $0 mcp-logs"
+  fi
+
+  # Verify unauthenticated MCP returns 401
+  local http_code
+  http_code=$(curl --max-time 5 -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3001/mcp 2>/dev/null || echo "000")
+  if [[ "$http_code" == "401" ]]; then
+    log "MCP auth challenge OK (401 on unauthenticated /mcp)"
+  else
+    warn "MCP /mcp returned HTTP $http_code (expected 401)"
+  fi
+
+  info "OAuth:    http://127.0.0.1:4000"
+  info "MCP:      http://127.0.0.1:3001"
+  info "Postgres: 127.0.0.1:55433"
+  info "Inspect emails: cat $(docker compose ${MCP_COMPOSE_FILES} exec -T app sh -c 'echo $E2E_EMAIL_OUTBOX' 2>/dev/null || echo 'mcp-server/data/emails.jsonl')"
+}
+
+cmd_mcp_status() {
+  log "MCP stack containers:"
+  docker compose ${MCP_COMPOSE_FILES} ps
+  echo ""
+  info "MCP stack volumes:"
+  docker volume ls 2>/dev/null | grep "happening_mcp" || info "  (none)"
+}
+
+cmd_mcp_logs() {
+  local follow=""
+  if [[ "${1:-}" == "-f" ]]; then
+    follow="-f"
+  fi
+  docker compose ${MCP_COMPOSE_FILES} logs ${follow} --tail 100
+}
+
+cmd_mcp_stop() {
+  log "Stopping MCP stack..."
+  docker compose ${MCP_COMPOSE_FILES} down || die "Failed to stop"
+  log "Stopped (volumes retained)"
+}
+
 # Production auth checks use a disposable SQLite directory, without a database server.
 cmd_auth_check() (
   cd slice1-lab/auth-server
@@ -262,16 +353,45 @@ ${YELLOW}Commands:${NC}
   auth-restore-check Verify private restored OAuth state with Docker networking disabled
   auth-import-check Verify optional legacy PostgreSQL-to-SQLite import
   auth-check Run production auth proofs with disposable SQLite storage
+  mcp-start Start core + OAuth + MCP dev stack (build + up, wait for health)
+  mcp-update-core Rebuild core and apply its local OAuth bridge configuration
+  mcp-update-network Apply OAuth/MCP network configuration without rebuilding
+  mcp-update-server Rebuild and replace the MCP server, retaining its data
+  mcp-restart-core Restart core to clear development in-memory state
+  dev-user  Create/reset dev@example.com (DEV_USER_PASSWORD overrides default)
+  mcp-status Show MCP stack container + volume status
+  mcp-logs   Show MCP stack logs (add -f to follow)
+  mcp-stop   Stop MCP stack (keeps volumes)
   clean     Stop, remove volumes, prune build cache (interactive)
 
 ${YELLOW}Ports:${NC}
   3000 — backend API + served frontend
+  3001 — MCP server
+  4000 — OAuth authorization server
   5173 — Vite dev server (dev mode)
 
 EOF
 }
 
+cmd_dev_user() {
+  check_prereqs
+  python3 - <<'PY' | docker compose ${COMPOSE_FILES} exec -T app sh -c 'test "$APP_ENV" = development || exit 1; exec sqlite3 "$DATABASE_PATH"'
+import bcrypt
+import os
+password = os.environ.get('DEV_USER_PASSWORD', 'LocalDev2026!')
+hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+print(".timeout 5000")
+print("INSERT INTO users (normalized_email, display_name, status, created_at, password_hash) VALUES ('dev@example.com', 'Dev User', CASE WHEN instr((SELECT sql FROM sqlite_master WHERE name='users'), '''registered''') > 0 THEN 'registered' ELSE 'active' END, unixepoch(), '" + hashed + "') ON CONFLICT(normalized_email) DO UPDATE SET password_hash=excluded.password_hash, status=excluded.status;")
+PY
+  log "Local password account ready: dev@example.com"
+}
+
 case "${1:-}" in
+  mcp-update-server) docker compose ${MCP_COMPOSE_FILES} up -d --build --no-deps mcp ;;
+  mcp-update-network) docker compose ${MCP_COMPOSE_FILES} up -d --no-deps auth mcp ;;
+  mcp-update-core) docker compose ${MCP_COMPOSE_FILES} up -d --build --no-deps app ;;
+  mcp-restart-core) docker compose ${MCP_COMPOSE_FILES} restart app ;;
+  dev-user) cmd_dev_user ;;
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   rebuild)  cmd_rebuild ;;
@@ -290,5 +410,9 @@ case "${1:-}" in
     export AUTH_RESTORE_UID="$(id -u)" AUTH_RESTORE_GID="$(id -g)"
     ensure_auth_docker
     docker compose -p happening-auth-restore-proof -f docker-compose.auth-restore-proof.yml run --build --rm proof ;;
-  *)        usage ;;
+  mcp-start)    cmd_mcp_start ;;
+  mcp-status)   cmd_mcp_status ;;
+  mcp-logs)     cmd_mcp_logs "${2:-}" ;;
+  mcp-stop)     cmd_mcp_stop ;;
+  *)            usage ;;
 esac

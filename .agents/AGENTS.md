@@ -16,7 +16,7 @@ Use `scripts/dev.sh` for all local Docker operations. Never run raw `docker comp
 
 ### Dev login
 
-In `APP_ENV=development`, use `/dev/login` page to sign in directly (no email link). Enter any email, click "Sign in".
+In `APP_ENV=development`, use `/dev-login` page to sign in directly (no email link). Enter any email, click "Sign in".
 
 ### Ports
 

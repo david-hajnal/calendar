@@ -105,3 +105,57 @@ lab-verify:
 	done
 	cargo build --manifest-path slice1-lab/Cargo.toml --bin mcp-echo --bin lab-prove
 	slice1-lab/target/debug/lab-prove
+
+# Production diagnosis commands.
+# prod-render: Render effective production workloads from the committed
+# Kustomize overlay, which is the single source of truth for what Flux applies.
+# Requires: kustomize (or kubectl with kustomize plugin).
+# Offline: renders from committed files without kubeconfig or cluster access.
+# Any rendering failure is fatal — this surfaces defects that alternate
+# --values files previously masked (mail, image, issuer settings, etc.).
+prod-render:
+	@echo "==> Rendering production overlay (effective HelmRelease manifests)..."
+	@bash scripts/render-prod-offline.sh || \
+		{ echo "ERROR: helm template failed — production config is invalid"; exit 1; }
+	@echo "==> Done. Review the manifests above; they reflect what Flux will apply."
+
+# prod-check: Validate production config against invariants.
+# Offline: validates from committed files without kubeconfig or cluster access.
+prod-check:
+	@echo "==> Running production validation..."
+	@bash scripts/validate-deploy.sh
+	@echo "==> Done."
+
+# prod-local-up: Start the local integration stack.
+# Requires: Docker, docker-compose.
+# Starts (via scripts/dev.sh start):
+#   - app          : backend API + served frontend (port 3000)
+#   - frontend-dev : Vite dev server (port 5173)
+# NOT started (documented for prod-local-test):
+#   - auth server (port 4000)
+#   - MCP server (port 8081)
+#   - mail capture (port 1025)
+#   - ingress proxy
+prod-local-up:
+	@echo "==> Starting local integration stack..."
+	@./scripts/dev.sh start
+
+# prod-local-test: Run integration tests against the local stack.
+# Requires: prod-local-up running (starts app + frontend-dev).
+prod-local-test:
+	@echo "==> Running integration tests..."
+	@scripts/run-integration-tests.sh || \
+		{ echo "ERROR: integration tests failed"; exit 1; }
+
+# prod-doctor: Diagnose configuration state (offline by default).
+# Lists unresolved prerequisites, secret names/keys, and required inputs.
+# Does not request secret contents. For live cluster inspection, use
+# 'make prod-doctor-live' or set PROD_DOCTOR_LIVE=1.
+prod-doctor:
+	@scripts/prod-doctor.sh
+
+# prod-doctor-live: Diagnose configuration state with live cluster inspection.
+# Requires: kubectl configured with read-only access to the production cluster.
+# Performs read-only inspection of Flux HelmRelease resources.
+prod-doctor-live:
+	@scripts/prod-doctor.sh --live

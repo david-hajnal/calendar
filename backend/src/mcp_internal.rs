@@ -104,6 +104,7 @@ pub struct CreateEventPayload {
     pub start_utc: String,
     pub end_utc: String,
     pub status: Option<String>,
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -445,120 +446,171 @@ pub async fn get_calendar_role(
     }
 }
 
+/// Parse a UTC timestamp string (Unix epoch seconds or RFC 3339) to an i64 epoch.
+fn parse_utc_timestamp(s: &str) -> Result<i64, String> {
+    if let Ok(ts) = s.parse::<i64>() {
+        return Ok(ts);
+    }
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.timestamp())
+        .map_err(|_| format!("cannot parse timestamp: {}", s))
+}
+
+/// Stored event row shape (matches the SELECT column order used below).
+type EventRow = (
+    i64,            // id
+    i64,            // calendar_id
+    Option<String>, // title
+    Option<String>, // description
+    Option<String>, // location
+    String,         // status
+    String,         // event_kind
+    Option<i64>,    // timed_start_utc
+    Option<i64>,    // timed_end_utc
+    Option<i64>,    // version
+);
+
+/// Convert a stored event row into the wire response, formatting stored
+/// epoch timestamps as RFC 3339 UTC strings.
+fn event_row_to_response(row: EventRow) -> EventInfoResponse {
+    let (
+        id,
+        calendar_id,
+        title,
+        description,
+        location,
+        status,
+        event_kind,
+        timed_start,
+        timed_end,
+        version,
+    ) = row;
+    let format_ts = |t: Option<i64>| -> Option<String> {
+        t.and_then(|ts| {
+            chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        })
+    };
+    EventInfoResponse {
+        id,
+        calendar_id,
+        title,
+        description,
+        location,
+        status,
+        event_kind,
+        start_utc: format_ts(timed_start),
+        end_utc: format_ts(timed_end),
+        version,
+    }
+}
+
+/// Fetch a single event row by calendar + event id.
+async fn fetch_event_row(
+    pool: &SqlitePool,
+    calendar_id: i64,
+    event_id: i64,
+) -> Result<Option<EventRow>, (StatusCode, String)> {
+    sqlx::query_as::<_, EventRow>(
+        "SELECT id, calendar_id, title, description, location, status, event_kind, timed_start_utc, timed_end_utc, version FROM events WHERE calendar_id = ? AND id = ?",
+    )
+    .bind(calendar_id)
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
 /// Get event by ID.
 pub async fn get_event(
     State(pool): State<SqlitePool>,
     Path((calendar_id, event_id)): Path<(i64, i64)>,
 ) -> Result<Json<EventInfoResponse>, (StatusCode, String)> {
-    let event = sqlx::query_as::<_, (i64, i64, Option<String>, Option<String>, Option<String>, String, String, Option<String>, Option<String>, Option<i64>)>(
-        "SELECT id, calendar_id, title, description, location, status, event_kind, start_utc, end_utc, version FROM events WHERE calendar_id = ? AND id = ?"
-    )
-    .bind(calendar_id)
-    .bind(event_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match event {
-        Some((
-            id,
-            cal_id,
-            title,
-            description,
-            location,
-            status,
-            event_kind,
-            start_utc,
-            end_utc,
-            version,
-        )) => Ok(Json(EventInfoResponse {
-            id,
-            calendar_id: cal_id,
-            title,
-            description,
-            location,
-            status,
-            event_kind,
-            start_utc: start_utc.map(|t| t.to_string()),
-            end_utc: end_utc.map(|t| t.to_string()),
-            version,
-        })),
+    match fetch_event_row(&pool, calendar_id, event_id).await? {
+        Some(row) => Ok(Json(event_row_to_response(row))),
         None => Err((StatusCode::NOT_FOUND, "event not found".to_string())),
     }
 }
 
 /// Search events by time range.
+///
+/// Overlap semantics: an event matches when it starts before `to` and ends
+/// after `from`. `from`/`to` accept Unix epoch seconds or RFC 3339 strings.
 pub async fn search_events(
     State(pool): State<SqlitePool>,
     Path(calendar_id): Path<i64>,
     Query(params): Query<SearchEventsQuery>,
 ) -> Result<Json<SearchEventsResponse>, (StatusCode, String)> {
-    let events = sqlx::query_as::<_, (i64, i64, Option<String>, Option<String>, Option<String>, String, String, Option<String>, Option<String>, Option<i64>)>(
-        "SELECT id, calendar_id, title, description, location, status, event_kind, start_utc, end_utc, version FROM events WHERE calendar_id = ? AND start_utc >= ? AND end_utc <= ? LIMIT 100"
+    let from_ts = parse_utc_timestamp(&params.from).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let to_ts = parse_utc_timestamp(&params.to).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if to_ts <= from_ts {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "'to' must be after 'from'".to_string(),
+        ));
+    }
+
+    let rows = sqlx::query_as::<_, EventRow>(
+        "SELECT id, calendar_id, title, description, location, status, event_kind, timed_start_utc, timed_end_utc, version FROM events WHERE calendar_id = ? AND event_kind = 'timed' AND timed_start_utc < ? AND timed_end_utc > ? ORDER BY timed_start_utc LIMIT 100"
     )
     .bind(calendar_id)
-    .bind(&params.from)
-    .bind(&params.to)
+    .bind(to_ts)
+    .bind(from_ts)
     .fetch_all(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let response: Vec<EventInfoResponse> = events
-        .into_iter()
-        .map(
-            |(
-                id,
-                cal_id,
-                title,
-                description,
-                location,
-                status,
-                event_kind,
-                start_utc,
-                end_utc,
-                version,
-            )| {
-                EventInfoResponse {
-                    id,
-                    calendar_id: cal_id,
-                    title,
-                    description,
-                    location,
-                    status,
-                    event_kind,
-                    start_utc: start_utc.map(|t| t.to_string()),
-                    end_utc: end_utc.map(|t| t.to_string()),
-                    version,
-                }
-            },
-        )
-        .collect();
-
     Ok(Json(SearchEventsResponse {
-        events: response,
-        next_page_token: params.page_token,
+        events: rows.into_iter().map(event_row_to_response).collect(),
+        next_page_token: None,
     }))
 }
 
 /// Create event.
+///
+/// Validates timestamps (epoch or RFC 3339), requires `end_utc > start_utc`,
+/// and validates the timezone against IANA names before writing anything.
+/// The response is built from the stored row, not the request payload.
 pub async fn create_event(
     State(pool): State<SqlitePool>,
     Path(calendar_id): Path<i64>,
     Json(payload): Json<CreateEventPayload>,
 ) -> Result<Json<CreateEventResponse>, (StatusCode, String)> {
+    let timed_start =
+        parse_utc_timestamp(&payload.start_utc).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let timed_end =
+        parse_utc_timestamp(&payload.end_utc).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if timed_end <= timed_start {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "end_utc must be after start_utc".to_string(),
+        ));
+    }
+
+    let event_timezone = payload.timezone.as_deref().unwrap_or("UTC");
+    let _tz: chrono_tz::Tz = std::str::FromStr::from_str(event_timezone).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unknown timezone: {}", event_timezone),
+        )
+    })?;
+
     let now = chrono::Utc::now().timestamp();
 
     let result = sqlx::query(
-        "INSERT INTO events (calendar_id, title, description, location, status, event_kind, start_utc, end_utc, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
+        "INSERT INTO events (calendar_id, title, description, location, status, event_kind,
+         timed_start_utc, timed_end_utc, event_timezone, all_day_start_date, all_day_end_date,
+         created_by_user_id, last_edited_by_user_id, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'timed', ?, ?, ?, NULL, NULL, 1, 1, 1, ?, ?)",
     )
     .bind(calendar_id)
     .bind(&payload.title)
     .bind(&payload.description)
     .bind(&payload.location)
     .bind(payload.status.as_deref().unwrap_or("confirmed"))
-    .bind("default")
-    .bind(&payload.start_utc)
-    .bind(&payload.end_utc)
+    .bind(timed_start)
+    .bind(timed_end)
+    .bind(event_timezone)
     .bind(now)
     .bind(now)
     .execute(&pool)
@@ -567,56 +619,90 @@ pub async fn create_event(
 
     let event_id = result.last_insert_rowid();
 
+    // Respond with the stored row so the client sees exactly what was written.
+    let row = fetch_event_row(&pool, calendar_id, event_id)
+        .await?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "event vanished after insert".to_string(),
+            )
+        })?;
+    let stored = event_row_to_response(row);
+
     Ok(Json(CreateEventResponse {
-        id: event_id,
-        calendar_id,
-        title: Some(payload.title),
-        description: payload.description,
-        location: payload.location,
-        status: payload.status.unwrap_or_else(|| "confirmed".to_string()),
-        event_kind: "default".to_string(),
-        start_utc: Some(payload.start_utc),
-        end_utc: Some(payload.end_utc),
-        version: 1,
+        id: stored.id,
+        calendar_id: stored.calendar_id,
+        title: stored.title,
+        description: stored.description,
+        location: stored.location,
+        status: stored.status,
+        event_kind: stored.event_kind,
+        start_utc: stored.start_utc,
+        end_utc: stored.end_utc,
+        version: stored.version.unwrap_or(1),
     }))
 }
 
 /// Update event.
+///
+/// Fetches the current row once for the version check and the stored
+/// timestamps, validates the effective `end > start` (provided-or-stored
+/// values), and responds with the stored row after the UPDATE.
 pub async fn update_event(
     State(pool): State<SqlitePool>,
     Path((calendar_id, event_id)): Path<(i64, i64)>,
     Json(payload): Json<UpdateEventPayload>,
 ) -> Result<Json<EventInfoResponse>, (StatusCode, String)> {
-    // Check version.
-    let current_version: Option<i64> =
-        sqlx::query_scalar("SELECT version FROM events WHERE id = ? AND calendar_id = ?")
-            .bind(event_id)
-            .bind(calendar_id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    match current_version {
-        Some(v) if v != payload.version => {
-            return Err((StatusCode::CONFLICT, "event version conflict".to_string()));
-        }
-        None => {
-            return Err((StatusCode::NOT_FOUND, "event not found".to_string()));
-        }
-        _ => {}
+    // Fetch the current row: version check + stored timestamps in one query.
+    let current = fetch_event_row(&pool, calendar_id, event_id).await?;
+    let current = match current {
+        Some(row) => row,
+        None => return Err((StatusCode::NOT_FOUND, "event not found".to_string())),
+    };
+    let current_version = current.9.unwrap_or(1);
+    if current_version != payload.version {
+        return Err((StatusCode::CONFLICT, "event version conflict".to_string()));
     }
 
     let now = chrono::Utc::now().timestamp();
     let new_version = payload.version + 1;
 
+    // Parse provided timestamps (if any) to Unix epoch.
+    let timed_start = payload
+        .start_utc
+        .as_ref()
+        .map(|s| parse_utc_timestamp(s))
+        .transpose()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let timed_end = payload
+        .end_utc
+        .as_ref()
+        .map(|s| parse_utc_timestamp(s))
+        .transpose()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    // Validate the effective range: provided values fall back to stored ones.
+    let effective_start = timed_start.or(current.7);
+    let effective_end = timed_end.or(current.8);
+    match (effective_start, effective_end) {
+        (Some(start), Some(end)) if end <= start => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "end_utc must be after start_utc".to_string(),
+            ));
+        }
+        _ => {}
+    }
+
     sqlx::query(
-        "UPDATE events SET title = COALESCE(?, title), description = COALESCE(?, description), location = COALESCE(?, location), start_utc = COALESCE(?, start_utc), end_utc = COALESCE(?, end_utc), status = COALESCE(?, status), version = ?, updated_at = ? WHERE id = ? AND calendar_id = ?"
+        "UPDATE events SET title = COALESCE(?, title), description = COALESCE(?, description), location = COALESCE(?, location), timed_start_utc = COALESCE(?, timed_start_utc), timed_end_utc = COALESCE(?, timed_end_utc), status = COALESCE(?, status), version = ?, updated_at = ? WHERE id = ? AND calendar_id = ?"
     )
     .bind(&payload.title)
     .bind(&payload.description)
     .bind(&payload.location)
-    .bind(&payload.start_utc)
-    .bind(&payload.end_utc)
+    .bind(timed_start)
+    .bind(timed_end)
     .bind(&payload.status)
     .bind(new_version)
     .bind(now)
@@ -626,18 +712,16 @@ pub async fn update_event(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(EventInfoResponse {
-        id: event_id,
-        calendar_id,
-        title: payload.title,
-        description: payload.description,
-        location: payload.location,
-        status: payload.status.unwrap_or_else(|| "confirmed".to_string()),
-        event_kind: "default".to_string(),
-        start_utc: payload.start_utc,
-        end_utc: payload.end_utc,
-        version: Some(new_version),
-    }))
+    // Respond with the stored row so the client sees exactly what was written.
+    let row = fetch_event_row(&pool, calendar_id, event_id)
+        .await?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "event vanished after update".to_string(),
+            )
+        })?;
+    Ok(Json(event_row_to_response(row)))
 }
 
 /// Create delete intent.
@@ -1151,5 +1235,441 @@ mod tests {
         );
         let role = get_calendar_role(State(pool), Path((calendars[2], user))).await;
         assert_eq!(role.err().map(|e| e.0), Some(StatusCode::NOT_FOUND));
+    }
+
+    // ------------------------------------------------------------------
+    // Event operation regression tests (create / search / get / update).
+    // ------------------------------------------------------------------
+
+    /// Create a calendar owned by the seeded admin user (id 1).
+    async fn test_calendar(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO calendars (owner_user_id, name, color, default_timezone, default_event_visibility, created_at, updated_at) VALUES (1, 'test-cal', '#fff', 'UTC', 'default', 1, 1) RETURNING id",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn count_events(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM events")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn parse_utc_timestamp_accepts_epoch_and_rfc3339() {
+        assert_eq!(parse_utc_timestamp("1760248800").unwrap(), 1760248800);
+        assert_eq!(
+            parse_utc_timestamp("2025-10-12T06:00:00Z").unwrap(),
+            1760248800
+        );
+        assert_eq!(
+            parse_utc_timestamp("2025-10-12T08:00:00+02:00").unwrap(),
+            1760248800
+        );
+        assert!(parse_utc_timestamp("not-a-time").is_err());
+    }
+
+    #[tokio::test]
+    async fn create_event_rejects_end_before_start_without_writing() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Bad range".to_string(),
+            description: None,
+            location: None,
+            start_utc: "2026-10-12T06:30:00Z".to_string(),
+            end_utc: "2026-10-12T06:00:00Z".to_string(),
+            status: None,
+            timezone: Some("Europe/Budapest".to_string()),
+        };
+        let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_event_rejects_equal_start_and_end_without_writing() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Zero length".to_string(),
+            description: None,
+            location: None,
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:00:00Z".to_string(),
+            status: None,
+            timezone: None,
+        };
+        let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_event_rejects_invalid_timestamp_without_writing() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Bad ts".to_string(),
+            description: None,
+            location: None,
+            start_utc: "not-a-time".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: None,
+        };
+        let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_event_rejects_unknown_timezone_without_writing() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Bad tz".to_string(),
+            description: None,
+            location: None,
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: Some("Mars/Olympus".to_string()),
+        };
+        let result = create_event(State(pool.clone()), Path(cal), Json(payload)).await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            count_events(&pool).await,
+            0,
+            "rejected create must not write"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_event_stores_timezone_and_returns_stored_row() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "MCP test — morning walk".to_string(),
+            description: Some("Created for local MCP validation".to_string()),
+            location: None,
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: Some("Europe/Budapest".to_string()),
+        };
+        let response = create_event(State(pool.clone()), Path(cal), Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        // The response must be RFC 3339 UTC, not the raw input string.
+        assert_eq!(response.start_utc.as_deref(), Some("2026-10-12T06:00:00Z"));
+        assert_eq!(response.end_utc.as_deref(), Some("2026-10-12T06:30:00Z"));
+        assert_eq!(response.event_kind, "timed");
+        assert_eq!(response.version, 1);
+
+        // The timezone must be persisted in the DB.
+        let stored_tz: String =
+            sqlx::query_scalar("SELECT event_timezone FROM events WHERE id = ?")
+                .bind(response.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored_tz, "Europe/Budapest");
+    }
+
+    #[tokio::test]
+    async fn search_events_finds_only_overlapping_events() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+
+        // Event A: 06:00–06:30 UTC. Event B: 10:00–11:00 UTC.
+        for (title, start, end) in [
+            ("A", "2026-10-12T06:00:00Z", "2026-10-12T06:30:00Z"),
+            ("B", "2026-10-12T10:00:00Z", "2026-10-12T11:00:00Z"),
+        ] {
+            let payload = CreateEventPayload {
+                title: title.to_string(),
+                description: None,
+                location: None,
+                start_utc: start.to_string(),
+                end_utc: end.to_string(),
+                status: None,
+                timezone: None,
+            };
+            let _ = create_event(State(pool.clone()), Path(cal), Json(payload))
+                .await
+                .unwrap();
+        }
+
+        // Range 06:15–06:45 overlaps only event A.
+        let response = search_events(
+            State(pool.clone()),
+            Path(cal),
+            Query(SearchEventsQuery {
+                from: "2026-10-12T06:15:00Z".to_string(),
+                to: "2026-10-12T06:45:00Z".to_string(),
+                page_token: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events[0].title.as_deref(), Some("A"));
+        assert_eq!(response.next_page_token, None);
+
+        // Epoch-second inputs must work too (integer binding).
+        let response = search_events(
+            State(pool.clone()),
+            Path(cal),
+            Query(SearchEventsQuery {
+                from: "1791784800".to_string(), // 2026-10-12T06:00:00Z
+                to: "1791788400".to_string(),   // 2026-10-12T07:00:00Z
+                page_token: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events[0].title.as_deref(), Some("A"));
+    }
+
+    #[tokio::test]
+    async fn search_events_rejects_invalid_range() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+
+        let result = search_events(
+            State(pool.clone()),
+            Path(cal),
+            Query(SearchEventsQuery {
+                from: "2026-10-12T07:00:00Z".to_string(),
+                to: "2026-10-12T06:00:00Z".to_string(),
+                page_token: None,
+            }),
+        )
+        .await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+
+        let result = search_events(
+            State(pool.clone()),
+            Path(cal),
+            Query(SearchEventsQuery {
+                from: "garbage".to_string(),
+                to: "2026-10-12T06:00:00Z".to_string(),
+                page_token: None,
+            }),
+        )
+        .await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+    }
+
+    #[tokio::test]
+    async fn search_events_returns_envelope_shape() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let response = search_events(
+            State(pool.clone()),
+            Path(cal),
+            Query(SearchEventsQuery {
+                from: "2026-10-12T00:00:00Z".to_string(),
+                to: "2026-10-13T00:00:00Z".to_string(),
+                page_token: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        let json = serde_json::to_value(&response).unwrap();
+        assert!(json.get("events").is_some(), "envelope must have events");
+        assert!(
+            json.get("next_page_token").is_some(),
+            "envelope must have next_page_token"
+        );
+        assert_eq!(json["events"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_event_returns_rfc3339_timestamps() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Get me".to_string(),
+            description: Some("desc".to_string()),
+            location: Some("loc".to_string()),
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: Some("Europe/Budapest".to_string()),
+        };
+        let created = create_event(State(pool.clone()), Path(cal), Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        let fetched = get_event(State(pool.clone()), Path((cal, created.id)))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.title.as_deref(), Some("Get me"));
+        assert_eq!(fetched.description.as_deref(), Some("desc"));
+        assert_eq!(fetched.location.as_deref(), Some("loc"));
+        assert_eq!(fetched.status, "confirmed");
+        assert_eq!(fetched.event_kind, "timed");
+        assert_eq!(fetched.start_utc.as_deref(), Some("2026-10-12T06:00:00Z"));
+        assert_eq!(fetched.end_utc.as_deref(), Some("2026-10-12T06:30:00Z"));
+        assert_eq!(fetched.version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn update_event_returns_stored_values_not_payload() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Original".to_string(),
+            description: Some("keep me".to_string()),
+            location: Some("keep me too".to_string()),
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: Some("Europe/Budapest".to_string()),
+        };
+        let created = create_event(State(pool.clone()), Path(cal), Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        // Update only the title; the response must still carry the stored
+        // description, location, times, and the real event_kind.
+        let updated = update_event(
+            State(pool.clone()),
+            Path((cal, created.id)),
+            Json(UpdateEventPayload {
+                title: Some("Renamed".to_string()),
+                description: None,
+                location: None,
+                start_utc: None,
+                end_utc: None,
+                status: None,
+                version: 1,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+
+        assert_eq!(updated.title.as_deref(), Some("Renamed"));
+        assert_eq!(updated.description.as_deref(), Some("keep me"));
+        assert_eq!(updated.location.as_deref(), Some("keep me too"));
+        assert_eq!(updated.event_kind, "timed", "must not hardcode event_kind");
+        assert_eq!(updated.start_utc.as_deref(), Some("2026-10-12T06:00:00Z"));
+        assert_eq!(updated.end_utc.as_deref(), Some("2026-10-12T06:30:00Z"));
+        assert_eq!(updated.version, Some(2));
+
+        // Read-back must agree with the update response.
+        let fetched = get_event(State(pool.clone()), Path((cal, created.id)))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(fetched.title.as_deref(), Some("Renamed"));
+        assert_eq!(fetched.version, Some(2));
+    }
+
+    #[tokio::test]
+    async fn update_event_rejects_end_before_start() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Move me".to_string(),
+            description: None,
+            location: None,
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: None,
+        };
+        let created = create_event(State(pool.clone()), Path(cal), Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        // New start after the stored end → effective end <= start.
+        let result = update_event(
+            State(pool.clone()),
+            Path((cal, created.id)),
+            Json(UpdateEventPayload {
+                title: None,
+                description: None,
+                location: None,
+                start_utc: Some("2026-10-12T07:00:00Z".to_string()),
+                end_utc: None,
+                status: None,
+                version: 1,
+            }),
+        )
+        .await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::BAD_REQUEST));
+
+        // Stored row must be unchanged.
+        let fetched = get_event(State(pool.clone()), Path((cal, created.id)))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(fetched.version, Some(1));
+        assert_eq!(fetched.start_utc.as_deref(), Some("2026-10-12T06:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn update_event_version_conflict_rejected() {
+        let pool = test_pool().await;
+        let cal = test_calendar(&pool).await;
+        let payload = CreateEventPayload {
+            title: "Conflict".to_string(),
+            description: None,
+            location: None,
+            start_utc: "2026-10-12T06:00:00Z".to_string(),
+            end_utc: "2026-10-12T06:30:00Z".to_string(),
+            status: None,
+            timezone: None,
+        };
+        let created = create_event(State(pool.clone()), Path(cal), Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        let result = update_event(
+            State(pool.clone()),
+            Path((cal, created.id)),
+            Json(UpdateEventPayload {
+                title: Some("Stale write".to_string()),
+                description: None,
+                location: None,
+                start_utc: None,
+                end_utc: None,
+                status: None,
+                version: 99,
+            }),
+        )
+        .await;
+        assert_eq!(result.err().map(|e| e.0), Some(StatusCode::CONFLICT));
     }
 }

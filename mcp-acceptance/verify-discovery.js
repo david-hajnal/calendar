@@ -12,7 +12,7 @@
  *      A1 (401 challenge), A2 (public resource_metadata), and A4
  *      (authorization-server metadata), while A3 (protected-resource metadata
  *      naming the configured issuer) passes — matching the verified current
- *      production state in docs/MCP-PRODUCTION-FIX-PLAN.md.
+ *      production state in historical production investigation.
  *   2. PASS path — against a server that issues the public 401 challenge and
  *      serves valid protected-resource and authorization-server metadata, the
  *      harness must exit 0.

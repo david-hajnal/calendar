@@ -24,7 +24,7 @@
  *
  * Baseline expectation (Phase 0.2): against the current production component,
  * A1, A2, and A4 FAIL and A3 passes. Verified current state (2026-09-17,
- * docs/MCP-PRODUCTION-FIX-PLAN.md):
+ * historical production investigation):
  *   - `initialize` returns HTTP 400 with JSON-RPC -32601 (mcp-server/src/gateway.rs
  *     only recognizes tools/list and tools/call), so no 401 challenge is ever
  *     issued for the initial request;

@@ -53,8 +53,9 @@ existingSecret:
   name: commoncal-mcp-secrets
   apiKeyKeyName: mcp-internal-api-key
   sessionSecretKeyName: mcp-session-secret
-  # Primary OAuth issuer (unchanged — no cutover).
-  oauthIssuerKeyName: mcp-oauth-issuer
+  # OAuth issuer source: use env.MCP_OAUTH_ISSUER (public issuer), not Secret.
+  # The issuer value is https://auth.hajnal.space — matches the auth HelmRelease.
+  oauthIssuerKeyName: ""
   # New issuer to HOLD (accept for validation) without making it primary.
   # The value is the issuer of the commoncal-auth authorization server.
   # Set to empty to disable holding.
@@ -66,4 +67,5 @@ env:
   MCP_DATABASE_PATH: /app/data/mcp-server.db
   MCP_DOMAIN: mcal.hajnal.space
   MCP_PUBLIC_RESOURCE_URL: https://mcal.hajnal.space/mcp
+  MCP_OAUTH_ISSUER: https://auth.hajnal.space
   MCP_RATE_LIMIT_ENABLED: "1"

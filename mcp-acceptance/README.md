@@ -62,7 +62,7 @@ configurable production-component URL:
 
 Baseline expectation (Phase 0.2): against the **current** production component,
 A1, A2, and A4 **fail** and A3 passes. Verified current state (2026-09-17,
-`docs/MCP-PRODUCTION-FIX-PLAN.md`): `initialize` returns HTTP 400 with
+`historical production investigation`): `initialize` returns HTTP 400 with
 `-32601` (no challenge is ever issued for the initial request); the 401
 builders that do exist hard-code the lab loopback URL;
 `https://mcal.hajnal.space/.well-known/oauth-protected-resource` is valid JSON

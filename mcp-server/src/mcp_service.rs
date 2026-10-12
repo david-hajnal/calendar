@@ -2,7 +2,7 @@
 //
 // Implements the MCP `ServerHandler` with all nine CommonCal tools as typed
 // SDK handlers. Each handler:
-//   1. Reads the validated identity from the request's task-local (set by the
+//   1. Reads the validated identity from the HTTP request extensions (set by the
 //      auth middleware). Fails closed when absent.
 //   2. Resolves the authoritative grant from CommonCal core (live lookup).
 //   3. Delegates to the existing domain tool handler (authorization, internal
@@ -18,9 +18,10 @@ use std::sync::Arc;
 use axum::http::Response;
 use http_body_util::BodyExt;
 use rmcp::{
-    ErrorData, ServerHandler,
+    ErrorData, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
+    service::RequestContext,
     tool, tool_handler, tool_router,
 };
 use sqlx::SqlitePool;
@@ -42,7 +43,7 @@ use crate::tools::{
 
 /// The rmcp-backed MCP server. Holds the shared dependencies used by the tool
 /// handlers. The per-request identity is NOT stored here; it is read from the
-/// request's task-local at call time, which keeps concurrent sessions isolated.
+/// HTTP request extensions at call time, which keeps concurrent sessions isolated.
 #[derive(Clone)]
 pub struct CommonCalServer {
     pub internal_client: InternalClient,
@@ -67,14 +68,22 @@ impl CommonCalServer {
 
     /// Read the validated identity for the current request, failing closed when
     /// the auth middleware did not establish one.
-    fn identity(&self) -> Result<identity::Identity, ErrorData> {
-        identity::current().ok_or_else(|| {
-            ErrorData::new(
-                ErrorCode::INTERNAL_ERROR,
-                "unauthenticated: no validated identity for this request".to_string(),
-                None,
-            )
-        })
+    fn identity(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<identity::Identity, ErrorData> {
+        context
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<identity::Identity>())
+            .cloned()
+            .ok_or_else(|| {
+                ErrorData::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    "unauthenticated: no validated identity for this request".to_string(),
+                    None,
+                )
+            })
     }
 
     /// Resolve the authoritative grant for the current identity, failing closed
@@ -235,8 +244,11 @@ impl CommonCalServer {
     #[tool(
         description = "List the calendars available to the authenticated user, filtered by the active MCP grant."
     )]
-    async fn calendar_list(&self) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+    async fn calendar_list(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -259,9 +271,10 @@ impl CommonCalServer {
     )]
     async fn availability_find(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<AvailabilityFindParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -276,9 +289,10 @@ impl CommonCalServer {
     #[tool(description = "Get the details of a specific event by calendar and event ID.")]
     async fn event_get(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventGetParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -295,9 +309,10 @@ impl CommonCalServer {
     )]
     async fn event_search(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventSearchParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -312,9 +327,10 @@ impl CommonCalServer {
     #[tool(description = "Create a new event in the specified calendar.")]
     async fn event_create(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventCreateParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -331,9 +347,10 @@ impl CommonCalServer {
     )]
     async fn event_update(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventUpdateParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -348,9 +365,10 @@ impl CommonCalServer {
     #[tool(description = "Set a reminder on an event.")]
     async fn reminder_set(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<ReminderSetParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -367,9 +385,10 @@ impl CommonCalServer {
     )]
     async fn event_delete_prepare(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventDeletePrepareParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -384,9 +403,10 @@ impl CommonCalServer {
     #[tool(description = "Commit a pending event deletion after the user has confirmed.")]
     async fn event_delete_commit(
         &self,
+        context: RequestContext<RoleServer>,
         params: Parameters<EventDeleteCommitParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let identity = self.identity()?;
+        let identity = self.identity(&context)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {

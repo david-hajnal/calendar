@@ -46,7 +46,7 @@ async fn run(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Gateway initialization failed: {:?}", e))?;
 
     // Build the rmcp-backed MCP service. The per-request identity is published
-    // by the auth middleware into the request's task-local; the tool handlers
+    // by the auth middleware into HTTP request extensions; the tool handlers
     // read it at call time, keeping concurrent sessions isolated.
     let server = CommonCalServer::new(
         gateway.internal_client.clone(),

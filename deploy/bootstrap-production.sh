@@ -61,7 +61,7 @@ FLUX_VERSION="${FLUX_VERSION:-v2.9.4}"
 TLS_SECRET_NAME="${TLS_SECRET_NAME:-commoncal-tls}"
 
 echo "==> Validating required environment variables..."
-for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET MCP_OAUTH_ISSUER AUTH_BACKUP_AGE_RECIPIENT AUTH_BRIDGE_KEY AUTH_COOKIE_KEYS AUTH_SIGNING_KID GITHUB_TOKEN; do
+for var in SESSION_SECRET BACKUP_ENCRYPTION_KEY_HEX MCP_INTERNAL_API_KEY MCP_SESSION_SECRET MCP_OAUTH_ISSUER AUTH_BACKUP_AGE_RECIPIENT AUTH_BRIDGE_KEY AUTH_COOKIE_KEYS AUTH_SIGNING_KID SMTP_USERNAME SMTP_PASSWORD GITHUB_TOKEN; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: $var is required" >&2
     exit 1
@@ -114,6 +114,20 @@ kubectl create secret generic commoncal-mcp-secrets \
 
 source "$(dirname "${BASH_SOURCE[0]}")/auth-tls.sh"
 auth_tls_secret "$NAMESPACE" provision
+
+echo "==> Creating mail secret '$NAMESPACE/commoncal-mail'..."
+# Mail credentials are non-secret host/port but secret username/password.
+# The host, port, and from address are configured in the Helm chart values.
+# Only the SMTP_USERNAME and SMTP_PASSWORD keys are stored in this Secret.
+if [[ -z "${SMTP_USERNAME:-}" || -z "${SMTP_PASSWORD:-}" ]]; then
+  echo "ERROR: SMTP_USERNAME and SMTP_PASSWORD are required for mail Secret" >&2
+  echo "Set them in $ENV_FILE or export them, then re-run." >&2
+  exit 1
+fi
+kubectl create secret generic commoncal-mail \
+  --from-literal=SMTP_USERNAME="$SMTP_USERNAME" \
+  --from-literal=SMTP_PASSWORD="$SMTP_PASSWORD" \
+  -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 echo "==> Creating auth secret '$NAMESPACE/commoncal-auth-secrets'..."
 # The authorization server's secrets. The chart never creates this Secret;

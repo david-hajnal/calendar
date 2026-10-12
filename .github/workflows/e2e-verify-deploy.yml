@@ -15,7 +15,12 @@ on:
       mcp_domain:
         description: 'MCP domain to health check'
         required: false
-        default: 'https://cal.hajnal.space/mcp/health/live'
+        default: 'https://mcal.hajnal.space/mcp/health/live'
+        type: string
+      auth_domain:
+        description: 'Auth domain to health check'
+        required: false
+        default: 'https://auth.hajnal.space/.well-known/oauth-authorization-server'
         type: string
 
 permissions:
@@ -61,4 +66,18 @@ jobs:
             sleep 10
           done
           echo "ERROR: MCP health check failed after 30 attempts"
+          exit 1
+
+      - name: Check auth OAuth metadata
+        run: |
+          for i in $(seq 1 30); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" "${{ inputs.auth_domain }}" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Auth OAuth metadata check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $HTTP_CODE, waiting..."
+            sleep 10
+          done
+          echo "ERROR: Auth OAuth metadata check failed after 30 attempts"
           exit 1

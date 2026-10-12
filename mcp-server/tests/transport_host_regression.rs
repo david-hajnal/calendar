@@ -59,7 +59,7 @@ async fn unexpected_hostname_initialize_is_rejected() {
 
 const RESOURCE: &str = "https://mcal.hajnal.space/mcp";
 
-async fn authenticated_router() -> (Router, String, wiremock::MockServer) {
+async fn authenticated_router() -> (Router, String, String, wiremock::MockServer) {
     use base64::Engine;
     use rsa::{pkcs8::EncodePrivateKey, traits::PublicKeyParts};
     let mock = wiremock::MockServer::start().await;
@@ -95,8 +95,44 @@ async fn authenticated_router() -> (Router, String, wiremock::MockServer) {
         &jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
     )
     .unwrap();
+    wiremock::Mock::given(wiremock::matchers::path("/internal/mcp/mcp-grants"))
+        .and(wiremock::matchers::query_param("user_id", "42"))
+        .and(wiremock::matchers::query_param(
+            "client_id",
+            "read-only-regression",
+        ))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&mock)
+        .await;
+    let mut other_claims = claims.clone();
+    other_claims["sub"] = serde_json::json!("43");
+    other_claims["client_id"] = serde_json::json!("other-client");
+    other_claims["jti"] = serde_json::json!("other-token");
+    let other_token = jsonwebtoken::encode(
+        &header,
+        &other_claims,
+        &jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
+    )
+    .unwrap();
+    wiremock::Mock::given(wiremock::matchers::path("/internal/mcp/mcp-grants"))
+        .and(wiremock::matchers::query_param("user_id", "43"))
+        .and(wiremock::matchers::query_param("client_id", "other-client"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&mock)
+        .await;
     let service = StreamableHttpService::new(
-        || Ok(ReadOnlyHandler),
+        {
+            let server = mcp_server::mcp_service::CommonCalServer::new(
+                mcp_server::internal_client::InternalClient::new(
+                    format!("{issuer}/"),
+                    "test".into(),
+                )
+                .unwrap(),
+                sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
+                std::sync::Arc::new(mcp_server::rate_limiter::RateLimiter::disabled()),
+            );
+            move || Ok(server.clone())
+        },
         LocalSessionManager::default().into(),
         mcp_server::transport::server_config(RESOURCE).unwrap(),
     );
@@ -107,7 +143,7 @@ async fn authenticated_router() -> (Router, String, wiremock::MockServer) {
                 mcp_server::auth::AuthState::new(issuer, RESOURCE.into()),
                 mcp_server::auth::auth_middleware,
             ));
-    (router, token, mock)
+    (router, token, other_token, mock)
 }
 
 fn rpc_request(
@@ -118,6 +154,8 @@ fn rpc_request(
 ) -> Request<Body> {
     let params = if method == "initialize" {
         serde_json::json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"host-regression","version":"1"}})
+    } else if method == "tools/call" {
+        serde_json::json!({"name":"calendar_list","arguments":{}})
     } else {
         serde_json::json!({})
     };
@@ -144,7 +182,7 @@ fn rpc_request(
 
 #[tokio::test]
 async fn authenticated_public_initialize_and_tools_list_and_rejections() {
-    let (router, token, _issuer) = authenticated_router().await;
+    let (router, token, _other_token, _issuer) = authenticated_router().await;
     for host in ["mcal.hajnal.space", "mcal.hajnal.space:443"] {
         let initialized = router
             .clone()
@@ -230,4 +268,120 @@ async fn decoded_result(response: axum::response::Response) -> serde_json::Value
         .get("result")
         .expect("successful JSON-RPC result")
         .clone()
+}
+
+#[tokio::test]
+async fn authenticated_tool_call_keeps_request_identity_across_rmcp_tasks() {
+    let (router, token, other_token, issuer) = authenticated_router().await;
+    let response = router
+        .clone()
+        .oneshot(rpc_request(
+            "mcal.hajnal.space",
+            Some(&token),
+            None,
+            "initialize",
+        ))
+        .await
+        .unwrap();
+    let session = response.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    decoded_result(response).await;
+    router
+        .clone()
+        .oneshot(rpc_request(
+            "mcal.hajnal.space",
+            Some(&token),
+            Some(&session),
+            "notifications/initialized",
+        ))
+        .await
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(rpc_request(
+            "mcal.hajnal.space",
+            Some(&token),
+            Some(&session),
+            "tools/call",
+        ))
+        .await
+        .unwrap();
+    use http_body_util::BodyExt;
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        text.contains("no active MCP grant"),
+        "validated identity must reach grant lookup: {text}"
+    );
+    assert!(!text.contains("no validated identity"));
+    assert!(
+        issuer
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.url.path() == "/internal/mcp/mcp-grants")
+    );
+    // A session must not pin the identity of the initialize request.
+    // Interleave two different validated identities over the same session.
+    let call = |token: String, id: i64| {
+        let router = router.clone();
+        let session = session.clone();
+        async move {
+            let mut request = rpc_request(
+                "mcal.hajnal.space",
+                Some(&token),
+                Some(&session),
+                "tools/call",
+            );
+            *request.body_mut() = Body::from(serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"calendar_list","arguments":{}}}).to_string());
+            let response = router.oneshot(request).await.unwrap();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            assert!(
+                std::str::from_utf8(&bytes)
+                    .unwrap()
+                    .contains("no active MCP grant"),
+                "{}",
+                std::str::from_utf8(&bytes).unwrap()
+            );
+        }
+    };
+    tokio::join!(call(token.clone(), 2), call(other_token, 3));
+    let requests = issuer.received_requests().await.unwrap();
+    for (user_id, client_id, expected_count) in
+        [("42", "read-only-regression", 2), ("43", "other-client", 1)]
+    {
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.url.path() == "/internal/mcp/mcp-grants"
+                    && r.url
+                        .query_pairs()
+                        .any(|(k, v)| k == "user_id" && v == user_id)
+                    && r.url
+                        .query_pairs()
+                        .any(|(k, v)| k == "client_id" && v == client_id))
+                .count(),
+            expected_count
+        );
+    }
+    for token in [None, Some("invalid-test-token")] {
+        let rejected = router
+            .clone()
+            .oneshot(rpc_request(
+                "mcal.hajnal.space",
+                token,
+                Some(&session),
+                "tools/call",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            rejected.status(),
+            StatusCode::UNAUTHORIZED,
+            "an existing session must never bypass per-request authentication"
+        );
+    }
 }

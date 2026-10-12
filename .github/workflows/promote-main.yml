@@ -149,9 +149,45 @@ jobs:
           name: mcp-image
           path: mcp-image.tar
 
-  promote:
+  deploy-validation:
     runs-on: ubuntu-latest
     needs: [build-auth, build-core, build-mcp]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate production HelmRelease manifests
+        run: |
+          set -euo pipefail
+          # Ensure all three HelmReleases reference immutable sha tags
+          count=$(grep -hE '^[[:space:]]*tag: "sha-[0-9a-f]{40}"$' deploy/flux/overlays/production/charts/*-helmrelease.yaml | wc -l | tr -d ' ')
+          if [ "$count" -ne 3 ]; then
+            echo "ERROR: Expected 3 immutable sha tags, found $count"
+            exit 1
+          fi
+          # Validate dependsOn at spec level (not inside spec.values)
+          for f in deploy/flux/overlays/production/charts/*-helmrelease.yaml; do
+            if grep -q '^  dependsOn:' "$f"; then
+              continue
+            fi
+            # dependsOn exists but not at spec level — bad
+            if grep -q '    dependsOn:' "$f"; then
+              echo "ERROR: dependsOn in $f is inside spec.values, not at spec level"
+              exit 1
+            fi
+          done
+          # Validate MCP HelmRelease does not mix literal issuer with a nonempty oauthIssuerKeyName
+          issuer_key_val=$(grep 'oauthIssuerKeyName:' deploy/flux/overlays/production/charts/mcp-helmrelease.yaml | sed 's/.*oauthIssuerKeyName:[[:space:]]*//' | tr -d '"' | tr -d ' ')
+          if [ -n "$issuer_key_val" ]; then
+            if grep -q 'MCP_OAUTH_ISSUER:' deploy/flux/overlays/production/charts/mcp-helmrelease.yaml; then
+              echo "ERROR: MCP HelmRelease mixes oauthIssuerKeyName with literal MCP_OAUTH_ISSUER"
+              exit 1
+            fi
+          fi
+          echo "Validation passed."
+
+  promote:
+    runs-on: ubuntu-latest
+    needs: [build-auth, build-core, build-mcp, deploy-validation]
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&

@@ -34,6 +34,9 @@ pub struct EventCreateParams {
     /// End time (ISO 8601 or Unix epoch seconds).
     #[serde(default)]
     pub end_utc: Option<String>,
+    /// Optional IANA timezone (e.g. Europe/Budapest).
+    #[serde(default)]
+    pub timezone: Option<String>,
     /// Optional idempotency key for safe retries.
     #[serde(default)]
     pub operation_id: Option<String>,
@@ -51,6 +54,14 @@ pub fn validate_create_input(params: &EventCreateParams) -> Result<(), ToolError
         return Err(ToolError::BadRequest(
             "event title exceeds 256 character limit".to_string(),
         ));
+    }
+
+    if params.start_utc.is_none() {
+        return Err(ToolError::BadRequest("start_utc is required".to_string()));
+    }
+
+    if params.end_utc.is_none() {
+        return Err(ToolError::BadRequest("end_utc is required".to_string()));
     }
 
     if let Some(ref desc) = params.description
@@ -101,6 +112,7 @@ pub async fn handle(
         "location": params.location,
         "start_utc": params.start_utc,
         "end_utc": params.end_utc,
+        "timezone": params.timezone,
     });
 
     // Create the event via CommonCal core.
@@ -154,12 +166,13 @@ mod tests {
 
     #[test]
     fn event_create_params_deserializes() {
-        let json = r#"{"calendar_id": 1, "title": "Meeting", "description": "Discuss Q1", "location": "Room 5", "start_utc": "2024-01-01T10:00:00Z", "end_utc": "2024-01-01T11:00:00Z", "operation_id": "op-123"}"#;
+        let json = r#"{"calendar_id": 1, "title": "Meeting", "description": "Discuss Q1", "location": "Room 5", "start_utc": "2024-01-01T10:00:00Z", "end_utc": "2024-01-01T11:00:00Z", "timezone": "Europe/Budapest", "operation_id": "op-123"}"#;
         let params: EventCreateParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.calendar_id, 1);
         assert_eq!(params.title, "Meeting");
         assert_eq!(params.description, Some("Discuss Q1".to_string()));
         assert_eq!(params.location, Some("Room 5".to_string()));
+        assert_eq!(params.timezone, Some("Europe/Budapest".to_string()));
         assert_eq!(params.operation_id, Some("op-123".to_string()));
     }
 
@@ -171,6 +184,7 @@ mod tests {
         assert_eq!(params.location, None);
         assert_eq!(params.start_utc, None);
         assert_eq!(params.end_utc, None);
+        assert_eq!(params.timezone, None);
         assert_eq!(params.operation_id, None);
     }
 
@@ -183,6 +197,7 @@ mod tests {
             location: None,
             start_utc: None,
             end_utc: None,
+            timezone: None,
             operation_id: None,
         };
         let result = validate_create_input(&params);
@@ -200,6 +215,7 @@ mod tests {
             location: None,
             start_utc: None,
             end_utc: None,
+            timezone: None,
             operation_id: None,
         };
         let result = validate_create_input(&params);
@@ -215,11 +231,48 @@ mod tests {
             title: "a".repeat(256),
             description: None,
             location: None,
-            start_utc: None,
-            end_utc: None,
+            start_utc: Some("2024-01-01T10:00:00Z".to_string()),
+            end_utc: Some("2024-01-01T11:00:00Z".to_string()),
+            timezone: None,
             operation_id: None,
         };
         assert!(validate_create_input(&params).is_ok());
+    }
+
+    #[test]
+    fn validate_create_input_rejects_missing_start_utc() {
+        let params = EventCreateParams {
+            calendar_id: 1,
+            title: "Meeting".to_string(),
+            description: None,
+            location: None,
+            start_utc: None,
+            end_utc: Some("2024-01-01T11:00:00Z".to_string()),
+            timezone: None,
+            operation_id: None,
+        };
+        let result = validate_create_input(&params);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("start_utc"));
+    }
+
+    #[test]
+    fn validate_create_input_rejects_missing_end_utc() {
+        let params = EventCreateParams {
+            calendar_id: 1,
+            title: "Meeting".to_string(),
+            description: None,
+            location: None,
+            start_utc: Some("2024-01-01T10:00:00Z".to_string()),
+            end_utc: None,
+            timezone: None,
+            operation_id: None,
+        };
+        let result = validate_create_input(&params);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{}", err).contains("end_utc"));
     }
 
     #[test]
@@ -229,8 +282,9 @@ mod tests {
             title: "Meeting".to_string(),
             description: Some("a".repeat(10001)),
             location: None,
-            start_utc: None,
-            end_utc: None,
+            start_utc: Some("2024-01-01T10:00:00Z".to_string()),
+            end_utc: Some("2024-01-01T11:00:00Z".to_string()),
+            timezone: None,
             operation_id: None,
         };
         let result = validate_create_input(&params);
@@ -246,8 +300,9 @@ mod tests {
             title: "Meeting".to_string(),
             description: Some("a".repeat(10000)),
             location: None,
-            start_utc: None,
-            end_utc: None,
+            start_utc: Some("2024-01-01T10:00:00Z".to_string()),
+            end_utc: Some("2024-01-01T11:00:00Z".to_string()),
+            timezone: None,
             operation_id: None,
         };
         assert!(validate_create_input(&params).is_ok());

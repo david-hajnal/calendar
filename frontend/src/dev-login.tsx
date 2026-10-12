@@ -19,7 +19,11 @@ export function DevLoginPage() {
   useEffect(() => {
     const csrfToken = new URLSearchParams(window.location.search).get("csrf_token");
     if (csrfToken) {
-      void completeAuthentication(csrfToken);
+      void completeAuthentication(csrfToken).then(() => {
+        navigate("/", { mode: "replace" });
+      }).catch(() => {
+        setError("We could not complete the sign-in. Please try again.");
+      });
     }
   }, [completeAuthentication]);
 
@@ -37,10 +41,15 @@ export function DevLoginPage() {
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("dev login failed");
-      const location = response.headers.get("location");
-      if (location) {
-        navigate(location, { mode: "replace" });
+      // Fetch follows the backend's 302, so the token is in the final URL,
+      // not a Location header on the resulting HTML response.
+      const destination = new URL(response.url);
+      const csrfToken = destination.searchParams.get("csrf_token");
+      if (destination.origin !== window.location.origin || destination.pathname !== "/dev-login" || !csrfToken) {
+        throw new Error("invalid dev login response");
       }
+      await completeAuthentication(csrfToken);
+      navigate("/", { mode: "replace" });
     } catch {
       setError("We could not complete the sign-in. Please try again.");
     } finally {

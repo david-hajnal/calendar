@@ -118,8 +118,8 @@ pub async fn handle(
                     location: e.location.clone(),
                     status: e.status.clone(),
                     event_kind: e.event_kind.clone(),
-                    start_utc: e.start_utc.map(|t| t.to_string()),
-                    end_utc: e.end_utc.map(|t| t.to_string()),
+                    start_utc: e.start_utc.clone(),
+                    end_utc: e.end_utc.clone(),
                     version: e.version.unwrap_or(0),
                 }
             } else {
@@ -131,8 +131,8 @@ pub async fn handle(
                     location: None,
                     status: e.status.clone(),
                     event_kind: e.event_kind.clone(),
-                    start_utc: e.start_utc.map(|t| t.to_string()),
-                    end_utc: e.end_utc.map(|t| t.to_string()),
+                    start_utc: e.start_utc.clone(),
+                    end_utc: e.end_utc.clone(),
                     version: e.version.unwrap_or(0),
                 }
             }

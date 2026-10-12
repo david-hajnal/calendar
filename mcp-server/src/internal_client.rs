@@ -22,8 +22,8 @@ pub struct UserStatusResponse {
 pub struct CalendarInfo {
     pub id: i64,
     pub name: String,
-    pub role: String,
-    pub access: String,
+    pub description: Option<String>,
+    pub acl_role: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,8 +35,8 @@ pub struct EventInfo {
     pub location: Option<String>,
     pub status: String,
     pub event_kind: String,
-    pub start_utc: Option<i64>,
-    pub end_utc: Option<i64>,
+    pub start_utc: Option<String>,
+    pub end_utc: Option<String>,
     pub version: Option<i64>,
 }
 
@@ -53,6 +53,13 @@ pub struct DeleteIntent {
 #[derive(Debug, Deserialize)]
 pub struct ReminderResponse {
     pub reminder_id: String,
+}
+
+/// Matches Core's `SearchEventsResponse`: `{ events: [...], next_page_token: ... }`.
+#[derive(Debug, Deserialize)]
+pub struct SearchEventsResponse {
+    pub events: Vec<EventInfo>,
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,7 +305,10 @@ impl InternalClient {
     ) -> Result<EventInfo, InternalError> {
         let url = self
             .api_base
-            .join(&format!("internal/mcp/events/{}/{}", calendar_id, event_id))
+            .join(&format!(
+                "internal/mcp/calendars/{}/events/{}",
+                calendar_id, event_id
+            ))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         let resp = self
             .http_client
@@ -331,7 +341,10 @@ impl InternalClient {
     ) -> Result<Vec<EventInfo>, InternalError> {
         let mut url = self
             .api_base
-            .join(&format!("internal/mcp/events/{}/search", calendar_id))
+            .join(&format!(
+                "internal/mcp/calendars/{}/events/search",
+                calendar_id
+            ))
             .map_err(|e| InternalError::Connection(format!("failed to join URL: {}", e)))?;
         url.query_pairs_mut()
             .append_pair("from", from)
@@ -352,11 +365,11 @@ impl InternalClient {
         }
 
         let body = resp
-            .json::<Vec<EventInfo>>()
+            .json::<SearchEventsResponse>()
             .await
             .map_err(|e| InternalError::Deserialize(e.to_string()))?;
 
-        Ok(body)
+        Ok(body.events)
     }
 
     pub async fn create_event(
@@ -513,11 +526,17 @@ impl InternalClient {
         &self,
         payload: &serde_json::Value,
     ) -> Result<ReminderResponse, InternalError> {
+        let calendar_id = &payload["calendar_id"];
         let mut url = self.api_base.clone();
         url.path_segments_mut()
             .map_err(|_| InternalError::Connection("api_base has impossible host".to_string()))?
-            .extend(&["internal", "mcp", "reminders"]);
-        url.set_query(Some(&format!("calendar_id={}", payload["calendar_id"])));
+            .extend(&[
+                "api",
+                "v1",
+                "calendars",
+                &calendar_id.to_string(),
+                "reminders",
+            ]);
 
         let resp = self
             .http_client
@@ -738,17 +757,28 @@ mod tests {
 
     #[test]
     fn calendar_info_deserializes() {
-        let json = r#"{"id": 1, "name": "Work", "role": "owner", "access": "full"}"#;
+        let json =
+            r#"{"id": 1, "name": "Work", "description": "Team calendar", "acl_role": "owner"}"#;
         let resp: CalendarInfo = serde_json::from_str(json).unwrap();
         assert_eq!(resp.id, 1);
         assert_eq!(resp.name, "Work");
-        assert_eq!(resp.role, "owner");
-        assert_eq!(resp.access, "full");
+        assert_eq!(resp.description.as_deref(), Some("Team calendar"));
+        assert_eq!(resp.acl_role, "owner");
+    }
+
+    #[test]
+    fn calendar_info_deserializes_without_description() {
+        let resp: CalendarInfo = serde_json::from_str(
+            r#"{"id":1,"name":"Work","description":null,"acl_role":"read_only"}"#,
+        )
+        .unwrap();
+        assert_eq!(resp.description, None);
+        assert_eq!(resp.acl_role, "read_only");
     }
 
     #[test]
     fn event_info_deserializes_with_all_fields() {
-        let json = r#"{"id": 100, "calendar_id": 1, "title": "Meeting", "description": "Discuss Q1", "location": "Room 5", "status": "confirmed", "event_kind": "default", "start_utc": 1700000000, "end_utc": 1700003600, "version": 3}"#;
+        let json = r#"{"id": 100, "calendar_id": 1, "title": "Meeting", "description": "Discuss Q1", "location": "Room 5", "status": "confirmed", "event_kind": "default", "start_utc": "2023-11-14T10:00:00Z", "end_utc": "2023-11-14T11:00:00Z", "version": 3}"#;
         let resp: EventInfo = serde_json::from_str(json).unwrap();
         assert_eq!(resp.id, 100);
         assert_eq!(resp.calendar_id, 1);
@@ -757,8 +787,8 @@ mod tests {
         assert_eq!(resp.location, Some("Room 5".to_string()));
         assert_eq!(resp.status, "confirmed");
         assert_eq!(resp.event_kind, "default");
-        assert_eq!(resp.start_utc, Some(1700000000));
-        assert_eq!(resp.end_utc, Some(1700003600));
+        assert_eq!(resp.start_utc, Some("2023-11-14T10:00:00Z".to_string()));
+        assert_eq!(resp.end_utc, Some("2023-11-14T11:00:00Z".to_string()));
         assert_eq!(resp.version, Some(3));
     }
 
@@ -774,6 +804,27 @@ mod tests {
         assert_eq!(resp.start_utc, None);
         assert_eq!(resp.end_utc, None);
         assert_eq!(resp.version, None);
+    }
+
+    #[test]
+    fn search_events_response_deserializes() {
+        let json = r#"{"events": [{"id": 100, "calendar_id": 1, "title": "Meeting", "description": "Discuss Q1", "location": "Room 5", "status": "confirmed", "event_kind": "default", "start_utc": "2026-10-12T06:00:00Z", "end_utc": "2026-10-12T06:30:00Z", "version": 3}], "next_page_token": null}"#;
+        let resp: SearchEventsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.events.len(), 1);
+        assert_eq!(resp.events[0].id, 100);
+        assert_eq!(
+            resp.events[0].start_utc.as_deref(),
+            Some("2026-10-12T06:00:00Z")
+        );
+        assert_eq!(resp.next_page_token, None);
+    }
+
+    #[test]
+    fn search_events_response_deserializes_empty() {
+        let json = r#"{"events": [], "next_page_token": "tok-123"}"#;
+        let resp: SearchEventsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.events.is_empty());
+        assert_eq!(resp.next_page_token.as_deref(), Some("tok-123"));
     }
 
     #[test]

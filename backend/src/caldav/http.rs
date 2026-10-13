@@ -402,11 +402,13 @@ async fn dav_calendar(
                 Ok(report) => report,
                 Err(e) => return report_error(accounts.metrics(), e),
             };
-            let valid_depth = match &report {
-                query::CalendarReport::SyncCollection(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0")),
-                query::CalendarReport::Multiget(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0" || value == "1" || value == "infinity")),
-                query::CalendarReport::Query(_) => report_depth.as_ref().is_none_or(|value| matches!(value, Ok(value) if value == "0" || value == "1" || value == "infinity")),
-            };
+            // RFC 6578 specifies Depth: 0 for sync-collection, but Apple
+            // Calendar sends nonzero Depth. Tolerate valid Depth values:
+            // sync-level (validated as 1) still limits sync to this calendar's
+            // immediate members; the header never enables recursive sync.
+            let valid_depth = report_depth.as_ref().is_none_or(|value| {
+                matches!(value, Ok(value) if value == "0" || value == "1" || value == "infinity")
+            });
             if !valid_depth {
                 return dav_bad_depth(accounts.metrics());
             }
@@ -2027,7 +2029,7 @@ async fn handle_calendar_multiget(
 ///
 /// Deleted resources are represented by a response whose `D:status` is
 /// `HTTP/1.1 404 Not Found` as a direct child of `D:response`, per RFC
-/// 6578. Invalid tokens fail safely with 400. Pagination is bounded by
+/// 6578. Invalid tokens fail safely with 403 DAV:valid-sync-token. Pagination is bounded by
 /// `MAX_RESULTS` and the new token always advances past the last returned
 /// revision, so no change is skipped.
 async fn handle_sync_collection(

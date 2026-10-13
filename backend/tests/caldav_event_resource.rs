@@ -6360,3 +6360,196 @@ async fn imported_categories_and_uri_delimiters_survive_dav_serialization() {
     );
     assert!(content.contains("URL:https://example.test/a,b;c\r\n"));
 }
+
+// Apple Calendar's captured request uses DAV-only properties and sync-level 1.
+// Tokens are minted by this fixture rather than copied from the production capture.
+fn apple_sync_collection_xml(token: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<A:sync-collection xmlns:A="DAV:">
+  <A:sync-token>{token}</A:sync-token>
+  <A:sync-level>1</A:sync-level>
+  <A:prop><A:getetag/><A:getcontenttype/></A:prop>
+</A:sync-collection>"#
+    )
+}
+
+async fn apple_sync_request(
+    app: Router,
+    uri: &str,
+    password: &str,
+    depth: Option<&str>,
+    body: &str,
+) -> (StatusCode, String) {
+    let mut builder = Request::builder()
+        .method(Method::from_bytes(b"REPORT").unwrap())
+        .uri(uri)
+        .header(
+            header::AUTHORIZATION,
+            basic_header("owner@example.test", password),
+        )
+        .header(header::CONTENT_TYPE, "application/xml; charset=utf-8");
+    if let Some(depth) = depth {
+        builder = builder.header("Depth", depth);
+    }
+    let response = app
+        .oneshot(builder.body(Body::from(body.to_owned())).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+async fn assert_apple_sync_depth(depth: Option<&str>) {
+    let (_temp, pool, accounts, user, password, principal, calendar, event, resource) =
+        scenario().await;
+    let other_calendar = create_calendar(&pool, user).await;
+    let other_event = create_event(&pool, user, other_calendar).await;
+    let other_resource = CaldavRepository::new(pool.clone())
+        .ensure_resource(other_calendar, other_event, 1000)
+        .await
+        .unwrap()
+        .resource_name;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let expected_href = format!("{uri}{resource}.ics");
+    let (status, initial) = apple_sync_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        &password,
+        depth,
+        &apple_sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::MULTI_STATUS,
+        "Depth {depth:?}: {initial}"
+    );
+    let root = xml_tree(&initial);
+    assert_eq!(root.descendants("DAV:", "response").len(), 1);
+    assert_eq!(root.descendants("DAV:", "href")[0].text, expected_href);
+    assert!(
+        !initial.contains(&other_resource),
+        "must not expose the other owned calendar"
+    );
+    assert!(!root.descendants("DAV:", "getcontenttype").is_empty());
+    assert!(
+        root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")
+            .is_empty()
+    );
+    let initial_etag = root.descendants("DAV:", "getetag")[0].text.clone();
+    let token = extract_sync_token(&initial).unwrap();
+    assert!(!token.is_empty());
+    let mut changed = timed_mutation();
+    changed.title = "Apple incremental update".into();
+    EventService::new_at(pool.clone(), 1500)
+        .update(
+            user,
+            false,
+            calendar,
+            event,
+            EventChange {
+                expected_version: 1,
+                target_calendar_id: calendar,
+                event: changed,
+            },
+        )
+        .await
+        .unwrap();
+    create_event(&pool, user, other_calendar).await;
+    let (status, delta) = apple_sync_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        &password,
+        depth,
+        &apple_sync_collection_xml(&token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "Depth {depth:?}: {delta}");
+    let root = xml_tree(&delta);
+    assert_eq!(root.descendants("DAV:", "response").len(), 1);
+    assert_eq!(root.descendants("DAV:", "href")[0].text, expected_href);
+    assert_ne!(root.descendants("DAV:", "getetag")[0].text, initial_etag);
+    let next_token = extract_sync_token(&delta).unwrap();
+    assert_ne!(next_token, token, "update must advance the sync cursor");
+    let (status, unchanged) = apple_sync_request(
+        build_caldav_router(accounts),
+        &uri,
+        &password,
+        depth,
+        &apple_sync_collection_xml(&next_token),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::MULTI_STATUS,
+        "Depth {depth:?}: {unchanged}"
+    );
+    assert!(
+        xml_tree(&unchanged)
+            .descendants("DAV:", "response")
+            .is_empty()
+    );
+    assert!(!extract_sync_token(&unchanged).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn apple_sync_collection_accepts_missing_depth() {
+    assert_apple_sync_depth(None).await;
+}
+
+#[tokio::test]
+async fn apple_sync_collection_accepts_depth_zero() {
+    assert_apple_sync_depth(Some("0")).await;
+}
+
+#[tokio::test]
+async fn apple_sync_collection_accepts_depth_one() {
+    assert_apple_sync_depth(Some("1")).await;
+}
+
+#[tokio::test]
+async fn apple_sync_collection_accepts_depth_infinity() {
+    assert_apple_sync_depth(Some("infinity")).await;
+}
+
+#[tokio::test]
+async fn apple_sync_collection_rejects_malformed_depth() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let (status, _) = apple_sync_request(
+        build_caldav_router(accounts),
+        &uri,
+        &password,
+        Some("2"),
+        &apple_sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn apple_sync_collection_rejects_sync_level_two_with_nonzero_depth() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let body = apple_sync_collection_xml("").replace(
+        "<A:sync-level>1</A:sync-level>",
+        "<A:sync-level>2</A:sync-level>",
+    );
+    let (status, response) = apple_sync_request(
+        build_caldav_router(accounts),
+        &uri,
+        &password,
+        Some("1"),
+        &body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        response.contains("sync-level"),
+        "must validate report semantics: {response}"
+    );
+}

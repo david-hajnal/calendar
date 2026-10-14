@@ -1116,3 +1116,67 @@ mod tests {
         );
     }
 }
+
+/// Required MKCALENDAR properties, validated before any persistent mutation.
+#[derive(Default)]
+pub struct MkCalendar {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub color: Option<String>,
+    pub timezone: Option<String>,
+    pub timezone_id: Option<String>,
+    pub properties: Vec<(DavName, bool)>,
+}
+
+pub fn parse_mkcalendar(body: &[u8]) -> Result<MkCalendar, QueryError> {
+    if body.is_empty() {
+        return Ok(MkCalendar::default());
+    }
+    let root = document(body)?;
+    if !root.is("urn:ietf:params:xml:ns:caldav:mkcalendar")
+        || root.children.len() != 1
+        || !root.text.trim().is_empty()
+    {
+        return Err(QueryError::MalformedXml);
+    }
+    let set = root.only_child("DAV:set")?;
+    if set.children.len() != 1 || !set.text.trim().is_empty() {
+        return Err(QueryError::MalformedXml);
+    }
+    let prop = set.only_child("DAV:prop")?;
+    if !prop.text.trim().is_empty() {
+        return Err(QueryError::MalformedXml);
+    }
+    let mut result = MkCalendar::default();
+    for child in &prop.children {
+        let text = &child.text;
+        let scalar = child.children.is_empty();
+        let valid = if child.is("DAV:displayname") {
+            result.name = Some(text.clone());
+            scalar && !text.trim().is_empty()
+        } else if child.is("urn:ietf:params:xml:ns:caldav:calendar-description") {
+            result.description = Some(text.clone());
+            scalar
+        } else if child.is("http://apple.com/ns/ical/calendar-color") {
+            result.color = Some(text.clone());
+            scalar
+                && matches!(text.len(), 7 | 9)
+                && text.starts_with('#')
+                && text[1..].bytes().all(|b| b.is_ascii_hexdigit())
+        } else if child.is("urn:ietf:params:xml:ns:caldav:calendar-timezone") {
+            result.timezone = Some(text.clone());
+            result.timezone_id = crate::ics::valid_calendar_timezone(text);
+            scalar && result.timezone_id.is_some()
+        } else if child.is("urn:ietf:params:xml:ns:caldav:supported-calendar-component-set") {
+            text.trim().is_empty()
+                && child.children.len() == 1
+                && child.children[0].is("urn:ietf:params:xml:ns:caldav:comp")
+                && child.children[0].empty()
+                && child.children[0].attrs.get("name").map(String::as_str) == Some("VEVENT")
+        } else {
+            false
+        };
+        result.properties.push((child.name.clone(), valid));
+    }
+    Ok(result)
+}

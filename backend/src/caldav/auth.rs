@@ -24,6 +24,9 @@ use crate::{
 };
 
 type CalendarRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
     i64,
     i64,
     Option<String>,
@@ -497,13 +500,15 @@ impl CaldavAccountService {
         user_id: i64,
     ) -> Result<Vec<CaldavCalendar>, CaldavAuthError> {
         let rows: Vec<CalendarRow> = sqlx::query_as(
-            "SELECT calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
+            "SELECT collection_accounts.principal_id, calendars.dav_collection_key, calendars.dav_timezone, calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
                     calendars.name, calendars.description, calendars.color,
                     calendar_acl.role
               FROM calendars
               JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
               LEFT JOIN caldav_accounts owner_accounts
                 ON owner_accounts.user_id = calendars.owner_user_id
+              LEFT JOIN caldav_accounts collection_accounts
+                ON collection_accounts.user_id = calendars.dav_principal_user_id
               WHERE calendar_acl.user_id = ?
                 AND calendars.archived = 0
               ORDER BY calendars.id",
@@ -516,6 +521,9 @@ impl CaldavAccountService {
             .into_iter()
             .map(
                 |(
+                    collection_principal_id,
+                    collection_key,
+                    timezone,
                     calendar_id,
                     owner_user_id,
                     owner_principal_id,
@@ -524,6 +532,9 @@ impl CaldavAccountService {
                     color,
                     role,
                 )| CaldavCalendar {
+                    collection_principal_id,
+                    collection_key,
+                    timezone,
                     calendar_id,
                     owner_user_id,
                     owner_principal_id,
@@ -542,13 +553,15 @@ impl CaldavAccountService {
         calendar_id: i64,
     ) -> Result<Option<CaldavCalendar>, CaldavAuthError> {
         let row: Option<CalendarRow> = sqlx::query_as(
-            "SELECT calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
+            "SELECT collection_accounts.principal_id, calendars.dav_collection_key, calendars.dav_timezone, calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
                     calendars.name, calendars.description, calendars.color,
                     calendar_acl.role
              FROM calendars
              JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
              LEFT JOIN caldav_accounts owner_accounts
                ON owner_accounts.user_id = calendars.owner_user_id
+             LEFT JOIN caldav_accounts collection_accounts
+               ON collection_accounts.user_id = calendars.dav_principal_user_id
              WHERE calendars.id = ? AND calendar_acl.user_id = ? AND calendars.archived = 0",
         )
         .bind(calendar_id)
@@ -557,8 +570,22 @@ impl CaldavAccountService {
         .await
         .map_err(|_| CaldavAuthError::Persistence)?;
         Ok(row.map(
-            |(calendar_id, owner_user_id, owner_principal_id, name, description, color, role)| {
+            |(
+                collection_principal_id,
+                collection_key,
+                timezone,
+                calendar_id,
+                owner_user_id,
+                owner_principal_id,
+                name,
+                description,
+                color,
+                role,
+            )| {
                 CaldavCalendar {
+                    collection_principal_id,
+                    collection_key,
+                    timezone,
                     calendar_id,
                     owner_user_id,
                     owner_principal_id,

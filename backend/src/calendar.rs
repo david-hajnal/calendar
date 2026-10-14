@@ -106,6 +106,17 @@ impl CalendarService {
         actor_user_id: i64,
         calendar: NewCalendar,
     ) -> Result<CalendarProjection, CalendarServiceError> {
+        self.create_with_dav_metadata(actor_user_id, calendar, None)
+            .await
+    }
+
+    /// Create the calendar and its optional DAV collection identity atomically.
+    pub(crate) async fn create_with_dav_metadata(
+        &self,
+        actor_user_id: i64,
+        calendar: NewCalendar,
+        dav: Option<(&str, Option<&str>)>,
+    ) -> Result<CalendarProjection, CalendarServiceError> {
         validate_calendar_fields(
             &calendar.name,
             &calendar.color,
@@ -144,9 +155,40 @@ impl CalendarService {
         .bind(now)
         .execute(&mut *transaction)
         .await?;
+        if let Some((key, timezone)) = dav {
+            sqlx::query(
+                "UPDATE calendars SET dav_collection_key = ?, dav_timezone = ?, dav_principal_user_id = ? WHERE id = ?",
+            )
+            .bind(key)
+            .bind(timezone)
+            .bind(actor_user_id)
+            .bind(id)
+            .execute(&mut *transaction)
+            .await?;
+        }
         insert_audit(&mut transaction, actor_user_id, "calendar.create", id, now).await?;
+        // Prepare the response before commit so a failed read cannot turn a
+        // successful creation into a failure response with persistent state.
+        let projection = self.project(
+            VisibleCalendarRecord {
+                id,
+                owner_user_id: actor_user_id,
+                name: calendar.name,
+                description: calendar.description,
+                color: calendar.color,
+                default_timezone: calendar.default_timezone,
+                default_event_visibility: calendar.default_event_visibility,
+                default_notification_rules_json: calendar.default_notification_rules_json,
+                archived: false,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+                role: "owner".into(),
+            },
+            false,
+        )?;
         transaction.commit().await?;
-        self.get(actor_user_id, false, id).await
+        Ok(projection)
     }
 
     pub async fn update(

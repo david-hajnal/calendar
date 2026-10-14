@@ -719,3 +719,92 @@ fn same_kind(value: &NormalizedDateValue, timing: &NormalizedTiming) -> bool {
         )
     )
 }
+
+// Preserve the supplied VTIMEZONE as metadata. Event interpretation continues
+// to use the existing IANA timezone implementation.
+pub(crate) fn valid_calendar_timezone(text: &str) -> Option<String> {
+    let lines = unfold(text)
+        .ok()?
+        .iter()
+        .map(|line| property(line))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let mut stack: Vec<&str> = Vec::new();
+    let mut calendars = 0;
+    let mut zones = 0;
+    let mut observances = 0;
+    let mut tzid = None;
+    let mut required = [false; 3];
+    let mut version = false;
+    let mut prodid = false;
+    for line in &lines {
+        let name = line.name.as_str();
+        let value = line.value.as_str();
+        match (name, value) {
+            ("BEGIN", "VCALENDAR") if stack.is_empty() && calendars == 0 => {
+                calendars += 1;
+                stack.push(value);
+            }
+            ("BEGIN", "VTIMEZONE") if stack == ["VCALENDAR"] => {
+                zones += 1;
+                stack.push(value);
+            }
+            ("BEGIN", "STANDARD" | "DAYLIGHT") if stack == ["VCALENDAR", "VTIMEZONE"] => {
+                observances += 1;
+                required = [false; 3];
+                stack.push(value);
+            }
+            ("BEGIN", _) => return None,
+            ("END", _) => {
+                if matches!(stack.last(), Some(&"STANDARD" | &"DAYLIGHT"))
+                    && !required.iter().all(|v| *v)
+                {
+                    return None;
+                }
+                if stack.pop()? != value {
+                    return None;
+                }
+            }
+            ("VERSION", "2.0") if stack == ["VCALENDAR"] && !version => version = true,
+            ("PRODID", _) if stack == ["VCALENDAR"] && !prodid => prodid = !value.is_empty(),
+            ("VERSION" | "PRODID" | "METHOD", _) if stack == ["VCALENDAR"] => return None,
+            ("TZID", _) if stack == ["VCALENDAR", "VTIMEZONE"] => {
+                if tzid.is_some() || value.is_empty() {
+                    return None;
+                }
+                tzid = Some(value.to_owned());
+            }
+            ("DTSTART", _) if stack.len() == 3 => {
+                NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
+                if required[0] {
+                    return None;
+                }
+                required[0] = true;
+            }
+            ("TZOFFSETFROM" | "TZOFFSETTO", _) if stack.len() == 3 => {
+                let bytes = value.as_bytes();
+                if !matches!(bytes.len(), 5 | 7)
+                    || !matches!(bytes[0], b'+' | b'-')
+                    || !bytes[1..].iter().all(u8::is_ascii_digit)
+                    || value[1..3].parse::<u8>().ok()? > 23
+                    || value[3..5].parse::<u8>().ok()? > 59
+                    || (bytes.len() == 7 && value[5..7].parse::<u8>().ok()? > 59)
+                {
+                    return None;
+                }
+                let index = if name == "TZOFFSETFROM" { 1 } else { 2 };
+                if required[index] {
+                    return None;
+                }
+                required[index] = true;
+            }
+            _ if stack.is_empty() => return None,
+            _ => {}
+        }
+    }
+    if zones == 1 && observances > 0 && stack.is_empty() && version && prodid {
+        tzid
+    } else {
+        None
+    }
+}

@@ -55,6 +55,9 @@ pub struct PrincipalInfo {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaldavCalendar {
+    pub collection_key: Option<String>,
+    pub collection_principal_id: Option<String>,
+    pub timezone: Option<String>,
     pub calendar_id: i64,
     pub owner_user_id: i64,
     pub owner_principal_id: Option<String>,

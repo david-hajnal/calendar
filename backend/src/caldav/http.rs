@@ -266,13 +266,229 @@ async fn dav_calendar_home(
     }
 }
 
+fn collection_key(calendar: &CaldavCalendar, principal_id: &str) -> String {
+    if calendar.collection_principal_id.as_deref() == Some(principal_id)
+        && let Some(key) = &calendar.collection_key
+    {
+        return key.clone();
+    }
+    calendar.calendar_id.to_string()
+}
+
+async fn resolve_collection_key(
+    accounts: &CaldavAccountService,
+    principal: &str,
+    key: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    if let Ok(id) = key.parse::<i64>() {
+        // Preserve numeric routing and its existing OPTIONS behavior. Actual
+        // existence and visibility are checked by resolve_calendar afterward.
+        return Ok(Some(id));
+    }
+    sqlx::query_scalar("SELECT c.id FROM calendars c JOIN caldav_accounts a ON a.user_id = c.dav_principal_user_id WHERE a.principal_id = ? AND c.dav_collection_key = ?")
+        .bind(principal).bind(key).fetch_optional(accounts.pool()).await
+}
+
+async fn collection_options(
+    accounts: &CaldavAccountService,
+    principal: &str,
+    key: &str,
+    request: Request,
+) -> Response {
+    // Existing collections keep their existing unauthenticated discovery behavior.
+    match resolve_collection_key(accounts, principal, key).await {
+        Ok(Some(_)) => return dav_capabilities(DAV_CALENDAR_ALLOW),
+        Ok(None) => {}
+        Err(_) => return dav_server_error(accounts.metrics()),
+    }
+    let canonical_path = request.uri().path() == format!("/dav/calendars/{principal}/{key}/")
+        && request.uri().query().is_none();
+    let (session, _) = match authenticate_dav_request(accounts, request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if session.principal_id != principal {
+        return dav_not_found(accounts.metrics());
+    }
+    dav_capabilities(if canonical_path && valid_collection_key(key) {
+        "MKCALENDAR, OPTIONS"
+    } else {
+        "OPTIONS"
+    })
+}
+
+fn valid_collection_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 255
+        && key.parse::<i64>().is_err()
+        && !key.bytes().all(|b| b.is_ascii_digit())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+fn collection_exists_response() -> Response {
+    let mut response = (
+        StatusCode::METHOD_NOT_ALLOWED,
+        [
+            (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+            (header::ALLOW, DAV_CALENDAR_ALLOW),
+        ],
+        "<D:error xmlns:D=\"DAV:\"><D:resource-must-be-null/></D:error>",
+    )
+        .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    response
+}
+
+async fn mkcalendar(
+    accounts: &CaldavAccountService,
+    principal: &str,
+    key: &str,
+    request: Request,
+) -> Response {
+    let (session, request) = match authenticate_dav_request(accounts, request).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if session.principal_id != principal {
+        return dav_not_found(accounts.metrics());
+    }
+    // Reserve every numeric segment for legacy IDs, even when no such ID exists.
+    let existing: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM calendars WHERE dav_principal_user_id = ? AND dav_collection_key = ? OR (CAST(id AS TEXT) = ? AND EXISTS(SELECT 1 FROM calendar_acl WHERE calendar_id = calendars.id AND user_id = ?)))")
+        .bind(session.user_id).bind(key).bind(key).bind(session.user_id).fetch_one(accounts.pool()).await { Ok(value) => value, Err(_) => return dav_server_error(accounts.metrics()) };
+    if existing {
+        return collection_exists_response();
+    }
+    if !valid_collection_key(key)
+        || request.uri().path() != format!("/dav/calendars/{principal}/{key}/")
+        || request.uri().query().is_some()
+    {
+        return mkcalendar_error(StatusCode::CONFLICT, "calendar-collection-location-ok");
+    }
+    let media_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        });
+    let body = match axum::body::to_bytes(request.into_body(), query::MAX_BODY_BYTES).await {
+        Ok(body) => body,
+        Err(_) => return dav_oversized_body(accounts.metrics()),
+    };
+    if !body.is_empty() && !matches!(media_type.as_deref(), Some("application/xml" | "text/xml")) {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    let props = match query::parse_mkcalendar(&body) {
+        Ok(props) => props,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    if props.properties.iter().any(|(_, valid)| !valid) {
+        let mut xml = String::from(
+            "<C:mkcalendar-response xmlns:C=\"urn:ietf:params:xml:ns:caldav\" xmlns:D=\"DAV:\"><D:response><D:href>",
+        );
+        xml.push_str(&xml_escape(&format!("/dav/calendars/{principal}/{key}/")));
+        xml.push_str("</D:href>");
+        for (name, valid) in &props.properties {
+            let status = if *valid {
+                "424 Failed Dependency"
+            } else if name == &DavName::from("DAV:displayname")
+                || name == &DavName::from("DAV:resourcetype")
+                || name.namespace == query::NS_CALDAV
+                || name == &DavName::from("http://apple.com/ns/ical/calendar-color")
+            {
+                "409 Conflict"
+            } else {
+                "403 Forbidden"
+            };
+            let error = if !valid
+                && name == &DavName::from("urn:ietf:params:xml:ns:caldav:calendar-timezone")
+            {
+                "<D:error><C:valid-calendar-data/></D:error>"
+            } else if !valid
+                && name
+                    == &DavName::from(
+                        "urn:ietf:params:xml:ns:caldav:supported-calendar-component-set",
+                    )
+            {
+                "<D:error><C:supported-calendar-component/></D:error>"
+            } else {
+                ""
+            };
+            let property = if name.namespace.is_empty() {
+                format!("<{}/>", name.local)
+            } else {
+                format!(
+                    "<P:{} xmlns:P=\"{}\"/>",
+                    name.local,
+                    xml_escape(&name.namespace)
+                )
+            };
+            xml.push_str(&format!("<D:propstat><D:prop>{property}</D:prop><D:status>HTTP/1.1 {status}</D:status>{error}</D:propstat>"));
+        }
+        xml.push_str("</D:response></C:mkcalendar-response>");
+        return (
+            StatusCode::MULTI_STATUS,
+            [
+                (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            xml,
+        )
+            .into_response();
+    }
+    let calendar = crate::calendar::NewCalendar {
+        name: props.name.unwrap_or_else(|| key.to_owned()),
+        description: props.description,
+        color: props.color.unwrap_or_else(|| "#3367d6".into()),
+        default_timezone: props
+            .timezone_id
+            .filter(|id| id.parse::<chrono_tz::Tz>().is_ok())
+            .unwrap_or_else(|| "UTC".into()),
+        default_event_visibility: "default".into(),
+        default_notification_rules_json: None,
+        created_at: accounts.now(),
+    };
+    match crate::calendar::CalendarService::new_at(accounts.pool().clone(), accounts.now())
+        .create_with_dav_metadata(
+            session.user_id,
+            calendar,
+            Some((key, props.timezone.as_deref())),
+        )
+        .await
+    {
+        Ok(_) => (StatusCode::CREATED, [(header::CACHE_CONTROL, "no-cache")]).into_response(),
+        Err(crate::calendar::CalendarServiceError::Database(error))
+            if error
+                .as_database_error()
+                .is_some_and(|e| e.is_unique_violation()) =>
+        {
+            collection_exists_response()
+        }
+        Err(_) => dav_server_error(accounts.metrics()),
+    }
+}
+
+fn mkcalendar_error(status: StatusCode, condition: &str) -> Response {
+    (status, [(header::CONTENT_TYPE,"application/xml; charset=utf-8")], format!("<D:error xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><C:{condition}/></D:error>")).into_response()
+}
+
 async fn dav_calendar(
     State(accounts): State<CaldavAccountService>,
     Path((principal_id, calendar_key)): Path<(String, String)>,
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        OPTIONS => dav_capabilities(DAV_CALENDAR_ALLOW),
+        "MKCALENDAR" => mkcalendar(&accounts, &principal_id, &calendar_key, request).await,
+        OPTIONS => collection_options(&accounts, &principal_id, &calendar_key, request).await,
         PROPFIND => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {
                 Ok((session, request)) => (session, request),
@@ -293,9 +509,12 @@ async fn dav_calendar(
                 Ok(None) => return dav_not_found(accounts.metrics()),
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
-            let Ok(calendar_id) = calendar_key.parse::<i64>() else {
-                return dav_calendar_not_found(accounts.metrics());
-            };
+            let calendar_id =
+                match resolve_collection_key(&accounts, &principal_id, &calendar_key).await {
+                    Ok(Some(id)) => id,
+                    Ok(None) => return dav_calendar_not_found(accounts.metrics()),
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
             let calendar = match accounts
                 .resolve_calendar(session.user_id, calendar_id)
                 .await
@@ -373,9 +592,12 @@ async fn dav_calendar(
                 Ok(None) => return dav_not_found(accounts.metrics()),
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
-            let Ok(calendar_id) = calendar_key.parse::<i64>() else {
-                return dav_calendar_not_found(accounts.metrics());
-            };
+            let calendar_id =
+                match resolve_collection_key(&accounts, &principal_id, &calendar_key).await {
+                    Ok(Some(id)) => id,
+                    Ok(None) => return dav_calendar_not_found(accounts.metrics()),
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
             let calendar = match accounts
                 .resolve_calendar(session.user_id, calendar_id)
                 .await
@@ -441,7 +663,14 @@ async fn dav_calendar(
                 }
             }
         }
-        _ => method_not_allowed(DAV_CALENDAR_ALLOW),
+        _ => {
+            let mut response =
+                collection_options(&accounts, &principal_id, &calendar_key, request).await;
+            if response.status() == StatusCode::OK {
+                *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
+            }
+            response
+        }
     }
 }
 
@@ -473,9 +702,12 @@ async fn dav_event_resource(
             if principal.user_id != session.user_id {
                 return dav_resource_not_found(accounts.metrics());
             }
-            let Ok(calendar_id) = calendar_key.parse::<i64>() else {
-                return dav_resource_not_found(accounts.metrics());
-            };
+            let calendar_id =
+                match resolve_collection_key(&accounts, &principal_id, &calendar_key).await {
+                    Ok(Some(id)) => id,
+                    Ok(None) => return dav_resource_not_found(accounts.metrics()),
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
             let calendar = match accounts
                 .resolve_calendar(session.user_id, calendar_id)
                 .await
@@ -528,7 +760,11 @@ async fn dav_event_resource(
                     "DAV:getcontentlength",
                     format!("<D:getcontentlength>{}</D:getcontentlength>", ical.len()),
                 ));
-                let href = event_href(&principal_id, calendar_id, resource_name);
+                let href = event_href(
+                    &principal_id,
+                    collection_key(&calendar, &principal_id),
+                    resource_name,
+                );
                 return render_propfind_response(&[(href, props)], &mode);
             }
             let content_length = ical.len().to_string();
@@ -560,9 +796,12 @@ async fn dav_event_resource(
             if principal.user_id != session.user_id {
                 return dav_resource_not_found(accounts.metrics());
             }
-            let Ok(calendar_id) = calendar_key.parse::<i64>() else {
-                return dav_resource_not_found(accounts.metrics());
-            };
+            let calendar_id =
+                match resolve_collection_key(&accounts, &principal_id, &calendar_key).await {
+                    Ok(Some(id)) => id,
+                    Ok(None) => return dav_resource_not_found(accounts.metrics()),
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
             let calendar = match accounts
                 .resolve_calendar(session.user_id, calendar_id)
                 .await
@@ -602,9 +841,12 @@ async fn dav_event_resource(
             if principal.user_id != session.user_id {
                 return dav_resource_not_found(accounts.metrics());
             }
-            let Ok(calendar_id) = calendar_key.parse::<i64>() else {
-                return dav_resource_not_found(accounts.metrics());
-            };
+            let calendar_id =
+                match resolve_collection_key(&accounts, &principal_id, &calendar_key).await {
+                    Ok(Some(id)) => id,
+                    Ok(None) => return dav_resource_not_found(accounts.metrics()),
+                    Err(_) => return dav_server_error(accounts.metrics()),
+                };
             let calendar = match accounts
                 .resolve_calendar(session.user_id, calendar_id)
                 .await
@@ -902,7 +1144,11 @@ async fn handle_put_create_event_resource(
     else {
         return dav_server_error(accounts.metrics());
     };
-    let location = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+    let location = event_href(
+        principal_id,
+        collection_key(calendar, principal_id),
+        &resource.resource_name,
+    );
     (
         StatusCode::CREATED,
         [
@@ -1871,8 +2117,11 @@ async fn handle_calendar_query(
                 )
                 .await
                 {
-                    let href =
-                        event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+                    let href = event_href(
+                        principal_id,
+                        collection_key(calendar, principal_id),
+                        &resource.resource_name,
+                    );
                     responses.push(report_resource_xml(
                         &href,
                         &etag,
@@ -1958,14 +2207,18 @@ async fn handle_calendar_multiget(
     let events = EventRepository::new(accounts.pool().clone());
     let mut responses = Vec::with_capacity(multiget.hrefs.len());
     for href in &multiget.hrefs {
-        let resource_name =
-            match normalized_multiget_name(accounts, href, principal_id, calendar.calendar_id) {
-                Some(name) => name,
-                None => {
-                    responses.push(sync_deleted_response_xml(href));
-                    continue;
-                }
-            };
+        let resource_name = match normalized_multiget_name(
+            accounts,
+            href,
+            principal_id,
+            collection_key(calendar, principal_id),
+        ) {
+            Some(name) => name,
+            None => {
+                responses.push(sync_deleted_response_xml(href));
+                continue;
+            }
+        };
         let resource = match repository
             .resolve_by_name(calendar.calendar_id, &resource_name)
             .await
@@ -2115,7 +2368,11 @@ async fn handle_sync_collection(
                 } else {
                     return dav_server_error(accounts.metrics());
                 };
-                let href = event_href(principal_id, calendar.calendar_id, &resource_name);
+                let href = event_href(
+                    principal_id,
+                    collection_key(calendar, principal_id),
+                    &resource_name,
+                );
                 match repository
                     .resolve_by_name(calendar.calendar_id, &resource_name)
                     .await
@@ -2195,7 +2452,11 @@ async fn handle_sync_collection(
                     Some(value) => value,
                     None => return dav_server_error(accounts.metrics()),
                 };
-                let href = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+                let href = event_href(
+                    principal_id,
+                    collection_key(calendar, principal_id),
+                    &resource.resource_name,
+                );
                 responses.push(report_resource_xml(
                     &href,
                     &etag,
@@ -2263,7 +2524,11 @@ fn sync_deleted_response_xml(href: &str) -> String {
 }
 
 /// Encode each resource href path segment before XML serialization.
-fn event_href(principal_id: &str, calendar_id: i64, resource_name: &str) -> String {
+fn event_href(
+    principal_id: &str,
+    calendar_id: impl std::fmt::Display,
+    resource_name: &str,
+) -> String {
     let mut url = url::Url::parse("http://dav.invalid/").expect("constant URL");
     url.path_segments_mut().expect("hierarchical URL").extend([
         "dav",
@@ -2294,7 +2559,7 @@ fn normalized_multiget_name(
     accounts: &CaldavAccountService,
     href: &str,
     principal_id: &str,
-    calendar_id: i64,
+    calendar_id: impl std::fmt::Display,
 ) -> Option<String> {
     let base = url::Url::parse(&accounts.calendar_home_url(principal_id)).ok()?;
     // Reject traversal before URL normalization can erase it.
@@ -2319,7 +2584,11 @@ fn normalized_multiget_name(
     href_within_collection(url.path(), principal_id, calendar_id)
 }
 
-fn href_within_collection(href: &str, principal_id: &str, calendar_id: i64) -> Option<String> {
+fn href_within_collection(
+    href: &str,
+    principal_id: &str,
+    calendar_id: impl std::fmt::Display,
+) -> Option<String> {
     let prefix = format!("/dav/calendars/{principal_id}/{calendar_id}/");
     let rest = href.strip_prefix(&prefix)?;
     let resource_name = decoded_path_segment(rest.strip_suffix(".ics")?)?;
@@ -2618,6 +2887,15 @@ fn calendar_props(accounts: &CaldavAccountService, calendar: &CaldavCalendar) ->
         ),
         DavProp::new("DAV:current-user-privilege-set", privilege_set),
     ];
+    if let Some(timezone) = &calendar.timezone {
+        props.push(DavProp::new(
+            "urn:ietf:params:xml:ns:caldav:calendar-timezone",
+            format!(
+                "<C:calendar-timezone>{}</C:calendar-timezone>",
+                xml_escape(timezone)
+            ),
+        ));
+    }
     if let Some(owner_principal_id) = &calendar.owner_principal_id {
         props.push(DavProp::new(
             "DAV:owner",
@@ -2640,7 +2918,11 @@ async fn render_calendar_home(
 ) -> Response {
     let href = format!("/dav/calendars/{principal_id}/");
     let displayname = xml_escape(&principal.display_name);
-    let home_privileges = vec!["DAV:read", "DAV:read-current-user-privilege-set"];
+    let home_privileges = vec![
+        "DAV:read",
+        "DAV:read-current-user-privilege-set",
+        "DAV:bind",
+    ];
     let home_privilege_set = privilege_set_xml(&home_privileges);
     let home_props = vec![
         current_principal_prop(accounts, principal_id),
@@ -2665,7 +2947,10 @@ async fn render_calendar_home(
     let mut resources = vec![(href, home_props)];
     if depth == DavDepth::One {
         for calendar in calendars {
-            let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
+            let cal_href = format!(
+                "/dav/calendars/{principal_id}/{}/",
+                collection_key(calendar, principal_id)
+            );
             let cal_props = match live_calendar_props(accounts, calendar, principal_id).await {
                 Ok(props) => props,
                 Err(_) => return dav_server_error(accounts.metrics()),
@@ -2929,7 +3214,10 @@ async fn render_calendar(
     resources: &[(CaldavEventResource, String)],
     authenticated_principal_id: &str,
 ) -> Response {
-    let cal_href = format!("/dav/calendars/{principal_id}/{}/", calendar.calendar_id);
+    let cal_href = format!(
+        "/dav/calendars/{principal_id}/{}/",
+        collection_key(calendar, principal_id)
+    );
     let cal_props = match live_calendar_props(accounts, calendar, authenticated_principal_id).await
     {
         Ok(props) => props,
@@ -2938,7 +3226,11 @@ async fn render_calendar(
     let mut all = vec![(cal_href, cal_props)];
     if depth == DavDepth::One {
         for (resource, etag) in resources {
-            let res_href = event_href(principal_id, calendar.calendar_id, &resource.resource_name);
+            let res_href = event_href(
+                principal_id,
+                collection_key(calendar, principal_id),
+                &resource.resource_name,
+            );
             let mut res_props = resource_props(etag);
             res_props.extend(object_metadata(
                 accounts,

@@ -6553,3 +6553,252 @@ async fn apple_sync_collection_rejects_sync_level_two_with_nonzero_depth() {
         "must validate report semantics: {response}"
     );
 }
+
+/// Apple first lists etags, then hydrates the server-returned hrefs. Verify the
+/// payload and etag agree across both requests and a rejected token can recover.
+#[tokio::test]
+async fn audit_apple_sync_hydrates_returned_hrefs_and_recovers_invalid_token() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar, _event, _resource) =
+        scenario().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/");
+    let app = build_caldav_router(accounts);
+    let (status, initial) = apple_sync_request(
+        app.clone(),
+        &uri,
+        &password,
+        Some("1"),
+        &apple_sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let root = xml_tree(&initial);
+    let href = &root.descendants("DAV:", "href")[0].text;
+    let etag = &root.descendants("DAV:", "getetag")[0].text;
+    let (status, hydrated) =
+        apple_sync_request(app.clone(), &uri, &password, Some("1"), &multiget_xml(href)).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{hydrated}");
+    let hydrated_root = xml_tree(&hydrated);
+    assert_eq!(&hydrated_root.descendants("DAV:", "href")[0].text, href);
+    assert_eq!(&hydrated_root.descendants("DAV:", "getetag")[0].text, etag);
+    let data = &hydrated_root.descendants("urn:ietf:params:xml:ns:caldav", "calendar-data")[0].text;
+    assert!(data.contains("SUMMARY:Planning\r\n"));
+    assert!(data.contains("BEGIN:VEVENT\r\n"));
+    let (status, error) = apple_sync_request(
+        app.clone(),
+        &uri,
+        &password,
+        Some("1"),
+        &apple_sync_collection_xml("invalid-token"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        xml_tree(&error)
+            .descendants("DAV:", "valid-sync-token")
+            .len(),
+        1
+    );
+    let (status, recovered) = apple_sync_request(
+        app,
+        &uri,
+        &password,
+        Some("1"),
+        &apple_sync_collection_xml(""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS);
+    let recovered_root = xml_tree(&recovered);
+    assert_eq!(&recovered_root.descendants("DAV:", "href")[0].text, href);
+    assert_eq!(&recovered_root.descendants("DAV:", "getetag")[0].text, etag);
+    assert!(extract_sync_token(&recovered).is_some());
+}
+
+/// RFC 5545 permits an explicit VALUE=DATE-TIME on DTSTART and DTEND.
+#[tokio::test]
+#[ignore = "known bug: explicit VALUE=DATE-TIME rejected; Apple CalDAV audit report"]
+async fn audit_apple_put_accepts_explicit_datetime_value() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/explicit-datetime.ics");
+    let body = vcalendar_body("apple-explicit-datetime", "Explicit date-time")
+        .replace("DTSTART:", "DTSTART;VALUE=DATE-TIME:")
+        .replace("DTEND:", "DTEND;VALUE=DATE-TIME:");
+    let (status, _, response) = put_request(
+        build_caldav_router(accounts),
+        &uri,
+        Some(("owner@example.test", &password)),
+        &body,
+        Some("*"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{response}");
+    assert!(response.contains("DTSTART:20260115T000000Z"));
+}
+
+/// RFC 5545 resolves duplicated autumn wall times to the first occurrence.
+#[tokio::test]
+#[ignore = "known bug: valid DST overlap rejected; Apple CalDAV audit report"]
+async fn audit_apple_put_resolves_dst_overlap_to_first_occurrence() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/dst-overlap.ics");
+    let body = vcalendar_body("apple-dst-overlap", "Autumn overlap")
+        .replace("BEGIN:VEVENT", "BEGIN:VTIMEZONE\r\nTZID:Europe/Budapest\r\nBEGIN:DAYLIGHT\r\nDTSTART:20260329T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\nEND:DAYLIGHT\r\nBEGIN:STANDARD\r\nDTSTART:20261025T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT")
+        .replace("DTSTART:20260115T000000Z", "DTSTART;TZID=Europe/Budapest:20261025T023000")
+        .replace("DTEND:20260115T010000Z", "DTEND;TZID=Europe/Budapest:20261025T033000");
+    let (status, _, response) = put_request(
+        build_caldav_router(accounts),
+        &uri,
+        Some(("owner@example.test", &password)),
+        &body,
+        Some("*"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{response}");
+    let parsed = parse_calendar(&response, IcsParserLimits::default()).unwrap();
+    match &parsed.events[0].timing {
+        commoncal_backend::ics::NormalizedTiming::Timed {
+            starts_at, ends_at, ..
+        } => {
+            assert_eq!(starts_at.to_rfc3339(), "2026-10-25T00:30:00+00:00");
+            assert_eq!(ends_at.to_rfc3339(), "2026-10-25T02:30:00+00:00");
+        }
+        other => panic!("expected timed event, got {other:?}"),
+    }
+}
+
+/// Apple occurrence metadata belongs to the edited occurrence, not the series.
+#[tokio::test]
+#[ignore = "known bug: occurrence metadata overwrites master; Apple CalDAV audit report"]
+async fn audit_apple_occurrence_metadata_stays_on_occurrence() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/audit-meta.ics");
+    let auth = ("owner@example.test", password.as_str());
+    let master = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:audit-meta\r\nDTSTART:20260115T000000Z\r\nDTEND:20260115T010000Z\r\nRRULE:FREQ=DAILY;COUNT=5\r\nSUMMARY:Master\r\nCATEGORIES:Master category\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            master,
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let etag = get_etag(&accounts, &principal, calendar, "audit-meta", auth).await;
+    let occurrence = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:audit-meta\r\nDTSTART:20260116T020000Z\r\nDTEND:20260116T030000Z\r\nRECURRENCE-ID:20260116T000000Z\r\nSUMMARY:Occurrence\r\nCATEGORIES:Occurrence category\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Occurrence reminder\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    assert_eq!(
+        put_update_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            occurrence,
+            Some(&etag)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, _, body) =
+        request(build_caldav_router(accounts), Method::GET, &uri, Some(auth)).await;
+    assert_eq!(status, StatusCode::OK);
+    let parsed = parse_calendar(&body, IcsParserLimits::default()).unwrap();
+    let master = parsed
+        .events
+        .iter()
+        .find(|e| e.recurrence_id.is_none())
+        .unwrap();
+    let exception = parsed
+        .events
+        .iter()
+        .find(|e| e.recurrence_id.is_some())
+        .unwrap();
+    assert_eq!(
+        master.categories,
+        ["Master category"],
+        "occurrence edit overwrote master metadata: {body}"
+    );
+    assert!(
+        master.alarms.is_empty(),
+        "occurrence alarm leaked onto master"
+    );
+    assert_eq!(exception.categories, ["Occurrence category"]);
+    assert_eq!(exception.alarms.len(), 1);
+}
+
+/// A RANGE edit must round-trip or fail atomically; silently narrowing it loses intent.
+#[tokio::test]
+#[ignore = "known bug: RANGE=THISANDFUTURE silently narrowed; Apple CalDAV audit report"]
+async fn audit_apple_thisandfuture_is_not_silently_narrowed() {
+    let (_temp, _pool, accounts, _user, password, principal, calendar) = setup_create().await;
+    let uri = format!("/dav/calendars/{principal}/{calendar}/audit-range.ics");
+    let auth = ("owner@example.test", password.as_str());
+    let master = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:audit-range\r\nDTSTART:20260115T000000Z\r\nDTEND:20260115T010000Z\r\nRRULE:FREQ=DAILY;COUNT=5\r\nSUMMARY:Master\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    assert_eq!(
+        put_request(
+            build_caldav_router(accounts.clone()),
+            &uri,
+            Some(auth),
+            master,
+            Some("*")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let (_, _, before) = request(
+        build_caldav_router(accounts.clone()),
+        Method::GET,
+        &uri,
+        Some(auth),
+    )
+    .await;
+    let etag = get_etag(&accounts, &principal, calendar, "audit-range", auth).await;
+    let changed = master.replace("END:VCALENDAR\r\n", "BEGIN:VEVENT\r\nUID:audit-range\r\nDTSTART:20260116T020000Z\r\nDTEND:20260116T030000Z\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20260116T000000Z\r\nSUMMARY:Following\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+    let (status, _, _) = put_update_request(
+        build_caldav_router(accounts.clone()),
+        &uri,
+        Some(auth),
+        &changed,
+        Some(&etag),
+    )
+    .await;
+    let (_, _, after) = request(
+        build_caldav_router(accounts.clone()),
+        Method::GET,
+        &uri,
+        Some(auth),
+    )
+    .await;
+    if status.is_client_error() {
+        assert_eq!(
+            after, before,
+            "rejected RANGE update must not mutate the resource"
+        );
+    } else {
+        assert_eq!(status, StatusCode::OK);
+        let collection_uri = format!("/dav/calendars/{principal}/{calendar}/");
+        assert!(
+            !query_resource_hrefs(
+                &accounts,
+                &collection_uri,
+                &password,
+                r#"<C:time-range start="20260117T020000Z" end="20260117T030000Z"/>"#
+            )
+            .await
+            .is_empty(),
+            "successful RANGE edit must shift future occurrence into new time window: {after}"
+        );
+        assert!(
+            query_resource_hrefs(
+                &accounts,
+                &collection_uri,
+                &password,
+                r#"<C:time-range start="20260117T000000Z" end="20260117T010000Z"/>"#
+            )
+            .await
+            .is_empty(),
+            "successful RANGE edit must remove future occurrence from original time window"
+        );
+    }
+}

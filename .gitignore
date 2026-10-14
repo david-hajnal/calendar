@@ -41,3 +41,8 @@ docs/TLS-IMPLEMENTATION-PLAN.md
 .kube/
 # Local production deployment command record
 /docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md
+
+# Local agent tooling
+.opencode/
+.agents/skills/orchestrator-factory/
+docs/qwen-harness/

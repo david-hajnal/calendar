@@ -111,7 +111,7 @@ describe("CalendarEventUI", () => {
     render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
     fireEvent.click(await screen.findByRole("tab", { name: view }));
 
-    expect(await screen.findByText("Conference")).toBeInTheDocument();
+    expect((await screen.findAllByText("Conference")).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders a multi-day all-day event on every day it spans in month view", async () => {
@@ -167,10 +167,10 @@ describe("CalendarEventUI", () => {
     render(<CalendarEventUI api={api} calendars={[calendars[0]]} initialDate={new Date("2025-06-16T12:00:00Z")} />);
     fireEvent.click(screen.getByRole("tab", { name: "Day" }));
     await act(async () => { resolveDay(new Response(JSON.stringify([dayEvent]), { status: 200 })); });
-    expect(await screen.findByText("Planning")).toBeInTheDocument();
+    expect((await screen.findAllByText("Planning")).length).toBeGreaterThanOrEqual(1);
 
     await act(async () => { resolveMonth(new Response(JSON.stringify([]), { status: 200 })); });
-    expect(screen.getByText("Planning")).toBeInTheDocument();
+    expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
   });
 
   it("switches views and creates a timed event in a writable calendar", async () => {
@@ -327,6 +327,44 @@ describe("CalendarEventUI", () => {
     await waitFor(() => expect(screen.queryByRole("form", { name: "Edit event" })).not.toBeInTheDocument());
   });
 
+  it("shows a load error banner when the initial GET fails and does not display events", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      if (String(path).includes("/events?")) return Promise.resolve(new Response(null, { status: 500 }));
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We could not load events. Please try again.");
+    expect(screen.getByRole("button", { name: "Reload events" })).toBeInTheDocument();
+    expect(screen.queryByText("Planning")).not.toBeInTheDocument();
+  });
+
+  it("retains loaded events and shows a mutation error banner (not a load error) when a move fails", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      return Promise.resolve(new Response(null, { status: 500 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+    fireEvent(block, pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 122));
+    fireEvent(grid, pointerEvent("pointerup", 100, 122));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We could not move this event.");
+    expect(alert).not.toHaveTextContent("We could not load events");
+    expect(screen.getByRole("button", { name: "Planning" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload events" })).not.toBeInTheDocument();
+  });
+
   it("renders an accessible agenda and hides toggled calendars", async () => {
     render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
 
@@ -342,8 +380,8 @@ describe("CalendarEventUI", () => {
 
     const dayBtn = await screen.findByRole("tab", { name: "Day" });
     fireEvent.click(dayBtn);
-    expect(await screen.findByText("Planning")).toBeInTheDocument();
-    const eventBlock = screen.getByText("Planning").closest('[class*="event-block"]');
+    await screen.findAllByText("Planning");
+    const eventBlock = document.querySelector(".event-ui__day-timeline .event-ui__event-block");
     expect(eventBlock).toBeInTheDocument();
     expect(screen.queryAllByRole("img", { name: /resize/i })).toHaveLength(0);
   });
@@ -353,7 +391,7 @@ describe("CalendarEventUI", () => {
 
     const dayBtn = await screen.findByRole("tab", { name: "Day" });
     fireEvent.click(dayBtn);
-    await screen.findByText("Planning");
+    await screen.findAllByText("Planning");
     const externalBtn = screen.getByRole("button", { name: "Imported holiday" });
     expect(externalBtn).toHaveAttribute("draggable", "false");
   });
@@ -409,7 +447,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block")!;
     fireEvent(block, pointerEvent("pointerdown", 100, 100));
@@ -467,7 +505,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const eventButton = screen.getByRole("button", { name: "Planning" });
     const eventBlock = eventButton.closest(".event-ui__event-block") as HTMLElement;
@@ -560,7 +598,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block")!;
     fireEvent(block, pointerEvent("pointerdown", 100, 100));
@@ -583,7 +621,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block")!;
     fireEvent(block, pointerEvent("pointerdown", 100, 100));
@@ -608,7 +646,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     const originalTop = parseFloat(block().style.top);
@@ -616,13 +654,13 @@ describe("CalendarEventUI", () => {
     fireEvent(grid, pointerEvent("pointermove", 100, 122));
     fireEvent(grid, pointerEvent("pointerup", 100, 122));
 
-    expect(parseFloat(block().style.top)).toBe(originalTop + 15);
+    expect(parseFloat(block().style.top)).toBeCloseTo(originalTop + 15, 10);
     expect(block()).toHaveClass("event-ui__event-block--saving");
 
     // The server normalizes to a different time than the optimistic value; the final state must match the server.
     resolveMove(new Response(JSON.stringify({ ...events[0], start_utc: events[0].start_utc + 30 * 60, end_utc: events[0].end_utc + 30 * 60, version: 2 }), { status: 200 }));
     await waitFor(() => expect(block()).not.toHaveClass("event-ui__event-block--saving"));
-    expect(parseFloat(block().style.top)).toBe(originalTop + 30);
+    expect(parseFloat(block().style.top)).toBeCloseTo(originalTop + 30, 10);
   });
 
   it("settles a move even when another event's move is still in flight", async () => {
@@ -643,7 +681,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const blockA = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     const blockB = () => screen.getByRole("button", { name: "Review" }).closest(".event-ui__event-block") as HTMLElement;
@@ -659,12 +697,12 @@ describe("CalendarEventUI", () => {
 
     // Resolve A while B is still in flight: A must settle to its server value, and B must keep its saving state.
     resolveA(new Response(JSON.stringify({ ...events[0], start_utc: events[0].start_utc + 30 * 60, end_utc: events[0].end_utc + 30 * 60, version: 2 }), { status: 200 }));
-    await waitFor(() => expect(parseFloat(blockA().style.top)).toBe(topA + 30));
+    await waitFor(() => expect(parseFloat(blockA().style.top)).toBeCloseTo(topA + 30, 10));
     expect(blockB()).toHaveClass("event-ui__event-block--saving");
 
     resolveB(new Response(JSON.stringify({ ...second, start_utc: second.start_utc + 15 * 60, end_utc: second.end_utc + 15 * 60, version: 2 }), { status: 200 }));
     await waitFor(() => expect(blockB()).not.toHaveClass("event-ui__event-block--saving"));
-    expect(parseFloat(blockB().style.top)).toBe(topB + 15);
+    expect(parseFloat(blockB().style.top)).toBeCloseTo(topB + 15, 10);
   });
 
   it("restores the exact original projection and reports an error when a move fails", async () => {
@@ -677,7 +715,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     const originalTop = parseFloat(block().style.top);
@@ -700,7 +738,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     const originalTop = parseFloat(block().style.top);
@@ -713,7 +751,7 @@ describe("CalendarEventUI", () => {
     expect(screen.getByRole("button", { name: "Reload events" })).toBeInTheDocument();
   });
 
-  it("clamps a downward move so the event stays within the day", async () => {
+  it("moves a downward event by the full delta without clamping (Slice 16)", async () => {
     const api = apiWithEvents();
     vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
       if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
@@ -724,7 +762,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     fireEvent(block(), pointerEvent("pointerdown", 100, 100));
@@ -734,13 +772,152 @@ describe("CalendarEventUI", () => {
     await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/10", expect.objectContaining({ method: "PATCH" })));
     const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
     const body = JSON.parse(String(patchCall?.[1]?.body));
-    const startLocal = new Date(body.start_utc * 1000);
-    const localDate = `${startLocal.getFullYear()}-${String(startLocal.getMonth() + 1).padStart(2, "0")}-${String(startLocal.getDate()).padStart(2, "0")}`;
-    expect(localDate).toBe("2025-06-16");
-    const startMinutes = startLocal.getHours() * 60 + startLocal.getMinutes();
-    const durationMinutes = (body.end_utc - body.start_utc) / 60;
-    expect(startMinutes + durationMinutes).toBeLessThanOrEqual(1440);
+    // Duration is preserved
     expect(body.end_utc - body.start_utc).toBe(events[0].end_utc - events[0].start_utc);
+    // Both timestamps shifted by the same delta (5000px snapped to 15-min = 5010 min)
+    const delta = body.start_utc - events[0].start_utc;
+    expect(body.end_utc - events[0].end_utc).toBe(delta);
+    // Delta is a multiple of 15 minutes
+    expect(delta % (15 * 60)).toBe(0);
+  });
+
+  it("suppresses the detail click after a completed drag (Slice 17)", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...events[0], ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+
+    // Perform a drag
+    fireEvent(block(), pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 130));
+    fireEvent(grid, pointerEvent("pointerup", 100, 130));
+
+    // Click should be suppressed
+    fireEvent.click(block());
+    expect(screen.queryByRole("complementary", { name: "Event details" })).not.toBeInTheDocument();
+  });
+
+  it("suppresses the detail click after a completed resize (Slice 17)", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...events[0], ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+    const handle = block().querySelector(".event-ui__resize-handle--bottom") as HTMLElement;
+
+    // Perform a resize
+    fireEvent(handle, pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 130));
+    fireEvent(grid, pointerEvent("pointerup", 100, 130));
+
+    // Click should be suppressed
+    fireEvent.click(block());
+    expect(screen.queryByRole("complementary", { name: "Event details" })).not.toBeInTheDocument();
+  });
+
+  it("does not suppress a simple click without a prior drag (Slice 17)", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    await screen.findByRole("region", { name: "Day calendar" });
+    const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+
+    // Simple click should open detail
+    fireEvent.click(block);
+    expect(screen.getByRole("complementary", { name: "Event details" })).toBeInTheDocument();
+  });
+
+  it("does not suppress a click after a cancelled gesture (Slice 17)", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+
+    // Start a drag then cancel
+    fireEvent(block(), pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointercancel", 100, 130));
+
+    // Click should NOT be suppressed
+    fireEvent.click(block());
+    expect(screen.getByRole("complementary", { name: "Event details" })).toBeInTheDocument();
+  });
+
+  it("top resize in day view preserves the end time (Slice 17)", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...events[0], ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+    const handle = block().querySelector(".event-ui__resize-handle--top") as HTMLElement;
+
+    // Drag the top handle down by 30px (30 minutes)
+    fireEvent(handle, pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 130));
+    fireEvent(grid, pointerEvent("pointerup", 100, 130));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/10", expect.objectContaining({ method: "PATCH" })));
+    const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    // End is preserved, start shifted later by 30 minutes
+    expect(body.end_utc).toBe(events[0].end_utc);
+    expect(body.start_utc).toBe(events[0].start_utc + 30 * 60);
+  });
+
+  it("bottom resize in day view preserves the start time (Slice 17)", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      const update = JSON.parse(String(init.body));
+      return Promise.resolve(new Response(JSON.stringify({ ...events[0], ...update, version: 2 }), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = () => screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+    const handle = block().querySelector(".event-ui__resize-handle--bottom") as HTMLElement;
+
+    // Drag the bottom handle down by 30px (30 minutes)
+    fireEvent(handle, pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 130));
+    fireEvent(grid, pointerEvent("pointerup", 100, 130));
+
+    await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events/10", expect.objectContaining({ method: "PATCH" })));
+    const patchCall = vi.mocked(api.request).mock.calls.find(([, init]) => init?.method === "PATCH");
+    const body = JSON.parse(String(patchCall?.[1]?.body));
+    // Start is preserved, end shifted later by 30 minutes
+    expect(body.start_utc).toBe(events[0].start_utc);
+    expect(body.end_utc).toBe(events[0].end_utc + 30 * 60);
   });
 
   it("deletes an event from the detail panel", async () => {
@@ -808,7 +985,7 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
     const region = await screen.findByRole("region", { name: "Day calendar" });
-    const grid = region.querySelector(":scope > .event-ui__day") as HTMLDivElement;
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
     grid.setPointerCapture = vi.fn();
     const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     const bottomHandle = block.querySelector(".event-ui__resize-handle--bottom") as HTMLElement;
@@ -825,8 +1002,112 @@ describe("CalendarEventUI", () => {
     expect(body.end_utc - body.start_utc).toBe((events[0].end_utc - events[0].start_utc) + 15 * 60);
     const afterBlock = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
     expect(parseFloat(afterBlock.style.top)).toBe(originalTop);
-    expect(parseFloat(afterBlock.style.height)).toBe(originalHeight + 15);
+    expect(parseFloat(afterBlock.style.height)).toBeCloseTo(originalHeight + 15, 10);
   });
+
+  it("does not duplicate the day grid class between the section and the day region", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const section = await screen.findByRole("region", { name: "Day calendar" });
+    expect(section).toHaveClass("event-ui__day");
+    const region = section.querySelector(":scope > .event-ui__day-region") as HTMLElement;
+    expect(region).toBeInTheDocument();
+    expect(region).not.toHaveClass("event-ui__day");
+  });
+
+  it("shows loading status in day view during a delayed request, then shows events when the request resolves", async () => {
+    let resolveSignal!: () => void;
+    const signal = new Promise<void>((resolve) => { resolveSignal = resolve; });
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      if (String(path).includes("/events?")) {
+        // Each call gets its own Response object to avoid "Body already read" errors
+        return signal.then(() => new Response(JSON.stringify(events), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Day" }));
+
+    // Loading status should be visible while the request is pending
+    expect(screen.getByRole("status")).toHaveTextContent("Loading events…");
+    expect(screen.queryByRole("button", { name: "Planning" })).not.toBeInTheDocument();
+
+    // Resolve the request
+    await act(async () => { resolveSignal(); });
+
+    // Events should now be visible
+    expect(await screen.findByRole("button", { name: "Planning" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("shows load error with retry in day view when the request fails, then shows events after successful retry", async () => {
+    let callCount = 0;
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      if (String(path).includes("/events?")) {
+        callCount++;
+        // Each reload makes one call per calendar (2 calendars = 2 calls).
+        // First two reloads (4 calls) fail; retry (calls 5+) succeeds.
+        if (callCount <= 4) return Promise.resolve(new Response(null, { status: 500 }));
+        return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Day" }));
+
+    // Load error should be visible with a Retry button (scoped to day region to avoid the banner alert)
+    const dayRegion = await screen.findByRole("region", { name: "Day calendar" });
+    const alert = await waitFor(() => {
+      const el = dayRegion.querySelector('[role="alert"]');
+      if (!el) throw new Error("alert not found");
+      return el;
+    });
+    expect(alert).toHaveTextContent("We could not load events");
+    const retryButton = screen.getByRole("button", { name: "Retry" });
+    expect(retryButton).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Planning" })).not.toBeInTheDocument();
+
+    // Click Retry
+    fireEvent.click(retryButton);
+
+    // Events should now be visible
+    expect(await screen.findByRole("button", { name: "Planning" })).toBeInTheDocument();
+  });
+
+  it("does not treat mutation errors as load failures in day view", async () => {
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL, init?: RequestInit) => {
+      if (String(path).includes("/events?") || !init?.method) return Promise.resolve(new Response(JSON.stringify(events), { status: 200 }));
+      return Promise.resolve(new Response(null, { status: 500 }));
+    });
+
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Day" }));
+    const region = await screen.findByRole("region", { name: "Day calendar" });
+    const grid = region.querySelector(":scope > .event-ui__day-region") as HTMLDivElement;
+    grid.setPointerCapture = vi.fn();
+    const block = screen.getByRole("button", { name: "Planning" }).closest(".event-ui__event-block") as HTMLElement;
+    fireEvent(block, pointerEvent("pointerdown", 100, 100));
+    fireEvent(grid, pointerEvent("pointermove", 100, 122));
+    fireEvent(grid, pointerEvent("pointerup", 100, 122));
+
+    // Mutation error should be shown (not a load error)
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("We could not move this event.");
+    expect(alert).not.toHaveTextContent("We could not load events");
+
+    // Events should still be visible
+    expect(screen.getByRole("button", { name: "Planning" })).toBeInTheDocument();
+
+    // No "Retry" button for the load error (only the banner's "Reload events" if applicable)
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+
 });
 
 it("mobile Agenda shows Busy and read-only external labels without exposing busy metadata", async () => {
@@ -898,4 +1179,43 @@ it("revoked mobile detail identity shows unavailable instead of another calendar
   expect(screen.queryByRole("button", { name: "Edit event" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Back to calendar" }));
   await waitFor(() => expect(screen.getByRole("heading", { name: "Events" })).toHaveFocus());
+});
+
+describe("CalendarEventUI scroll restoration (Slice 14)", () => {
+  it("restores zero page scroll and timeline coordinates after async load", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const scrollToMock = vi.fn();
+    vi.stubGlobal("scrollTo", scrollToMock);
+    // Set up history state with a saved scroll of all zeros
+    window.history.replaceState({ commoncalCalendar: { version: 1, userId: 7, chainId: "test", index: 0, snapshot: { view: "day", anchorDate: "2025-06-16", selectedDay: "2025-06-16", visibleCalendarIds: null, scroll: { page: 0, timelineTop: 0, timelineLeft: 0 } }, surface: { kind: "calendar" } } }, "", "/dashboard?view=day&date=2025-06-16");
+    render(<CalendarNavigationProvider userId={7}><CalendarEventUI api={apiWithEvents()} calendars={calendars} /></CalendarNavigationProvider>);
+    await screen.findByRole("button", { name: "Planning" });
+    // Wait for the rAF restoration to fire
+    await new Promise((r) => setTimeout(r, 50));
+    expect(scrollToMock).toHaveBeenCalledWith(0, 0);
+  });
+
+  it("restores nonzero page scroll and timeline coordinates after async load", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const scrollToMock = vi.fn();
+    vi.stubGlobal("scrollTo", scrollToMock);
+    window.history.replaceState({ commoncalCalendar: { version: 1, userId: 7, chainId: "test", index: 0, snapshot: { view: "day", anchorDate: "2025-06-16", selectedDay: "2025-06-16", visibleCalendarIds: null, scroll: { page: 150, timelineTop: 300, timelineLeft: 0 } }, surface: { kind: "calendar" } } }, "", "/dashboard?view=day&date=2025-06-16");
+    render(<CalendarNavigationProvider userId={7}><CalendarEventUI api={apiWithEvents()} calendars={calendars} /></CalendarNavigationProvider>);
+    await screen.findByRole("button", { name: "Planning" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(scrollToMock).toHaveBeenCalledWith(0, 150);
+  });
+
+  it("restoration wins over anchor when saved scroll exists", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    vi.stubGlobal("scrollTo", vi.fn());
+    window.history.replaceState({ commoncalCalendar: { version: 1, userId: 7, chainId: "test", index: 0, snapshot: { view: "day", anchorDate: "2025-06-16", selectedDay: "2025-06-16", visibleCalendarIds: null, scroll: { page: 0, timelineTop: 500, timelineLeft: 0 } }, surface: { kind: "calendar" } } }, "", "/dashboard?view=day&date=2025-06-16");
+    render(<CalendarNavigationProvider userId={7}><CalendarEventUI api={apiWithEvents()} calendars={calendars} /></CalendarNavigationProvider>);
+    await screen.findByRole("button", { name: "Planning" });
+    await new Promise((r) => setTimeout(r, 50));
+    // The day region should have scrollTop = 500 (restored), not the anchor value
+    const dayRegion = document.querySelector(".event-ui__day-region");
+    expect(dayRegion).not.toBeNull();
+    expect(dayRegion!.scrollTop).toBe(500);
+  });
 });

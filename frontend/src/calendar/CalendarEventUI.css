@@ -99,6 +99,12 @@
   border-color: var(--color-outline);
 }
 
+.event-ui__day-count {
+  font-size: 0.8125rem;
+  color: var(--color-on-surface-variant);
+  white-space: nowrap;
+}
+
 /* Month grid */
 .event-grid__headers {
   display: grid;
@@ -255,12 +261,8 @@
   gap: 0.375rem;
 }
 
-/* Day grid layout */
+/* Day view container (the grid itself lives on .event-ui__day-region in DayCalendar.css) */
 .event-ui__day {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  overflow-y: auto;
-  max-height: calc(100vh - 220px);
   position: relative;
   background: var(--color-surface-container-lowest);
   border-radius: 0.75rem;
@@ -290,6 +292,16 @@
   color: var(--color-on-surface-variant);
   background: var(--color-surface);
   padding: 0 0.25rem;
+}
+
+.event-ui__timezone-label {
+  position: absolute;
+  top: 2px;
+  right: 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--color-on-surface-variant);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
 .event-ui__day-column {
@@ -415,8 +427,7 @@
   pointer-events: none;
 }
 
-/* All-day lane (day/week views) */
-.event-ui__day,
+/* All-day lane (week view) */
 .event-ui__week {
   grid-template-rows: auto 1fr;
 }
@@ -672,24 +683,6 @@
   display: flex;
   gap: 0.75rem;
   justify-content: flex-end;
-}
-
-/* Empty state */
-.event-ui__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 3rem 1rem;
-  color: var(--color-on-surface-variant);
-  opacity: 0.6;
-}
-
-.event-ui__empty-icon {
-  font-size: 3rem;
-  color: var(--color-outline-variant);
-  margin-bottom: 1rem;
 }
 
 /* Mobile mini calendar */
@@ -991,7 +984,7 @@
   /* Mobile agenda view */
   .event-ui__agenda,
   .event-ui__week,
-  .event-ui__day {
+  .event-ui__day-region {
     gap: 0.5rem;
   }
 }

@@ -236,6 +236,34 @@ describe("CalendarEventUI", () => {
     expect(end).toBe(`${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, "0")}-${String(expected.getDate()).padStart(2, "0")}`);
   });
 
+  it("focuses the editor form when the New event button is clicked", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New event" }));
+    const form = screen.getByRole("form", { name: "Create event" });
+
+    await waitFor(() => {
+      expect(form).toContainElement(document.activeElement as HTMLElement);
+    });
+  });
+
+  it("scrolls the editor form into view when the New event button is clicked", async () => {
+    const scrollIntoViewSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoViewSpy;
+
+    try {
+      render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "New event" }));
+
+      await waitFor(() => {
+        expect(scrollIntoViewSpy).toHaveBeenCalled();
+      });
+    } finally {
+      delete (Element.prototype as any).scrollIntoView;
+    }
+  });
+
   it("edits an all-day event with prefilled dates", async () => {
     const allDay = { id: 12, calendar_id: 1, access: "details" as const, status: "confirmed" as const, event_kind: "all_day" as const, title: "Conference", start_date: "2025-06-16", end_date: "2025-06-18", version: 1 };
     const api = apiWithEvents();
@@ -497,6 +525,13 @@ describe("CalendarEventUI", () => {
     fireEvent.click(day.querySelector(".event-ui__hour-row")!);
 
     expect(screen.queryByRole("form", { name: "Create event" })).not.toBeInTheDocument();
+  });
+
+  it("disables the New event button when no calendar is writable", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={[calendars[1]]} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    expect(await screen.findByRole("button", { name: "New event" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New event mobile" })).toBeDisabled();
   });
 
   it("treats movement below five pixels as selection without moving or editing", async () => {

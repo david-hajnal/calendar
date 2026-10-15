@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { useIsMobile } from "../useIsMobile";
 import { MobileCalendar } from "./MobileCalendar";
@@ -150,6 +150,8 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const [editing, setEditing] = useState<EventProjection | "new" | null>(null);
   const [slotHighlight, setSlotHighlight] = useState<{ dayIndex: number; hour: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const editorFormRef = useRef<HTMLFormElement>(null);
+  const editorTitleRef = useRef<HTMLInputElement>(null);
   const suppressClickRef = useRef(false);
   const moveGeneration = useRef<Map<string, number>>(new Map());
   const [dragging, setDragging] = useState<DragState | null>(null);
@@ -254,6 +256,12 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   }
 
   function openNew() { openNewAt({ date, minuteOfDay: 9 * 60 }); }
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    editorFormRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    editorTitleRef.current?.focus();
+  }, [editing]);
 
   function snapY(y: number): number {
     return Math.round(y / 15) * 15;
@@ -820,7 +828,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       </button>}
       {selected.access === "details" && <ReminderRow api={api} calendarId={selected.calendar_id} eventId={selected.id} eventTitle={title(selected)} />}
     </aside>}
-    {editing && <form className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
+    {editing && <form ref={editorFormRef} className="event-ui__editor" onSubmit={save} aria-label={editing === "new" ? "Create event" : "Edit event"}>
       <div className="event-ui__editor-header">
         <h3 className="typography-headline-md">{editing === "new" ? "New event" : "Edit event"}</h3>
         <button type="button" className="event-ui__editor-close" onClick={() => setEditing(null)} aria-label="Close editor"><span className="material-symbols-outlined" style={{ fontSize: '20px' }}>close</span></button>
@@ -828,7 +836,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
       <div className="event-ui__editor-grid">
         <label className="event-ui__editor-field">
           <span className="typography-label-md">Title</span>
-          <input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Event title" />
+          <input ref={editorTitleRef} required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Event title" />
         </label>
         <label className="event-ui__editor-field event-ui__editor-field--toggle">
           <input type="checkbox" checked={draft.allDay} onChange={(event) => setDraft(toggleAllDay(draft, event.target.checked))} />

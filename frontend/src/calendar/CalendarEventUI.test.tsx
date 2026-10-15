@@ -260,7 +260,7 @@ describe("CalendarEventUI", () => {
         expect(scrollIntoViewSpy).toHaveBeenCalled();
       });
     } finally {
-      delete (Element.prototype as any).scrollIntoView;
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
     }
   });
 

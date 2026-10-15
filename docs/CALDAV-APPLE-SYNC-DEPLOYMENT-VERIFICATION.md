@@ -1,5 +1,11 @@
 # Apple Calendar sync deployment verification — October 14, 2026
 
+Follow-up: on October 15, the operator reported that invalidating sync tokens
+by incrementing visibility epochs for all affected calendars caused Apple
+Calendar to start syncing again. See [the production recovery note and scoped
+procedure](CALDAV-SYNC-RECOVERY.md). The verification below records the earlier
+October 14 investigation and its acceptance status at that time.
+
 ## Diagnosis
 
 Local `main` is `8e246f971293616e00606c5dac08661f2ad20810`, the merged PR #4

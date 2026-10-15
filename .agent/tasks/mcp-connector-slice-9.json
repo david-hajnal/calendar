@@ -11,5 +11,5 @@
     "Record proof and completion in the original 00-status.md only when every slice condition passes."
   ],
   "docs_required": false,
-  "status": "blocked"
+  "status": "ready"
 }

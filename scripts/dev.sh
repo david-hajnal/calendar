@@ -60,8 +60,7 @@ cmd_start() {
 
   warn "Healthcheck did not pass after ${retries} attempts"
   info "Check logs with: $0 logs -f"
-  info "Backend:  http://localhost:3000"
-  info "Frontend: http://localhost:5173"
+  info "Expected (if up): Backend http://localhost:3000, Frontend http://localhost:5173"
 }
 
 cmd_stop() {
@@ -100,8 +99,7 @@ cmd_rebuild() {
 
   warn "Healthcheck did not pass after ${retries} attempts"
   info "Check logs with: $0 logs -f"
-  info "Backend:  http://localhost:3000"
-  info "Frontend: http://localhost:5173"
+  info "Expected (if up): Backend http://localhost:3000, Frontend http://localhost:5173"
 }
 
 cmd_reset() {
@@ -143,8 +141,7 @@ cmd_reset() {
 
   warn "Healthcheck did not pass after ${retries} attempts"
   info "Check logs with: $0 logs -f"
-  info "Backend:  http://localhost:3000"
-  info "Frontend: http://localhost:5173"
+  info "Expected (if up): Backend http://localhost:3000, Frontend http://localhost:5173"
 }
 
 cmd_logs() {
@@ -263,7 +260,9 @@ cmd_mcp_start() {
   info "OAuth:    http://127.0.0.1:4000"
   info "MCP:      http://127.0.0.1:3001"
   info "Postgres: 127.0.0.1:55433"
-  info "Inspect emails: cat $(docker compose ${MCP_COMPOSE_FILES} exec -T app sh -c 'echo $E2E_EMAIL_OUTBOX' 2>/dev/null || echo 'mcp-server/data/emails.jsonl')"
+  local outbox
+  outbox=$(docker compose ${MCP_COMPOSE_FILES} exec -T app sh -c 'echo $E2E_EMAIL_OUTBOX' 2>/dev/null || echo '/app/data/emails.jsonl')
+  info "Inspect emails: docker compose ${MCP_COMPOSE_FILES} exec -T app cat ${outbox}"
 }
 
 cmd_mcp_status() {

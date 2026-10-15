@@ -1,6 +1,6 @@
 /* Layout */
 .event-ui {
-  inline-size: min(100%, 72rem);
+  inline-size: 100%;
   min-inline-size: 0;
   position: relative;
 }
@@ -782,7 +782,11 @@
   }
 
   .event-ui {
+    inline-size: calc(100% - 18rem);
     margin-inline-start: 18rem;
+  }
+
+  .event-ui:has(> .event-ui__detail) {
     padding-inline-end: 20rem;
   }
 
@@ -803,7 +807,7 @@
 
 /* Tablet styles */
 @media (min-width: 768px) and (max-width: 1023px) {
-  .event-ui {
+  .event-ui:has(> .event-ui__detail) {
     padding-inline-end: 16rem;
   }
 

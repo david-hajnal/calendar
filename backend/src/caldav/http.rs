@@ -487,7 +487,16 @@ async fn dav_calendar(
     request: Request,
 ) -> Response {
     match request.method().as_str() {
-        "MKCALENDAR" => mkcalendar(&accounts, &principal_id, &calendar_key, request).await,
+        "MKCALENDAR" => {
+            let mut response = mkcalendar(&accounts, &principal_id, &calendar_key, request).await;
+            // RFC 4791 §5.3.1 requires this on every MKCALENDAR response,
+            // including authentication and validation failures.
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-cache"),
+            );
+            response
+        }
         OPTIONS => collection_options(&accounts, &principal_id, &calendar_key, request).await,
         PROPFIND => {
             let (session, request) = match authenticate_dav_request(&accounts, request).await {

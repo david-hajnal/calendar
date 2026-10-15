@@ -13,6 +13,39 @@ use commoncal_backend::{
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+
+#[tokio::test]
+async fn mkcalendar_rejections_are_not_cacheable() {
+    let (_dir, app, principal, auth, _, _) = setup().await;
+    for (key, body, status) in [
+        ("malformed", "<broken>", StatusCode::BAD_REQUEST),
+        ("999", "", StatusCode::CONFLICT),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("MKCALENDAR")
+                    .uri(format!("/dav/calendars/{principal}/{key}/"))
+                    .header("Authorization", &auth)
+                    .header("Content-Type", "application/xml")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(
+            response
+                .headers()
+                .get("Cache-Control")
+                .and_then(|v| v.to_str().ok()),
+            Some("no-cache"),
+            "MKCALENDAR rejection for {key}"
+        );
+    }
+}
+
 async fn setup() -> (
     tempfile::TempDir,
     Router,

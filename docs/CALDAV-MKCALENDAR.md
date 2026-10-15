@@ -131,6 +131,31 @@ merge, deployment, or actual Apple device acceptance run was performed.
 
 ## Production verification and Apple Calendar acceptance
 
+### Follow-up verification (2026-10-15)
+
+The implementation and migration above were already present in commit
+`0f2d47f` when this verification began. Their original RED evidence above is
+historical, not a newly observed pre-implementation run.
+
+A new strict RED/GREEN cycle added the authenticated HTTP regression
+`mkcalendar_rejections_are_not_cacheable`: malformed XML returned 400 but
+omitted Cache-Control (observed `None`, expected `no-cache`). The MKCALENDAR
+dispatch boundary now sets `Cache-Control: no-cache` on every response,
+including authentication and validation errors, as required by RFC 4791
+§5.3.1. The test checks both malformed XML and an invalid collection location.
+All 11 MKCALENDAR integration tests pass after this change.
+
+Fresh verification: the full offline backend suite passed with 718 tests,
+0 failures, and 4 existing ignored tests across 48 runs. As in the original
+verification, the restricted sandbox denied socket binding in 11 existing
+tests; the approved local-socket rerun passed. `cargo fmt --check`,
+`cargo clippy --offline --all-targets -- -D warnings`, and `git diff --check`
+also passed. The REPORT Depth logic and unrelated working-tree changes were
+left intact. No dependencies were installed and no push, merge, deployment,
+or actual Apple Calendar acceptance run was performed.
+
+### Acceptance procedure
+
 Perform this procedure only after the usual authorized release and deployment.
 No deployment or production mutation was performed as part of implementation.
 

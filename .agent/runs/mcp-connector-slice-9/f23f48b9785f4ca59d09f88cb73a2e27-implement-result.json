@@ -1,0 +1,38 @@
+{
+  "status": "completed",
+  "summary": "Slice 9 (MCP and OAuth resource-server hardening) is complete: same-origin Origin enforcement added to the Streamable HTTP server config, and the full slice-9 condition set (Streamable HTTP lifecycle, protected-resource metadata/challenge, nine tool schemas, claim failure cases, bounded metadata/JWKS caching with key-rotation overlap, provider-outage-safe errors, rate limits, optional DPoP advertisement) is proven by 291/291 Rust tests and all 4 black-box protocol/security self-tests.",
+  "files_changed": [
+    "mcp-server/src/auth.rs",
+    "mcp-server/src/config.rs",
+    "mcp-server/src/gateway.rs",
+    "mcp-server/src/main.rs",
+    "mcp-server/src/mcp_service.rs",
+    "mcp-server/src/rate_limiter.rs",
+    "mcp-server/src/transport.rs",
+    "mcp-server/tests/integration.rs",
+    "mcp-server/tests/transport_host_regression.rs",
+    "docs/plans/cross-client-mcp-connector/00-status.md"
+  ],
+  "verification_commands": [
+    "cargo test --manifest-path /Users/kaszperek/repos/happening/mcp-server/Cargo.toml",
+    "node mcp-acceptance/verify.js",
+    "node mcp-acceptance/verify-discovery.js",
+    "node mcp-acceptance/verify-oauth-lifecycle.js",
+    "node mcp-acceptance/verify-security-isolation.js"
+  ],
+  "verification_passed": true,
+  "defects": [
+    "docs/MCP-PRODUCTION-FIX-PLAN.md (referenced by the slice-9 acceptance criteria) does not exist in the repository; the stand-in remediation docs are docs/plans/mcp-production-remediation/ (01-07) plus docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md. Reported, not papered over."
+  ],
+  "follow_up": [
+    "Release is under manual hold: the per-slice continuation gate is preserved and live environment/client/operator input is required before any production release; the SQLite migration does not authorize production changes."
+  ],
+  "important_context": [
+    "Slice 9 is complete and verified: 291/291 Rust tests pass (227 lib + 4 main + 12 e2e + 38 integration + 10 transport_host_regression) and all 4 black-box self-tests pass (verify.js, verify-discovery.js, verify-oauth-lifecycle.js, verify-security-isolation.js, all exit 0).",
+    "Origin enforcement is same-origin only: allowed_origins is derived from the MCP resource URL's own origin (e.g. https://mcal.hajnal.space); a cross-origin web client would need its origin added via config, not code.",
+    "Rate limiting is a fixed window keyed by user_id:client_id, controlled by MCP_RATE_LIMIT_MAX (60), MCP_RATE_LIMIT_WINDOW_SECS (60), MCP_RATE_LIMIT_ENABLED; denial returns JSON-RPC -2004 'rate limit exceeded'.",
+    "Provider outage maps TokenError::InvalidToken to a static safe 401 (invalid_token / 'invalid authorization token'); internal detail is only logged via tracing::warn!, never returned.",
+    "All slice-9 code changes are uncommitted (no commits per stage contract); oauth.rs (bounded metadata/JWKS caching + key-rotation overlap) is part of the slice-9 work but was already committed in a prior session.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting for the mcp-server."
+  ]
+}

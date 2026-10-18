@@ -1,0 +1,11 @@
+sh scripts/test-sqlite-prod.sh
+=== Testing deploy/sqlite-prod.sh ===
+PASS: missing kubeconfig exits non-zero
+PASS: kubeconfig without server field exits non-zero
+PASS: help flag exits 0
+PASS: unknown argument exits non-zero
+PASS: --write flag accepted
+PASS: --namespace flag accepted
+PASS: --namespace without value exits non-zero
+
+Results: 7 passed, 0 failed

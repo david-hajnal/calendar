@@ -1,0 +1,1012 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running unittests src/lib.rs (backend/target/debug/deps/commoncal_backend-86c102828144564b)
+
+running 240 tests
+test admin_invitation_rate_limit::tests::test_check_retry_after_value ... ok
+test admin_invitation_rate_limit::tests::test_check_blocks_over_limit ... ok
+test admin_invitation_rate_limit::tests::test_check_different_users_independent ... ok
+test admin_invitation_rate_limit::tests::test_check_window_not_expired_within_window ... ok
+test admin_invitation_rate_limit::tests::test_check_allows_under_limit ... ok
+test admin_invitation_rate_limit::tests::test_check_no_superadmin_bypass ... ok
+test caldav::http::tests::caldav_metrics_record_and_read ... ok
+test caldav::http::tests::caldav_metrics_default_state ... ok
+test admin_invitation_rate_limit::tests::test_check_rate_limit_exceeded_into_response ... ok
+test caldav::auth::tests::issue_credential_returns_secret_once_and_hashes_at_rest ... ok
+test caldav::auth::tests::authenticate_accepts_email_and_active_connection_password ... ok
+test caldav::auth::tests::revoke_all_invalidates_every_connection_password_immediately ... ok
+test caldav::auth::tests::revoking_one_credential_does_not_revoke_other_devices ... ok
+test caldav::auth::tests::authenticate_returns_same_unauthorized_shape_for_all_failures ... ok
+test caldav::http::tests::calendar_home_depth_one_lists_active_authorized_calendars ... ok
+test caldav::http::tests::calendar_home_cross_user_principal_is_404 ... ok
+test caldav::http::tests::calendar_collection_propfind_returns_properties_and_owner_privileges ... ok
+test caldav::http::tests::calendar_home_depth_zero_returns_home_only ... ok
+test caldav::http::tests::calendar_home_unauthenticated_is_401 ... ok
+test caldav::http::tests::cross_user_calendar_is_hidden_and_propfind_is_404 ... ok
+test caldav::http::tests::calendar_privileges_match_editor_viewer_and_freebusy_roles ... ok
+test caldav::http::tests::dav_auth_concurrent_valid_requests_are_free_and_failures_are_bounded ... ok
+test caldav::http::tests::dav_auth_failure_window_expires_on_same_instance_and_success_does_not_reset_it ... ok
+test caldav::http::tests::dav_auth_rate_limiter_blocks_after_max_attempts ... ok
+test caldav::http::tests::dav_auth_missing_is_free_malformed_counts_and_unknown_keys_are_shared ... ok
+test caldav::http::tests::dav_metrics_classify_auth_failures ... ok
+test caldav::http::tests::dav_auth_persistence_errors_do_not_consume_credential_failure_budget ... ok
+test caldav::http::tests::missing_properties_are_elements_and_groups_nonempty ... ok
+test caldav::http::tests::dav_auth_rate_limiter_independent_per_client_key ... ok
+test caldav::http::tests::dav_malformed_report_fails_before_any_write ... ok
+test caldav::http::tests::production_config_accepts_https_caldav_origin ... ok
+test caldav::http::tests::production_config_rejects_http_caldav_origin ... ok
+test caldav::http::tests::dav_auth_valid_discovery_and_two_initial_reports_exceed_ten_requests ... ok
+test account::tests::expiry_is_rechecked_after_password_hashing ... ok
+test caldav::http::tests::dav_metrics_classify_rate_limited ... ok
+test caldav::http::tests::options_advertises_only_implemented_dav_capabilities ... ok
+test caldav::http::tests::dav_metrics_classify_successful_auth ... ok
+test caldav::http::tests::get_dav_root_returns_405 ... ok
+test caldav::http::tests::dav_oversized_body_fails_before_any_write ... ok
+test caldav::http::tests::propfind_dav_root_returns_401_without_auth ... ok
+test caldav::http::tests::principal_discovery_returns_calendar_home_for_authenticated_user ... ok
+test caldav::http::tests::propfind_dav_root_returns_current_user_principal_link ... ok
+test caldav::http::tests::propfind_rejects_infinite_depth ... ok
+test caldav::http::tests::report_calendar_multiget_cross_user_returns_404 ... ok
+test caldav::http::tests::report_calendar_multiget_foreign_path_leaks_nothing ... ok
+test caldav::http::tests::report_calendar_multiget_missing_href_returns_per_item_404 ... ok
+test caldav::http::tests::report_calendar_multiget_mixed_success_and_404 ... ok
+test caldav::http::tests::report_calendar_multiget_returns_data_and_etags ... ok
+test caldav::http::tests::report_calendar_multiget_unauthenticated_returns_401 ... ok
+test caldav::http::tests::report_calendar_query_malformed_body_returns_400 ... ok
+test caldav::http::tests::report_calendar_query_cross_user_returns_404 ... ok
+test caldav::http::tests::report_calendar_query_empty_range_returns_207_no_events ... ok
+test caldav::http::tests::report_calendar_query_returns_all_day_events_in_range ... ok
+test caldav::http::tests::report_calendar_query_overlapping_event_included ... ok
+test caldav::http::tests::report_calendar_query_unauthenticated_returns_401 ... ok
+test caldav::ical::tests::all_day_event_round_trips_through_parser ... ok
+test caldav::ical::tests::all_day_event_uses_date_values_with_exclusive_end ... ok
+test caldav::ical::tests::all_day_single_day_event_round_trips ... ok
+test caldav::ical::tests::etag_changes_only_with_content ... ok
+test caldav::ical::tests::free_busy_etag_differs_from_full_representation ... ok
+test caldav::ical::tests::free_busy_placeholder_omits_private_fields ... ok
+test caldav::ical::tests::long_lines_are_folded_within_73_octets ... ok
+test caldav::http::tests::report_calendar_query_range_too_large_returns_400 ... ok
+test caldav::ical::tests::serialization_is_deterministic ... ok
+test caldav::ical::tests::recurrence_date_parameters_precede_the_colon ... ok
+test caldav::ical::tests::serializes_valid_vcalendar_with_fixed_property_order ... ok
+test caldav::ical::tests::text_is_escaped_per_rfc5545 ... ok
+test caldav::http::tests::report_calendar_query_returns_events_in_range ... ok
+test caldav::ical::tests::timed_event_uses_tzid_local_wall_time ... ok
+test caldav::ical::tests::timed_event_round_trips_through_parser ... ok
+test caldav::query::tests::accepts_large_finite_range ... ok
+test caldav::query::tests::explicit_property_end_tags_and_namespace_scope ... ok
+test caldav::query::tests::parses_multiget_single_href ... ok
+test caldav::query::tests::parses_valid_multiget_hrefs ... ok
+test caldav::query::tests::propfind_empty_body_defaults_to_allprop ... ok
+test caldav::query::tests::parses_valid_time_range ... ok
+test caldav::query::tests::propfind_explicit_allprop ... ok
+test caldav::query::tests::propfind_explicit_prop_captures_expanded_names ... ok
+test caldav::query::tests::propfind_propname ... ok
+test caldav::query::tests::propfind_rejects_malformed_xml ... ok
+test caldav::query::tests::query_accepts_comp_filter_tree_with_time_range ... ok
+test caldav::query::tests::propfind_rejects_wrong_root_namespace ... ok
+test caldav::query::tests::query_rejects_calendarserver_namespace_root ... ok
+test caldav::query::tests::query_rejects_comp_filter_in_wrong_namespace ... ok
+test caldav::query::tests::rejects_empty_body ... ok
+test caldav::query::tests::rejects_date_only_time_range_start ... ok
+test caldav::query::tests::rejects_invalid_date_format ... ok
+test caldav::query::tests::rejects_equal_start_and_end ... ok
+test caldav::query::tests::rejects_invalid_start_before_end ... ok
+test caldav::query::tests::rejects_malformed_xml ... ok
+test caldav::query::tests::rejects_invalid_document_and_selector_grammar ... ok
+test caldav::query::tests::rejects_multiget_malformed_xml ... ok
+test caldav::query::tests::rejects_missing_filter ... ok
+test caldav::query::tests::rejects_multiget_missing_href ... ok
+test caldav::query::tests::rejects_multiget_wrong_root ... ok
+test caldav::query::tests::rejects_non_xml ... ok
+test caldav::query::tests::rejects_oversized_body ... ok
+test caldav::query::tests::rejects_unsupported_filter_type ... ok
+test caldav::query::tests::rejects_wrong_root_element ... ok
+test caldav::query::tests::report_dispatches_calendar_multiget ... ok
+test caldav::query::tests::report_dispatches_calendar_query ... ok
+test caldav::query::tests::report_dispatches_sync_collection ... ok
+test caldav::query::tests::report_rejects_calendarserver_namespace_root ... ok
+test caldav::query::tests::report_rejects_unknown_root ... ok
+test caldav::query::tests::sync_collection_parses_token_and_level ... ok
+test caldav::query::tests::sync_collection_rejects_bad_level ... ok
+test caldav::query::tests::sync_collection_rejects_missing_level ... ok
+test caldav::query::tests::sync_collection_rejects_wrong_root ... ok
+test config::tests::development_allows_http_caldav_public_origin ... ok
+test config::tests::development_defaults_caldav_public_origin_to_app_origin ... ok
+test config::tests::production_accepts_https_caldav_public_origin ... ok
+test config::tests::production_rejects_caldav_public_origin_with_path ... ok
+test config::tests::production_rejects_non_https_caldav_public_origin ... ok
+test config::tests::production_requires_caldav_public_origin ... ok
+test http::tests::test_admin_invitation_rate_limit_includes_superadmin ... ok
+test http::tests::test_admin_invitation_rate_limiting ... ok
+test http::tests::test_admin_invitation_retry_after_header ... ok
+test http::tests::test_public_endpoint_independent_ips ... ok
+test http::tests::test_public_endpoint_rate_limiting ... ok
+test http::tests::test_public_endpoint_retry_after_header ... ok
+test ics_generator::tests::ics_all_day_end_date_exclusive ... ok
+test ics_generator::tests::ics_all_day_event_output ... ok
+test ics_generator::tests::ics_description_escaping ... ok
+test ics_generator::tests::ics_empty_calendar ... ok
+test ics_generator::tests::ics_timed_event_output ... ok
+test ics_generator::tests::ics_timezone_preserved ... ok
+test caldav::query::tests::accepts_multiget_at_href_limit ... ok
+test caldav::query::tests::rejects_multiget_too_many_hrefs ... ok
+test mcp_bridge::tests::configured_when_url_and_secret_present ... ok
+test mcp_bridge::tests::base_url_trims_trailing_slash ... ok
+test mcp_bridge::tests::decide_fails_when_not_configured ... ok
+test mcp_bridge::tests::urlencoding_encodes_special_chars ... ok
+test mcp_bridge::tests::lookup_fails_when_not_configured ... ok
+test mcp_bridge::tests::not_configured_when_empty ... ok
+test caldav::http::tests::revoked_calendar_does_not_appear_and_propfind_is_404 ... ok
+test caldav::http::tests::report_calendar_query_unsupported_filter_returns_400 ... ok
+test caldav::http::tests::shared_calendar_appears_in_grantee_calendar_home ... ok
+test caldav::http::tests::unknown_calendar_key_is_404 ... ok
+test mcp_consent::tests::escape_html_escapes_special_chars ... ok
+test mcp_consent::tests::scopes_to_allow_flags_calendar_metadata ... ok
+test mcp_consent::tests::scopes_to_allow_flags_empty ... ok
+test mcp_consent::tests::scopes_to_allow_flags_maps_correctly ... ok
+test caldav::http::tests::well_known_caldav_redirects_to_dav_root ... ok
+test mcp_consent::tests::browser_approve_intersects_selection_scopes_and_live_membership ... ok
+test mcp_consent::tests::validate_continuation_accepts_relative_path ... ok
+test mcp_consent::tests::validate_continuation_rejects_backslash_and_control ... ok
+test mcp_consent::tests::validate_continuation_rejects_empty ... ok
+test mcp_consent::tests::validate_continuation_rejects_external_url ... ok
+test mcp_consent::tests::validate_continuation_rejects_protocol_relative ... ok
+test mcp_consent::tests::browser_bridge_failure_retry_keeps_narrowed_grant ... ok
+test mcp_consent::tests::browser_decision_enforces_session_origin_fetch_site_and_csrf ... ok
+test caldav::http::tests::unknown_principal_and_calendar_do_not_leak_cross_user_existence ... ok
+test mcp_consent::tests::browser_deny_and_invalid_interactions_create_no_grants ... ok
+test mcp_consent::tests::browser_navigation_requires_login_and_page_submits_csrf_with_selected_calendars ... ok
+test mcp_consent::tests::browser_retries_do_not_widen_recreate_or_cross_users ... ok
+test mcp_internal::tests::constant_time_eq_matches_and_mismatches ... ok
+test mcp_consent::tests::upsert_grant_creates_exactly_one_active_grant ... ok
+test mcp_grant_management::tests::failed_grant_replacement_preserves_existing_grant ... ok
+test mcp_grant_management::tests::list_returns_only_own_active_grants ... ok
+test mcp_grant_management::tests::create_intersects_with_live_calendars ... ok
+test mcp_grant_management::tests::revoke_is_ownership_checked ... ok
+test mcp_consent::tests::upsert_grant_intersects_with_live_calendars ... ok
+test mcp_grant_management::tests::update_rejects_permission_and_expiry_broadening ... ok
+test mcp_grant_management::tests::update_is_ownership_checked_and_no_broadening ... ok
+test mcp_internal::tests::create_event_rejects_end_before_start_without_writing ... ok
+test mcp_internal::tests::create_event_rejects_equal_start_and_end_without_writing ... ok
+test caldav::auth::tests::credential_survives_new_instance_but_not_deliberate_key_rotation ... ok
+test mcp_internal::tests::create_event_rejects_invalid_timestamp_without_writing ... ok
+test mcp_internal::tests::create_event_stores_timezone_and_returns_stored_row ... ok
+test mcp_internal::tests::parse_utc_timestamp_accepts_epoch_and_rfc3339 ... ok
+test mcp_internal::tests::create_event_rejects_unknown_timezone_without_writing ... ok
+test mcp_internal::tests::empty_configured_key_rejects_all_requests ... ok
+test mcp_internal::tests::get_event_returns_rfc3339_timestamps ... ok
+test mcp_internal::tests::get_mcp_grants_excludes_expired_grant ... ok
+test mcp_internal::tests::get_mcp_grants_returns_empty_when_all_revoked ... ok
+test mcp_internal::tests::get_mcp_grants_returns_only_active_grant ... ok
+test mcp_internal::tests::grant_lookup_removes_lost_and_archived_calendar_access ... ok
+test mcp_internal::tests::invalid_key_rejected_on_all_routes ... ok
+test password::tests::hash_empty_password_rejected ... ok
+test mcp_internal::tests::missing_key_rejected_on_all_routes ... ok
+test mcp_internal::tests::search_events_returns_envelope_shape ... ok
+test public_rate_limit::tests::test_allows_under_limit ... ok
+test public_rate_limit::tests::test_blocks_over_limit ... ok
+test public_rate_limit::tests::test_independent_ips ... ok
+test public_rate_limit::tests::test_no_limiter_configured ... ok
+test public_rate_limit::tests::test_retry_after_header ... ok
+test mcp_internal::tests::search_events_rejects_invalid_range ... ok
+test rate_limiter::tests::test_check_allows_within_limit ... ok
+test public_rate_limit::tests::test_unknown_ip_fallback ... ok
+test rate_limiter::tests::test_check_by_key_allows_within_limit ... ok
+test rate_limiter::tests::test_check_blocks_over_limit ... ok
+test rate_limiter::tests::test_check_by_key_blocks_over_limit ... ok
+test rate_limiter::tests::test_check_by_key_independent_keys ... ok
+test rate_limiter::tests::test_check_by_key_resets_after_window ... ok
+test rate_limiter::tests::test_check_independent_keys ... ok
+test rate_limiter::tests::test_check_independent_tiers ... ok
+test rate_limiter::tests::test_check_resets_after_window ... ok
+test rate_limiter::tests::test_check_retry_after_increases ... ok
+test rate_limiter::tests::test_public_tier_config ... ok
+test rate_limiter::tests::test_write_endpoint_tier_critical_acl_delete ... ok
+test rate_limiter::tests::test_write_endpoint_tier_auth_endpoints_none ... ok
+test rate_limiter::tests::test_write_endpoint_tier_critical_acl_put ... ok
+test rate_limiter::tests::test_write_endpoint_tier_critical_transfer ... ok
+test rate_limiter::tests::test_write_endpoint_tier_health_none ... ok
+test rate_limiter::tests::test_write_endpoint_tier_permissive_archive ... ok
+test rate_limiter::tests::test_write_endpoint_tier_permissive_calendar ... ok
+test rate_limiter::tests::test_write_endpoint_tier_permissive_views ... ok
+test rate_limiter::tests::test_write_endpoint_tier_read_endpoints_none ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_event_create ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_event_delete ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_event_update ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_feed ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_ics_import ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_occurrence_following ... ok
+test rate_limiter::tests::test_write_endpoint_tier_standard_occurrence_update ... ok
+test mcp_internal::tests::search_events_finds_only_overlapping_events ... ok
+test shared_view::tests::test_rotate_publication_new_token_is_different ... ok
+test shared_view::tests::test_rotate_publication_revokes_old_token ... ok
+test smtp::tests::authenticated_tls_delivers_every_message_with_expected_links_and_sender ... ok
+test smtp::tests::implicit_tls_authenticates_before_sending_smtp_commands ... ok
+test smtp::tests::missing_starttls_never_sends_credentials_or_message ... ok
+test user_invitation_rate_limit::tests::test_check_allows_under_limit ... ok
+test user_invitation_rate_limit::tests::test_check_blocks_over_limit ... ok
+test user_invitation_rate_limit::tests::test_check_different_users_independent ... ok
+test user_invitation_rate_limit::tests::test_resend_rate_limit_by_email ... ok
+test write_rate_limit::tests::test_middleware_allows_under_limit ... ok
+test write_rate_limit::tests::test_middleware_blocks_over_limit ... ok
+test smtp::tests::authentication_and_delivery_failures_are_redacted ... ok
+test write_rate_limit::tests::test_middleware_non_write_methods_unaffected ... ok
+test write_rate_limit::tests::test_middleware_retry_after_header ... ok
+test smtp::tests::untrusted_tls_certificate_never_sends_credentials ... ok
+test write_rate_limit::tests::test_middleware_superadmin_bypass ... ok
+test mcp_internal::tests::update_event_rejects_end_before_start ... ok
+test write_rate_limit::tests::test_middleware_no_limiter_configured ... ok
+test mcp_internal::tests::update_event_returns_stored_values_not_payload ... ok
+test mcp_internal::tests::update_event_version_conflict_rejected ... ok
+test mcp_internal::tests::valid_key_passes_auth_on_all_routes ... ok
+test password::tests::hash_returns_bcrypt_format ... ok
+test password::tests::hash_and_verify_roundtrip ... ok
+test password::tests::verify_wrong_password_fails ... ok
+
+test result: ok. 240 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.29s
+
+     Running unittests src/main.rs (backend/target/debug/deps/commoncal_backend-8224c89e205a6157)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/db_tools.rs (backend/target/debug/deps/db_tools-1d5a3d7b250817f7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/account_management.rs (backend/target/debug/deps/account_management-f241bc8d03ae9659)
+
+running 26 tests
+test admin_email_change_requires_authentication ... ok
+test admin_registered_email_uses_confirmation_and_attributes_the_request ... ok
+test admin_registered_email_denies_stale_actors_and_ineligible_targets_and_recovers_delivery ... ok
+test admin_email_http_enforces_admin_csrf_status_and_both_success_paths ... ok
+test email_confirmation_origin_limit_and_sensitive_headers_are_enforced ... ok
+test email_confirmation_requires_an_explicit_valid_token ... ok
+test admin_invited_email_replaces_link_and_preserves_id_display_name_and_bootstrap_role ... ok
+test invited_email_delivery_failure_retains_updated_account_for_resend ... ok
+test invited_email_rejects_nonadmin_status_and_conflicts_and_audit_failure_rolls_back ... ok
+test invited_email_respects_reservations_and_concurrent_claims ... ok
+test public_origin_and_email_ip_token_limits_ignore_untrusted_forwarding ... ok
+test email_change_revokes_account_tokens_while_preserving_integration_credentials ... ok
+test email_change_requires_password_and_current_registered_status ... ok
+test concurrent_reset_consumption_has_one_winner_and_failures_roll_back ... ok
+test email_change_keeps_old_address_until_confirmation_and_preserves_identity ... ok
+test reset_page_has_no_cache_and_referrer_headers ... ok
+test email_confirmation_disable_conflict_and_audit_rollback_are_atomic ... ok
+test email_confirmation_has_one_concurrent_winner_and_is_domain_scoped ... ok
+test purpose_scoped_tokens_cannot_cross_invitation_and_reset_flows ... ok
+test recovery_request_has_a_generic_public_response ... ok
+test public_reset_requires_password_and_returns_no_session ... ok
+test competing_email_requests_reserve_one_address_and_expired_reservation_releases ... ok
+test reset_rotation_expiry_status_and_password_rules_are_enforced ... ok
+test account_settings_requires_session_csrf_and_actor_rate_limit ... ok
+test email_reservations_conflicts_expiry_rotation_and_delivery_failure ... ok
+test reset_is_single_use_and_ends_sessions_and_login_links_but_keeps_integrations ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.43s
+
+     Running tests/account_management_migration.rs (backend/target/debug/deps/account_management_migration-1b7d6029b6ac9058)
+
+running 2 tests
+test failed_integrity_check_rolls_back_upgrade_and_keeps_readiness_false ... ok
+test upgrade_preserves_identity_dependencies_and_backfills_invitees ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/apple_calendar_fixtures.rs (backend/target/debug/deps/apple_calendar_fixtures-4184ce1bfbbdddb6)
+
+running 12 tests
+test crud_delete_trace_is_well_formed_and_sanitized ... ok
+test crud_create_trace_is_well_formed_and_sanitized ... ok
+test connect_trace_is_well_formed_and_sanitized ... ok
+test sync_incremental_trace_is_well_formed_and_sanitized ... ok
+test crud_update_trace_is_well_formed_and_sanitized ... ok
+test revoke_trace_is_well_formed_and_sanitized ... ok
+test sync_initial_trace_is_well_formed_and_sanitized ... ok
+test client_properties_fixture_preserves_allowlisted_metadata ... ok
+test all_day_event_fixture_parses_and_round_trips ... ok
+test recurring_series_fixture_parses_and_round_trips ... ok
+test modified_occurrence_fixture_parses_with_master_and_exception ... ok
+test timed_event_fixture_parses_and_round_trips ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/application.rs (backend/target/debug/deps/application-11dbf28d9bbe2f37)
+
+running 11 tests
+test production_configuration_rejects_an_empty_session_secret ... ok
+test production_configuration_rejects_a_missing_session_secret ... ok
+test json_mutations_reject_non_json_content_types ... ok
+test compiled_frontend_is_served_by_the_application_router ... ok
+test unknown_routes_return_the_safe_json_error_envelope ... ok
+test health_endpoints_report_success ... ok
+test hsts_is_emitted_only_for_explicit_production_https_configuration ... ok
+test request_id_is_propagated_to_the_response ... ok
+test json_mutations_reject_oversized_bodies ... ok
+test response_hardening_covers_html_api_public_and_authentication_routes ... ok
+test json_mutations_within_the_limit_reach_the_handler ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/authorization.rs (backend/target/debug/deps/authorization-3a6609e4ac94ff6d)
+
+running 7 tests
+test inactive_users_are_denied_every_calendar_action ... ok
+test pending_users_are_denied_platform_management ... ok
+test missing_or_unrecognized_roles_deny ... ok
+test ownership_transfer_and_calendar_deletion_remain_owner_only ... ok
+test every_calendar_role_action_pair_matches_the_permission_matrix ... ok
+test suspended_users_are_denied_every_calendar_action ... ok
+test superadmin_has_no_implicit_private_calendar_read_permission ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/authorization_regression.rs (backend/target/debug/deps/authorization_regression-132f2f78e381be6b)
+
+running 4 tests
+test identifier_substitution_and_public_tokens_are_not_authorization_inputs ... ok
+test missing_calendar_acl_is_denied_before_any_endpoint_can_authorize ... ok
+test calendar_authorization_matrix_covers_every_fixture_and_endpoint_family ... ok
+test adversarial_endpoint_denials_do_not_reveal_calendar_or_feed_existence ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/backup.rs (backend/target/debug/deps/backup-79a6ece87dd88ce9)
+
+running 27 tests
+test backup_command_requires_a_destination_directory ... ok
+test encryptor_round_trip_recovers_the_compressed_artifact ... ok
+test from_hex_key_accepts_a_32_hex_key_and_round_trips ... ok
+test from_hex_key_accepts_a_48_hex_key_and_round_trips ... ok
+test from_hex_key_decrypts_ciphertext_made_with_a_nonzero_high_nibble_key ... ok
+test from_hex_key_decrypts_ciphertext_made_with_a_raw_32_byte_key ... ok
+test from_hex_key_boundary_lengths_case_and_edges ... ok
+test from_hex_key_derived_path_matches_independently_computed_kdf_output ... ok
+test from_hex_key_derives_the_same_key_for_identical_hex_input ... ok
+test from_hex_key_raw_path_decodes_a_mixed_byte_key_byte_identically ... ok
+test from_hex_key_rejects_invalid_keys ... ok
+test from_hex_key_raw_path_is_exactly_at_64_hex_chars ... ok
+test rejects_corrupt_snapshot ... ok
+test restore_command_requires_artifact_and_clean_destination ... ok
+test from_hex_key_raw_path_decodes_every_byte_value_byte_identically ... ok
+test restore_refuses_a_production_database_target_without_exposing_key_material ... ok
+test restore_rejects_corrupt_encrypted_artifacts_without_replacing_destination ... ok
+test creates_verified_compressed_snapshot_during_controlled_writes ... ok
+test encryption_failure_removes_plaintext_backup_artifacts ... ok
+test metadata_failure_removes_plaintext_backup_artifacts ... ok
+test upload_failure_retains_encrypted_local_recovery_artifact_without_logging_secret ... ok
+test creates_an_encrypted_backup_when_the_source_database_is_read_only ... ok
+test restore_decrypts_decompresses_and_verifies_representative_records ... ok
+test restore_cli_refuses_the_configured_production_database_before_reading_key_material ... ok
+test backup_cli_does_not_apply_pending_migrations_to_the_source_database ... ok
+test backup_cli_creates_an_encrypted_artifact_that_restores_a_representative_record ... ok
+test backup_cli_round_trips_with_a_48_hex_key ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+
+     Running tests/bootstrap.rs (backend/target/debug/deps/bootstrap-4b430ec7f6d86990)
+
+running 6 tests
+test created_invitation_is_superadmin_bound ... ok
+test empty_database_permits_bootstrap ... ok
+test raw_token_is_returned_only_to_caller_and_is_not_stored ... ok
+test second_bootstrap_attempt_is_rejected ... ok
+test existing_user_blocks_bootstrap ... ok
+test audit_entry_contains_no_token ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/caldav_event_resource.rs (backend/target/debug/deps/caldav_event_resource-d4cb99cb39fc165a)
+
+running 115 tests
+test audit_apple_occurrence_metadata_stays_on_occurrence ... ignored, known bug: occurrence metadata overwrites master; Apple CalDAV audit report
+test audit_apple_put_accepts_explicit_datetime_value ... ignored, known bug: explicit VALUE=DATE-TIME rejected; Apple CalDAV audit report
+test audit_apple_put_resolves_dst_overlap_to_first_occurrence ... ignored, known bug: valid DST overlap rejected; Apple CalDAV audit report
+test audit_apple_thisandfuture_is_not_silently_narrowed ... ignored, known bug: RANGE=THISANDFUTURE silently narrowed; Apple CalDAV audit report
+test change_log_is_ordered_and_pageable ... ok
+test apple_sync_collection_rejects_malformed_depth ... ok
+test apple_sync_collection_rejects_sync_level_two_with_nonzero_depth ... ok
+test categories_escaped_comma_and_uri_delimiters_survive_put_get ... ok
+test calendar_query_depth_defaults_to_zero_and_one_searches_members ... ok
+test audit_apple_sync_hydrates_returned_hrefs_and_recovers_invalid_token ... ok
+test apple_sync_collection_accepts_depth_one ... ok
+test apple_sync_collection_accepts_missing_depth ... ok
+test apple_sync_collection_accepts_depth_infinity ... ok
+test apple_sync_collection_accepts_depth_zero ... ok
+test create_recurring_rejects_exception_with_different_uid ... ok
+test create_recurring_rejects_second_master ... ok
+test create_recurring_series_with_multiple_exdates_and_exceptions ... ok
+test dav_create_is_not_double_counted ... ok
+test delete_missing_if_match_fails_428 ... ok
+test delete_unauthenticated_is_401 ... ok
+test dav_delete_is_not_double_counted ... ok
+test delete_repeated_is_deterministic ... ok
+test delete_matching_etag_succeeds_and_tombstones ... ok
+test delete_stale_etag_fails_412_without_mutation ... ok
+test delete_unauthorized_fails_404_without_mutation ... ok
+test depth_and_permission_metadata_match_implemented_methods ... ok
+test ensure_resource_is_stable_and_idempotent ... ok
+test failed_move_records_no_changes ... ok
+test deletion_and_recreation_sync_emit_one_final_live_resource ... ok
+test entity_namespace_is_resolved_and_invalid_qnames_are_rejected ... ok
+test editor_reads_details_and_can_create ... ok
+test etag_changes_only_with_canonical_content ... ok
+test free_busy_viewer_calendar_query_returns_busy_placeholders ... ok
+test free_busy_viewer_cannot_delete ... ok
+test free_busy_viewer_cannot_put_create ... ok
+test free_busy_viewer_get_receives_busy_placeholder_without_private_fields ... ok
+test head_matches_get_headers_without_body ... ok
+test get_returns_valid_vcalendar_with_stable_url_and_uid ... ok
+test free_busy_viewer_multiget_returns_busy_placeholders ... ok
+test imported_categories_and_uri_delimiters_survive_dav_serialization ... ok
+test imported_event_is_readable ... ok
+test future_and_tampered_collection_tokens_return_valid_sync_token_error ... ok
+test imported_event_rejects_move ... ok
+test imported_event_rejects_delete ... ok
+test imported_event_rejects_put_update ... ok
+test migration_enforces_unique_resource_identity ... ok
+test native_create_records_exactly_one_change ... ok
+test move_deleted_change_carries_resource_name ... ok
+test multiget_absolute_href_respects_property_subset_and_namespace_status ... ok
+test native_delete_records_one_change_and_tombstones_mapping ... ok
+test move_emits_source_removal_and_target_addition ... ok
+test initial_sync_pages_preserve_concurrent_changes_after_snapshot ... ok
+test native_update_records_exactly_one_change ... ok
+test imported_feed_create_update_missing_item_and_feed_delete_produce_sync_changes ... ok
+test non_move_update_records_only_updated ... ok
+test propfind_depth_one_lists_event_resource_with_matching_etag ... ok
+test put_all_day_end_not_after_start_is_rejected ... ok
+test put_all_day_event_survives_dst_boundary ... ok
+test put_all_day_multi_day_round_trips ... ok
+test put_create_records_audit_entry ... ok
+test put_all_day_single_day_round_trips ... ok
+test put_creates_event_visible_in_both_systems ... ok
+test propfind_lists_event_without_preexisting_mapping_and_url_is_stable ... ok
+test put_cross_user_is_404 ... ok
+test put_mixed_date_and_datetime_is_rejected ... ok
+test put_duplicate_create_fails_412 ... ok
+test put_mixed_datetime_and_date_is_rejected ... ok
+test put_recurring_etag_is_deterministic ... ok
+test put_recurring_canonical_multi_vevent_round_trip ... ok
+test put_missing_if_none_match_fails_428 ... ok
+test put_recurring_multiple_exdates_in_one_put ... ok
+test put_recurring_modified_occurrence_persists ... ok
+test put_recurring_series_round_trips_as_one_uid_and_resource ... ok
+test put_recurring_deleted_occurrence_persists_as_exdate ... ok
+test put_uid_conflict_rolls_back_partial_event_write ... ok
+test put_uid_conflict_fails_403 ... ok
+test put_unauthenticated_is_401 ... ok
+test put_update_all_day_preserves_all_day_representation ... ok
+test put_unsupported_rrule_fails_400 ... ok
+test put_update_concurrent_writers_one_wins ... ok
+test put_update_missing_if_match_fails_428_without_mutation ... ok
+test put_update_stale_etag_fails_412_without_mutation ... ok
+test put_update_matching_etag_succeeds_and_rotates_etag ... ok
+test put_update_unauthorized_fails_404_without_mutation ... ok
+test put_viewer_role_is_404 ... ok
+test quoted_parameter_uri_delimiters_do_not_corrupt_property_value ... ok
+test recurrence_query_preserves_local_time_across_dst_transition ... ok
+test recurring_all_day_query_matches_subday_overlap_and_exclusive_end ... ok
+test recurrence_query_membership_accounts_for_exhaustion_deletions_and_moved_instances ... ok
+test reports_accept_allprop_propname_and_exclude_calendar_data ... ok
+test recurring_rrule_change_is_rejected_without_mutating_resource ... ok
+test recurring_multi_vevent_failure_leaves_master_etag_and_exceptions_unchanged ... ok
+test reserved_resource_name_href_round_trips_through_propfind_get_and_multiget ... ok
+test rolled_back_update_records_no_change ... ok
+test semantic_discovery_crud_and_incremental_sync_sequence ... ok
+test signed_collection_tokens_expire_at_boundary ... ok
+test sync_collection_initial_snapshot_returns_all_events_and_token ... ok
+test supported_and_empty_property_selection_have_no_404_group ... ok
+test sync_collection_later_call_returns_only_newer_changes ... ok
+test sync_collection_invalid_token_fails_safely ... ok
+test sync_collection_rejects_bad_sync_level ... ok
+test sync_collection_pagination_does_not_skip_changes ... ok
+test query_overflow_returns_limit_precondition_instead_of_partial_resources ... ok
+test sync_collection_represents_deletions ... ok
+test t16_etags_are_deterministic ... ok
+test t16_categories_survive_unrelated_edit ... ok
+test t16_explicit_removal_stays_removed ... ok
+test t16_full_allowlist_survives_unrelated_edit ... ok
+test t16_scheduling_properties_rejected_on_create ... ok
+test two_calendar_sync_token_after_move ... ok
+test unauthenticated_get_is_401 ... ok
+test unknown_resource_and_cross_user_are_404 ... ok
+test viewer_get_receives_full_event_details ... ok
+test visibility_changes_and_regrant_invalidate_previous_sync_tokens ... ok
+test xml_properties_preserve_namespaces_and_nonempty_status_groups ... ok
+
+test result: ok. 111 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.73s
+
+     Running tests/caldav_mkcalendar.rs (backend/target/debug/deps/caldav_mkcalendar-a71c844866421924)
+
+running 11 tests
+test mkcalendar_rejections_are_not_cacheable ... ok
+test invalid_timezone_and_unknown_properties_report_atomic_failures ... ok
+test rejects_invalid_creation_without_leaving_collection ... ok
+test rejects_bad_paths_and_required_properties_atomically ... ok
+test options_and_allow_match_collection_creation_permissions ... ok
+test concurrent_creation_has_one_winner_and_no_extra_calendar ... ok
+test creates_and_discovers_at_requested_url ... ok
+test principal_scoped_keys_and_existing_numeric_calendar_stay_isolated ... ok
+test database_failure_rolls_back_calendar_acl_and_identity ... ok
+test timezone_event_crud_reports_sync_and_numeric_compatibility ... ok
+test unknown_property_without_namespace_has_well_formed_error_response ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/calendar_api.rs (backend/target/debug/deps/calendar_api-431635a427531101)
+
+running 5 tests
+test authenticated_user_can_create_a_calendar_with_an_owner_acl_and_audit ... ok
+test settings_are_manager_only_or_better_and_require_current_version ... ok
+test id_substitution_and_deleted_resources_use_the_same_non_leaking_response ... ok
+test archive_restore_and_delete_follow_permissions_and_are_audited ... ok
+test list_and_read_apply_role_projection_and_hide_unrelated_calendars ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/calendar_repository.rs (backend/target/debug/deps/calendar_repository-027da023d51c6732)
+
+running 7 tests
+test duplicate_acl_fails ... ok
+test ownership_transfer_updates_owner_and_acl_atomically ... ok
+test failed_transfer_rolls_back ... ok
+test calendar_creation_creates_exactly_one_owner ... ok
+test stale_version_update_fails ... ok
+test foreign_key_behavior_is_correct ... ok
+test ownership_transfer_rejects_inactive_targets_without_changes ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/calendar_restore.rs (backend/target/debug/deps/calendar_restore-8f80cccc87ce08a8)
+
+running 8 tests
+test restore_requires_authentication ... ok
+test archived_calendar_is_excluded_from_list ... ok
+test restore_returns_404_for_non_existent_calendar ... ok
+test restore_returns_404_for_non_archived_calendar ... ok
+test restore_returns_200_and_sets_archived_to_false ... ok
+test restored_calendar_appears_in_list ... ok
+test double_restore_returns_404_second_time ... ok
+test restore_requires_owner_or_manager_role ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/calendar_sharing_api.rs (backend/target/debug/deps/calendar_sharing_api-4d7726c3ce30949c)
+
+running 7 tests
+test manager_cannot_transfer_and_editor_cannot_manage_sharing ... ok
+test revocation_invokes_pending_notification_cancellation_contract ... ok
+test owner_cannot_remove_or_demote_self ... ok
+test ownership_transfer_is_atomic_audited_and_requires_an_active_target ... ok
+test revocation_removes_access_immediately_and_every_change_is_audited ... ok
+test owner_and_manager_can_grant_and_update_every_non_owner_role ... ok
+test acl_role_action_matrix_is_enforced_for_every_calendar_role ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/cross_cutting.rs (backend/target/debug/deps/cross_cutting-266f2f15d9339f6b)
+
+running 11 tests
+test get_requests_skip_csrf_check ... ok
+test version_conflict_includes_current_version ... ok
+test missing_csrf_token_returns_403 ... ok
+test not_found_response_has_correct_json_shape ... ok
+test regular_requests_do_not_include_cors_headers ... ok
+test unauthorized_response_has_correct_json_shape ... ok
+test post_requests_require_valid_csrf ... ok
+test cors_headers_only_for_preflight ... ok
+test forbidden_response_has_correct_json_shape ... ok
+test csrf_validation_ignores_origin_header ... ok
+test wrong_csrf_token_returns_403 ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running tests/debug_ics.rs (backend/target/debug/deps/debug_ics-43c4f3eceaadbec9)
+
+running 1 test
+test debug_serialize ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dev_login_api.rs (backend/target/debug/deps/dev_login_api-4dc23cfe208c04d0)
+
+running 5 tests
+test dev_login_requires_email_parameter ... ok
+test dev_login_redirects_existing_user_without_recreating ... ok
+test dev_login_normalizes_email ... ok
+test dev_login_session_has_correct_expires_and_last_seen ... ok
+test dev_login_creates_user_and_redirects_when_user_does_not_exist ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/dst_check.rs (backend/target/debug/deps/dst_check-e3cd60f54dfac67e)
+
+running 1 test
+test dst_ambiguity_check ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/email.rs (backend/target/debug/deps/email-8806a94c7e87308f)
+
+running 6 tests
+test production_provider_errors_use_safe_internal_codes ... ok
+test email_confirmation_and_notice_use_distinct_messages_and_redact_tokens ... ok
+test password_recovery_uses_its_own_message_and_redacts_link_debug ... ok
+test in_memory_sender_captures_recipient_and_message_type ... ok
+test development_sender_output_is_redacted ... ok
+test token_values_do_not_appear_in_captured_structured_logs ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/event_api.rs (backend/target/debug/deps/event_api-879914537794a28e)
+
+running 11 tests
+test production_composition_keeps_auth_admin_calendar_and_event_routes_mounted ... ok
+test event_id_substitution_cannot_bypass_calendar_authorization ... ok
+test imported_event_cannot_be_updated_through_normal_api ... ok
+test move_to_unauthorized_calendar_fails_atomically ... ok
+test every_calendar_role_gets_the_expected_event_permissions ... ok
+test free_busy_projection_redacts_details_and_list_requires_a_bounded_range ... ok
+test all_day_recurring_routes_use_iso_recurrence_dates_and_exclusive_end_dates ... ok
+test stale_update_returns_conflict_and_crud_mutations_are_audited_safely ... ok
+test imported_event_projection_is_marked_read_only ... ok
+test recurring_routes_expand_and_mutate_occurrences_with_existing_session_and_csrf_controls ... ok
+test viewer_can_read_but_cannot_update_or_delete ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/event_repository.rs (backend/target/debug/deps/event_repository-986488ba268770f6)
+
+running 7 tests
+test timed_event_round_trip_preserves_utc_instants_and_timezone ... ok
+test all_day_event_round_trip_preserves_exclusive_end_date ... ok
+test invalid_event_and_query_ranges_fail ... ok
+test oversized_utc_and_all_day_query_ranges_fail ... ok
+test stale_version_update_fails ... ok
+test range_query_excludes_non_overlapping_events ... ok
+test event_lookup_is_scoped_to_its_calendar ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/external_feed.rs (backend/target/debug/deps/external_feed-34653e45c2bc15a4)
+
+running 3 tests
+test editor_cannot_create_a_feed ... ok
+test imports_updates_adds_and_removes_only_after_complete_parse ... ok
+test sends_validators_for_304_and_never_projects_full_url ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/ics.rs (backend/target/debug/deps/ics-3379122ba472d830)
+
+running 7 tests
+test rejects_vtodo_and_vjournal_components ... ok
+test records_scheduling_properties_and_method ... ok
+test unfolds_lines_and_rejects_unsafe_or_structurally_invalid_input ... ok
+test normalizes_allowlisted_client_properties ... ok
+test rejects_invalid_timing_limits_and_duplicate_event_keys ... ok
+test parses_timed_all_day_recurring_and_escaped_events ... ok
+test parses_event_with_valarm_subcomponents ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/ics_http.rs (backend/target/debug/deps/ics_http-c4c56951d40f5673)
+
+running 12 tests
+test rejects_ipv4_mapped_ipv6_bypass ... ok
+test accepts_a_public_https_target ... ok
+test pins_the_validated_dns_result_for_the_connection ... ok
+test rejects_oversized_compressed_response ... ok
+test rejects_credentials_and_redacts_sensitive_url_parts_in_logs ... ok
+test accepts_only_configured_schemes_and_limits_redirects ... ok
+test rejects_redirect_to_private_address ... ok
+test rejects_localhost_and_private_ranges ... ok
+test rejects_when_any_dns_result_is_not_public ... ok
+test rejects_oversized_decompressed_response ... ok
+test rejects_alternative_numeric_address_representation ... ok
+test rejects_slow_response ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/ics_import.rs (backend/target/debug/deps/ics_import-3c5db73fbfbc39e7)
+
+running 10 tests
+test ics_import_batch_rejects_invalid_input_before_writes_or_notifications ... ok
+test ics_import_service_rejects_relationship_and_parser_failures_before_writes ... ok
+test ics_import_batch_authorizes_with_create_event_permission ... ok
+test ics_import_service_converts_standalone_recurrence_and_reimports ... ok
+test ics_import_batch_rolls_back_everything_on_database_failure ... ok
+test ics_import_http_requires_calendar_content_and_bounds_the_body ... ok
+test ics_import_batch_persists_mixed_events_exceptions_and_side_effects ... ok
+test ics_import_http_allows_writers_and_hides_denials ... ok
+test ics_import_http_exposes_stable_limit_code ... ok
+test ics_import_service_maps_event_limits_without_writes ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests/identity_repository.rs (backend/target/debug/deps/identity_repository-15d9c5d33224e13b)
+
+running 6 tests
+test repository_api_stores_only_explicit_hash_types ... ok
+test duplicate_normalized_emails_fail ... ok
+test deleted_user_status_is_schema_valid_and_round_trips ... ok
+test invalid_user_status_fails_at_the_schema_boundary ... ok
+test identity_records_round_trip ... ok
+test expired_and_revoked_records_can_be_queried_correctly ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/invitation_consumption.rs (backend/target/debug/deps/invitation_consumption-43d5ff46a87e0f97)
+
+running 12 tests
+test preview_never_consumes_invitation_or_creates_session ... ok
+test revoked_invitation_fails ... ok
+test expired_invitation_fails ... ok
+test token_only_acceptance_cannot_bypass_password_creation ... ok
+test registered_account_cannot_be_overwritten_by_invitation ... ok
+test reused_invitation_fails ... ok
+test invalid_password_does_not_consume_and_bootstrap_role_is_preserved ... ok
+test database_rollback_occurs_when_registration_fails ... ok
+test response_does_not_expose_token_hashes ... ok
+test invited_email_collision_preserves_identity ... ok
+test concurrent_acceptance_has_one_winner ... ok
+test valid_invitation_activates_user ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.32s
+
+     Running tests/mail_configuration.rs (backend/target/debug/deps/mail_configuration-ea6c5d66b4a74a38)
+
+running 6 tests
+test development_does_not_read_smtp_settings_and_uses_capture ... ok
+test production_requires_password_login_for_invitation_accounts ... ok
+test production_requires_every_mail_setting_without_exposing_values ... ok
+test malformed_mail_configuration_is_rejected_without_echoing_input ... ok
+test production_startup_without_mail_fails_before_creating_database ... ok
+test production_bootstrap_does_not_require_mail_credentials ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests/middleware_regression.rs (backend/target/debug/deps/middleware_regression-4fd4ad296f9f5559)
+
+running 10 tests
+test caldav_response_includes_security_headers ... ok
+test propfind_dav_root_auth_failure_produces_request_id_header ... ok
+test propfind_dav_root_with_valid_auth_produces_request_id_header ... ok
+test apple_connection_management_unauthenticated_produces_request_id_header ... ok
+test propfind_dav_root_no_auth_produces_request_id_header ... ok
+test apple_connection_response_includes_security_headers ... ok
+test normal_api_request_has_single_request_id_header ... ok
+test caldav_request_has_single_request_id_header ... ok
+test apple_connection_management_with_session_produces_request_id_header ... ok
+test well_known_propfind_preserves_discovery_through_shared_middleware ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s
+
+     Running tests/notification_planning.rs (backend/target/debug/deps/notification_planning-69d3c55c39c4a952)
+
+running 4 tests
+test test_delivery_is_visible_only_to_the_authenticated_recipient ... ok
+test revocation_cancels_pending_jobs_and_all_day_uses_preference_timezone ... ok
+test event_preferences_take_precedence_and_plan_independent_user_jobs ... ok
+test recurring_jobs_are_deduplicated_and_event_edits_cancel_obsolete_pending_jobs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/notification_worker.rs (backend/target/debug/deps/notification_worker-d2354a26dc5d1b68)
+
+running 12 tests
+test delivery_failure_logs_are_structured_and_redact_private_delivery_data ... ok
+test expired_claims_are_recovered_and_stale_claimants_cannot_complete ... ok
+test revoked_calendar_access_prevents_private_notification_delivery ... ok
+test permanent_email_failure_is_terminal_immediately_and_metrics_are_safe ... ok
+test exhausted_transient_failures_reach_terminal_failed_state_without_leaking_private_data ... ok
+test concurrent_claims_have_a_single_winner_and_respect_the_batch_limit ... ok
+test completing_a_claim_is_idempotent_and_prevents_a_second_delivery ... ok
+test valid_claim_creates_an_in_app_notification ... ok
+test suspended_user_receives_no_notification_delivery ... ok
+test transient_email_failure_is_retried_after_deterministic_backoff ... ok
+test claims_are_limited_to_the_configured_batch_size ... ok
+test valid_claim_sends_a_notification_email ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running tests/passwordless_login.rs (backend/target/debug/deps/passwordless_login-d98b90c56a6c1a59)
+
+running 11 tests
+test fixed_window_limiter_enforces_each_key_independently ... ok
+test rate_limit_checks_ip_and_normalized_email ... ok
+test expired_and_reused_links_fail ... ok
+test unknown_user_does_not_create_a_token ... ok
+test successful_login_rotates_session_and_updates_last_login ... ok
+test delivery_failure_keeps_the_generic_response_and_revokes_the_token ... ok
+test suspended_user_cannot_log_in ... ok
+test active_user_receives_a_link ... ok
+test logs_and_audits_do_not_reveal_account_existence_or_tokens ... ok
+test registered_and_unknown_requests_are_indistinguishable ... ok
+test emailed_login_link_preserves_safe_consent_continuation_and_rejects_external_targets ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running tests/persistence.rs (backend/target/debug/deps/persistence-52c7813252d931b7)
+
+running 6 tests
+test database_path_must_not_be_empty ... ok
+test migrations_run_on_a_fresh_database ... ok
+test wal_mode_is_active_in_the_integration_database ... ok
+test foreign_key_violations_fail ... ok
+test readiness_remains_false_when_migration_fails ... ok
+test rerunning_migrations_is_safe ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/public_view_api.rs (backend/target/debug/deps/public_view_api-f3244c23d3898325)
+
+running 5 tests
+test source_acl_changes_are_reflected_on_the_next_public_read ... ok
+test raw_token_is_not_stored_and_rotation_invalidates_the_old_token ... ok
+test publication_can_be_reconfigured_and_public_reads_are_secure_and_read_only ... ok
+test expired_revoked_and_invalid_tokens_return_the_same_generic_not_found ... ok
+test projections_contain_only_their_permitted_fields_and_no_source_or_user_ids ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/recurrence.rs (backend/target/debug/deps/recurrence-74d17c3cb312cf24)
+
+running 9 tests
+test rejects_until_span_exceeding_five_years ... ok
+test count_and_until_end_the_series ... ok
+test yearly_recurrence_skips_non_leap_years_for_february_29 ... ok
+test monthly_recurrence_skips_months_without_the_start_day ... ok
+test preserves_local_time_across_spring_and_autumn_dst_changes ... ok
+test applies_excluded_and_modified_single_occurrences ... ok
+test rejects_unsupported_or_malicious_rules_and_bounds_unending_rules ... ok
+test expands_daily_weekly_monthly_and_yearly_rules ... ok
+test accepts_until_span_within_five_years ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recurring_event_api.rs (backend/target/debug/deps/recurring_event_api-a3d4a79d4d403bad)
+
+running 11 tests
+test authorization_applies_to_every_recurring_operation ... ok
+test creates_and_expands_a_recurring_series_in_a_bounded_range ... ok
+test all_day_occurrence_mutations_preserve_auth_conflicts_and_replanning ... ok
+test creates_and_expands_an_all_day_series_with_exclusive_end_dates ... ok
+test rejects_concurrent_series_and_exception_edits_with_current_version ... ok
+test deletes_one_occurrence_without_deleting_the_series ... ok
+test updates_one_occurrence_without_changing_the_series_template ... ok
+test recurring_mutations_trigger_the_notification_replanning_seam ... ok
+test updates_and_deletes_single_all_day_occurrences ... ok
+test updates_the_entire_all_day_series_and_clears_its_exceptions ... ok
+test updates_the_entire_series_and_preserves_its_rule ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/scratch_axum.rs (backend/target/debug/deps/scratch_axum-5a807426f9547e2b)
+
+running 1 test
+test content_length_behavior ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/scratch_ics.rs (backend/target/debug/deps/scratch_ics-eb8c04f8307a0d2d)
+
+running 1 test
+test scratch_parse ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/security.rs (backend/target/debug/deps/security-1ed44bbaaabe0a5d)
+
+running 16 tests
+test expired_token_fails ... ok
+test consumed_token_fails ... ok
+test local_http_session_cookie_uses_a_browser_valid_name ... ok
+test correct_token_verifies ... ok
+test decrypt_with_tampered_ciphertext_returns_none ... ok
+test decrypt_with_wrong_key_returns_none ... ok
+test csrf_token_from_another_session_fails ... ok
+test modified_token_fails_verification ... ok
+test session_cookie_has_required_security_attributes_and_path ... ok
+test tokens_from_different_domains_cannot_be_substituted ... ok
+test generated_tokens_have_sufficient_entropy_and_do_not_repeat ... ok
+test email_change_tokens_are_separate_from_every_other_domain ... ok
+test recovery_tokens_are_separate_from_every_existing_token_domain ... ok
+test derive_key_can_encrypt_and_decrypt ... ok
+test derive_different_inputs_produce_different_keys ... ok
+test independently_derived_keys_decrypt_persisted_secret ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.87s
+
+     Running tests/session_middleware.rs (backend/target/debug/deps/session_middleware-a186590fc59de5a2)
+
+running 11 tests
+test unsafe_request_without_csrf_fails ... ok
+test unsafe_request_with_a_cross_origin_header_fails_even_when_fetch_metadata_is_same_origin ... ok
+test unsafe_request_with_cross_site_fetch_metadata_fails_even_when_origin_is_allowed ... ok
+test valid_session_authenticates ... ok
+test same_site_unsafe_request_with_valid_origin_fetch_metadata_and_csrf_succeeds ... ok
+test cross_site_unsafe_request_fails ... ok
+test safe_get_does_not_require_csrf ... ok
+test https_session_does_not_accept_unprefixed_http_cookie ... ok
+test all_session_logout_revokes_every_session ... ok
+test revoked_idle_expired_and_absolute_expired_sessions_fail ... ok
+test wrong_session_csrf_fails ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/shared_view_api.rs (backend/target/debug/deps/shared_view_api-49feb316e4edfad2)
+
+running 6 tests
+test adding_an_inaccessible_calendar_fails_without_leaking_it ... ok
+test adding_a_source_does_not_grant_or_upgrade_calendar_permission ... ok
+test combined_private_results_preserve_source_calendar_identity_for_the_authorized_user ... ok
+test another_user_cannot_edit_a_private_view ... ok
+test revoked_calendar_access_removes_the_source_and_its_events_on_the_next_read ... ok
+test view_owner_can_create_read_update_delete_and_manage_ordered_colored_sources ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/smoke.rs (backend/target/debug/deps/smoke-9a1fc6384f1fb96a)
+
+running 1 test
+test backend_binary_is_available ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/superadmin_user_management.rs (backend/target/debug/deps/superadmin_user_management-a2d261e9e43f7fe6)
+
+running 19 tests
+test admins_cannot_disable_themselves_even_with_another_admin ... ok
+test final_superadmin_cannot_be_demoted_or_suspended ... ok
+test concurrent_admin_disables_leave_one_active_admin ... ok
+test concurrent_caldav_issuance_cannot_leave_a_live_credential_after_disable ... ok
+test duplicate_pending_invitation_is_handled_deterministically ... ok
+test disable_rolls_back_all_credentials_when_audit_fails ... ok
+test disable_revokes_browser_login_and_integration_credentials_permanently ... ok
+test expired_invitation_resend_has_one_winner_and_replacement_is_valid ... ok
+test disable_invited_and_pending_users_revokes_their_account_tokens ... ok
+test invitation_respects_email_reservations_and_releases_expired_ones ... ok
+test normal_users_receive_denial ... ok
+test object_identifier_substitution_does_not_bypass_authorization ... ok
+test resend_requires_admin_and_csrf_and_duplicate_reports_status ... ok
+test resend_invalidates_the_previous_token ... ok
+test revoked_delivery_can_be_retried_but_stale_resends_and_ineligible_users_cannot ... ok
+test stale_or_nonadmin_actor_cannot_disable_and_inactive_target_is_unchanged ... ok
+test suspending_a_user_revokes_sessions ... ok
+test user_listing_never_exposes_token_hashes ... ok
+test failed_delivery_remains_visible_and_retries_register_the_same_user ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests/user_invitation.rs (backend/target/debug/deps/user_invitation-9455fe73886fa889)
+
+running 14 tests
+test rate_limit_allows_under_limit ... ok
+test rate_limit_blocks_over_limit ... ok
+test service_creates_invitation_successfully ... ok
+test resend_rate_limit_by_email ... ok
+test http_endpoint_normalizes_email_to_lowercase ... ok
+test http_endpoint_resend_returns_not_found ... ok
+test http_endpoint_rejects_duplicate_invitation ... ok
+test http_endpoint_resends_invitation ... ok
+test alternate_invitation_routes_enforce_reservations_and_invited_status ... ok
+test http_endpoint_creates_invitation ... ok
+test service_rejects_invitation_for_existing_user ... ok
+test service_resend_returns_not_found_for_nonexistent_email ... ok
+test service_rejects_duplicate_invitation_for_same_email ... ok
+test service_resends_invitation_by_email ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+   Doc-tests commoncal_backend
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

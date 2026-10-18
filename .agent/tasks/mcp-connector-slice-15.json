@@ -10,8 +10,9 @@
     "run authorization-service unit/contract/restart/restore tests, backend login/consent/grant tests, MCP protocol/E2E tests, Helm/Flux validation, production smoke/recovery checks, the install harness, and the manual clean-environment OAuth matrix for all three clients; record limitations and do not claim support for any client whose complete path fails.",
     "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
     "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
-    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+    "Record proof and completion in the original 00-status.md only when every slice condition passes.",
+    "Operator requested marking mcp-connector-slice-15 completed on 2026-10-18. Administrative completion override; OpenCode isolated list/logout failures, unavailable Claude Code CLI, and pending live OAuth/client/recovery proofs remain documented in docs/plans/cross-client-mcp-connector/09-slice15-release-proof.md. This does not assert that the full release matrix passed, claim client support, or authorize production deployment."
   ],
   "docs_required": true,
-  "status": "blocked"
+  "status": "completed"
 }

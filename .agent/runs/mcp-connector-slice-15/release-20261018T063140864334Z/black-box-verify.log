@@ -1,0 +1,8 @@
+[verify] starting mock server on http://127.0.0.1:3999
+[verify] mock server is ready
+[verify] FAIL path: harness vs current-production behavior (expect exit 1)
+[verify]   harness exit code: 1 (expected 1) -> OK
+[verify] PASS path: harness vs standards-compatible server (expect exit 0)
+[verify]   harness exit code: 0 (expected 0) -> OK
+[verify] 
+[verify] VERIFY PASS: harness exits 1 on current-production behavior and 0 on standards-compatible behavior.

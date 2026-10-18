@@ -1,0 +1,16 @@
+✔ production rejects every missing required setting (5.164125ms)
+✔ production validates HTTPS origins, dedicated issuer and strong credentials (6.084084ms)
+✔ signing key must exist, be private and not a test key; overlap public keys accepted (1.723958ms)
+✔ configured loopback callback permits ephemeral ports and excludes other callback forms (1.356625ms)
+✔ observed OpenCode v2 callback admits only HTTP IPv4 loopback and its exact path (2.479625ms)
+✔ SQLite durable state, expiry, canonical decisions and grant revocation (13.103875ms)
+✔ offline PostgreSQL importer refuses existing destination without changing it (64.9715ms)
+✔ independent SQLite connections share atomic decisions, consumption and durable audit (5.294208ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 140.93225

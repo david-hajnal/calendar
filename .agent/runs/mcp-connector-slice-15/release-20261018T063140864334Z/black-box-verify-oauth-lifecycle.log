@@ -1,0 +1,14 @@
+[verify-oauth-lifecycle] FAIL path: harness vs current-production behavior (expect exit 1)
+[verify-oauth-lifecycle]   harness exit code: 1 (expected 1) -> OK
+[verify-oauth-lifecycle]   violation L1 (DCR) present -> OK
+[verify-oauth-lifecycle] PASS path: harness vs compliant lifecycle server (expect exit 0)
+[verify-oauth-lifecycle]   harness exit code: 0 (expected 0) -> OK
+[verify-oauth-lifecycle]   L1 passes -> OK
+[verify-oauth-lifecycle]   L2 passes -> OK
+[verify-oauth-lifecycle]   L3 passes -> OK
+[verify-oauth-lifecycle]   L4 passes -> OK
+[verify-oauth-lifecycle]   L5 passes -> OK
+[verify-oauth-lifecycle]   L6 passes -> OK
+[verify-oauth-lifecycle]   L7 passes -> OK
+[verify-oauth-lifecycle] 
+[verify-oauth-lifecycle] VERIFY PASS: oauth-lifecycle harness exits 1 on current-production behavior and 0 on compliant behavior.

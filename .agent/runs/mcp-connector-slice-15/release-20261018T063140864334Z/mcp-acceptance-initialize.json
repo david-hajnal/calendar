@@ -1,0 +1,44 @@
+{
+  "harness": "commoncal-mcp-acceptance",
+  "harnessVersion": "0.1.0",
+  "record": {
+    "request": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "commoncal-mcp-acceptance",
+          "version": "0.1.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "response": {
+      "bodyJson": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "result": {
+          "capabilities": {
+            "tools": {}
+          },
+          "protocolVersion": "2025-03-26",
+          "serverInfo": {
+            "name": "mock-standards-compliant",
+            "version": "1.0.0"
+          }
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-standards-compliant\",\"version\":\"1.0.0\"}}}",
+      "headers": {
+        "content-length": "161",
+        "content-type": "application/json"
+      },
+      "status": 200
+    }
+  },
+  "recordedBy": "baseline-initialize-probe",
+  "target": "http://127.0.0.1:3999/mcp-compliant"
+}

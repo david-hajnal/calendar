@@ -1,0 +1,48 @@
+{
+  "status": "blocked",
+  "summary": "Slice 11 (Codex compatibility) is a manual-hold task whose core acceptance criterion requires a live released Codex client to verify the add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery paths, record the callback shape and minimum version, and then extend the DCR policy only as narrowly required. The Codex CLI is not available in this sandbox (codex not found; only OpenCode is present), so the released-client observation that gates every other slice-11 step cannot be performed. I completed the required reconciliation (read slice 11, the approved gates, the mcp-* manifests, and the production docs) and preserved the per-slice continuation gate without making any code changes, without extending the DCR policy, and without recording completion in 00-status.md. This mirrors the slice-10 precedent (implement-result blocked, review-result completed).",
+  "files_changed": [],
+  "verification_commands": [
+    "command -v codex",
+    "command -v claude",
+    "command -v opencode",
+    "cat .agent/tasks/mcp-connector-slice-11.json",
+    "cat .agent/tasks/mcp-connector-slice-10.json",
+    "cat docs/plans/cross-client-mcp-connector/00-status.md",
+    "cat docs/plans/cross-client-mcp-connector/04-slices.md",
+    "find . -name MCP-PRODUCTION-FIX-PLAN.md",
+    "ls docs/",
+    "cat slice1-lab/auth-server/src/dcr-policy.mjs",
+    "cat .agent/runs/mcp-connector-slice-10/0b1c8a25ccb549c9b8398a2b4de2fb8f-implement-result.json",
+    "cat .agent/runs/mcp-connector-slice-10/5595f6c36e8c4c64b8e3c6f820ad9079-review-result.json",
+    "git -C /Users/kaszperek/repos/happening status --short",
+    "git -C /Users/kaszperek/repos/happening diff --stat"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Codex CLI is not installed in this sandbox (codex not found); the released-client verification that is the core of slice 11 cannot be executed here.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is referenced by the slice-11 task and 12+ other mcp-* manifests but does not exist anywhere in the repository; the authoritative production docs are docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Contradiction: .agent/tasks/mcp-connector-slice-10.json says status=completed, but Slice 10 is still unchecked in docs/plans/cross-client-mcp-connector/00-status.md (line 19); its outstanding condition (authenticated MCP client connection + read-only tool call + immediate grant revocation in production) has not been proven.",
+    "Slice 11 depends on slice 10, whose completion is not recorded in 00-status.md, so the dependency gate is not satisfied.",
+    "The 2026-10-08 SQLite decision (AUTH-PRODUCTION.md) supersedes the 'managed PostgreSQL' wording still present in the slice 10/11 acceptance text."
+  ],
+  "follow_up": [
+    "Operator must run the live Codex matrix on a machine with the released Codex CLI: add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery, without copied tokens or client secrets, and record the observed callback shape and minimum supported version.",
+    "Only after observing the released Codex client may the DCR policy (slice1-lab/auth-server/src/dcr-policy.mjs) be extended with a narrowly-required shape (custom-scheme or exact-https); arbitrary HTTPS callbacks remain forbidden per slice discipline.",
+    "Add the non-secret checks to the opt-in harness (mcp-acceptance/) only after the callback shape is known, so the checks assert the real Codex flow rather than an assumed one.",
+    "Resolve the slice-10 contradiction: either record Slice 10 completion in 00-status.md once its outstanding condition is proven, or revert its manifest status to blocked/ready.",
+    "Restore docs/MCP-PRODUCTION-FIX-PLAN.md or repoint the 12+ manifest references to docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Reconcile the 'managed PostgreSQL' wording in the slice 10/11 acceptance text with the 2026-10-08 SQLite decision."
+  ],
+  "important_context": [
+    "Working directory is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening. cd into happening is permission-rejected, but absolute-path cat/ls/find/grep and git -C work.",
+    "No Codex or Claude CLI is present in this environment (only OpenCode at /opt/homebrew/bin/opencode), so live released-client verification of the full OAuth flow is impossible here.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is missing repo-wide; it was not invented.",
+    "Slice 10 is a manual hold: production rollout is largely done (issuer switched to https://auth.hajnal.space) but an authenticated MCP client connection + read-only tool call + grant revocation are NOT yet proven.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting (contradicts the 'managed PostgreSQL' wording in the slice 10/11 acceptance text).",
+    "The DCR policy extension must be 'narrowly required' and only after observing the released Codex client; arbitrary HTTPS callbacks remain forbidden (slice discipline in 04-slices.md).",
+    "No files were modified in this session (files_changed is empty); the pre-existing uncommitted changes in git status are from prior slices (9, 10) and ics-import work, not from this task.",
+    "Completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved.",
+    "This mirrors the slice-10 precedent: .agent/runs/mcp-connector-slice-10/ implement-result.json (status blocked) and review-result.json (status completed) both confirm the manual-hold handling with no production changes."
+  ]
+}

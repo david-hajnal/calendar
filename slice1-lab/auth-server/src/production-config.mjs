@@ -1,5 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { OPENCODE_V2_CALLBACK } from './dcr-policy.mjs';
 
 export function productionConfig(env, jwks) {
   const required = (name) => {
@@ -47,5 +48,7 @@ export function productionConfig(env, jwks) {
   if (!Number.isInteger(rate) || rate < 1 || rate > 1000) throw new Error('invalid DCR rate limit');
   const cleanupInterval = Number(env.AUTH_CLEANUP_INTERVAL_MS ?? 60_000);
   if (!Number.isInteger(cleanupInterval) || cleanupInterval < 1000 || cleanupInterval > 3_600_000) throw new Error('invalid retention cleanup interval');
-  return { sqlitePath, cleanupInterval, issuer, resource, commoncal, bridge, cookies, kid, rate, catalog: hosts.map((host) => ({ kind: 'loopback', host, port: 'any', path })) };
+  const catalog = hosts.map((host) => ({ kind: 'loopback', host, port: 'any', path }));
+  if (hosts.includes(OPENCODE_V2_CALLBACK.host)) catalog.push(OPENCODE_V2_CALLBACK);
+  return { sqlitePath, cleanupInterval, issuer, resource, commoncal, bridge, cookies, kid, rate, catalog };
 }

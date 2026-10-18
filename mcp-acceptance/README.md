@@ -1,5 +1,24 @@
 # MCP acceptance harness (Phase 0)
 
+## Released-client README checks
+
+`node mcp-acceptance/client-snippets.js opencode` (or `codex`, `claude`) runs
+the marked README commands in temporary profiles against a loopback fixture.
+It checks actual CLI syntax and OpenCode v2 config/callback behavior. Missing
+clients and failures exit nonzero. It does not prove live OAuth or calendar
+access; see [the connection verification guide](../docs/MCP-CONNECTION.md)
+and [recorded results](../docs/plans/cross-client-mcp-connector/08-client-delivery-evidence.md).
+
+For the full slice 15 suite, run `make mcp-release-proof` or
+`python3 scripts/verify-mcp-release.py --with-image --live-discovery`.
+The latter includes a disposable auth-image proof through `scripts/dev.sh` and
+read-only public discovery. Missing tools, skipped checks, failures and pending
+manual live proofs remain visible; this command alone cannot approve release.
+See [release-proof usage and results](../docs/plans/cross-client-mcp-connector/09-slice15-release-proof.md#repeatable-verification-and-current-run).
+
+The historical baseline descriptions below explain the protocol harness's
+original failure cases; they are not a current production status report.
+
 A standalone, black-box acceptance harness for the production CommonCal MCP
 endpoint. It targets a configurable production-component URL and asserts:
 

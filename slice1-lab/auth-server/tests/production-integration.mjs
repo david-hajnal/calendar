@@ -46,9 +46,9 @@ async function request(path, options = {}) {
 }
 async function privateRequest(path, options = {}) { return fetch(`http://127.0.0.1:${privatePort}${path}`, { ...options, headers: { authorization: `Bearer ${bridge}`, ...options.headers } }); }
 const redirectUri = 'http://127.0.0.1:19876/mcp/oauth/callback';
-async function register(uri = redirectUri) {
+async function register(uri = redirectUri, headers = {}) {
   // Exercise whitespace and multibyte text: replay framing must use the new byte length.
-  return request('/reg', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'production proof — recovery', redirect_uris: [uri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }, null, 2) });
+  return request('/reg', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ client_name: 'production proof — recovery', redirect_uris: [uri], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }, null, 2) });
 }
 async function token(params) {
   const response = await request('/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params) });
@@ -64,6 +64,12 @@ try {
   const client = await registration.json();
   assert.equal((await register('https://evil.test/callback')).status, 400);
   assert.equal((await register('http://localhost:19876/mcp/oauth/callback')).status, 400);
+  const openCodeRegistration = await register('http://127.0.0.1:55740/callback', { 'x-forwarded-for': '192.0.2.10' });
+  assert.equal(openCodeRegistration.status, 201);
+  const openCodeClient = await openCodeRegistration.json();
+  assert.deepEqual(openCodeClient.redirect_uris, ['http://127.0.0.1:55740/callback']);
+  assert.equal(openCodeClient.token_endpoint_auth_method, 'none');
+  assert.equal(openCodeClient.client_secret, undefined);
   for (const path of ['/internal/audit', '/internal/test/entity-exists', '/internal/test/dcr-rate-limit']) assert.equal((await privateRequest(path)).status, 404);
   const verifier = randomBytes(32).toString('base64url');
   const challenge = createHash('sha256').update(verifier).digest('base64url');

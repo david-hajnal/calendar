@@ -14,6 +14,11 @@ mcp-check:
 mcp-test:
 	cargo test --manifest-path mcp-server/Cargo.toml --locked
 
+.PHONY: mcp-release-proof
+mcp-release-proof:
+	python3 scripts/test-verify-mcp-release.py
+	python3 scripts/verify-mcp-release.py
+
 validate-authorization-coverage:
 	sh scripts/validate-authorization-coverage-report.sh
 

@@ -1,0 +1,2 @@
+DCR scope integration passed: known/unknown registration, client scope allowlist, PKCE resource JWT signature/issuer/audience/scope, resource-only grants, resource enforcement, undecided and denied consent
+production integration passed: discovery, DCR policy, PKCE, bridge login/consent, tokens, online backup/restore refresh continuation, restart persistence, refresh rotation/reuse/revoke, JWKS rotation overlap, durable audit/rate limit, disabled lab endpoints

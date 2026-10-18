@@ -41,6 +41,21 @@ metadata tool call; successful registration alone does not prove a working MCP c
 
 ## Server setup
 
+### Observed OpenCode v2 callback
+
+Released OpenCode v2.0.20 requests `http://127.0.0.1:<ephemeral-port>/callback`
+during DCR, observed by `mcp-acceptance/client-snippets.js` on 2026-10-18.
+The production-config source now admits this additional HTTP-only IPv4 loopback
+shape when `127.0.0.1` is already in `AUTH_DCR_LOOPBACK_HOSTS`. It retains the
+configured callback path for older clients. The new shape excludes other hosts,
+HTTPS, query strings, fragments, credentials and other paths; it uses the
+existing unprivileged-port restriction. No new secret or migration is needed.
+Publish and deploy the reviewed auth image through the normal process before
+expecting production to accept this callback. This work performs no deployment
+and does not establish the complete OpenCode live compatibility matrix.
+
+### Deployment procedure
+
 1. Before publishing to main, pause the actual root Flux Kustomization if you
    need to prevent automatic core/MCP promotion during setup. For this repository:
    `flux suspend kustomization flux-system -n flux-system`.

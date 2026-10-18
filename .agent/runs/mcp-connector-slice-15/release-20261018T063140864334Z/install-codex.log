@@ -1,0 +1,5 @@
+codex-cli 0.163.0-alpha.10.2
+PASS README codex add
+PASS README codex list
+PASS README codex remove
+PASS removal; temporary profiles only. Live OAuth/calendar proof is separate.

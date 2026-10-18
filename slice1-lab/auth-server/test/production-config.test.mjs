@@ -19,8 +19,15 @@ test('signing key must exist, be private and not a test key; overlap public keys
   assert.throws(() => productionConfig({ ...env, AUTH_SIGNING_KID: 'slice1-test' }, { keys: [{ ...jwks.keys[0], kid: 'slice1-test' }] }));
   assert.equal(productionConfig(env, { keys: [...jwks.keys, { ...publicKey, kid: 'previous' }] }).kid, 'current');
 });
-test('OpenCode exact loopback callback permits ephemeral ports and excludes other callback forms', () => {
+test('configured loopback callback permits ephemeral ports and excludes other callback forms', () => {
   const { catalog } = productionConfig(env, jwks);
   for (const uri of ['http://127.0.0.1:19876/mcp/oauth/callback', 'http://[::1]:23456/mcp/oauth/callback']) assert.ok(validateRedirect(uri, catalog));
-  for (const uri of ['http://localhost:19876/mcp/oauth/callback', 'http://127.0.0.1/mcp/oauth/callback', 'http://127.0.0.1:80/mcp/oauth/callback', 'http://127.0.0.1:19876/callback', 'http://127.0.0.1:19876/mcp/oauth/callback?token=secret', 'https://evil.test/mcp/oauth/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
+  for (const uri of ['http://localhost:19876/mcp/oauth/callback', 'http://127.0.0.1/mcp/oauth/callback', 'http://127.0.0.1:80/mcp/oauth/callback', 'http://127.0.0.1:19876/mcp/oauth/callback?token=secret', 'https://evil.test/mcp/oauth/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
+});
+test('observed OpenCode v2 callback admits only HTTP IPv4 loopback and its exact path', () => {
+  const { catalog } = productionConfig(env, jwks);
+  for (const uri of ['http://127.0.0.1:19876/callback', 'http://127.0.0.1:55740/callback']) assert.ok(validateRedirect(uri, catalog), uri);
+  for (const uri of ['https://127.0.0.1:19876/callback', 'http://localhost:19876/callback', 'http://[::1]:19876/callback', 'http://127.0.0.1/callback', 'http://127.0.0.1:80/callback', 'http://127.0.0.1:19876/callback/', 'http://127.0.0.1:19876/callback?x=1', 'http://127.0.0.1:19876/callback#x', 'http://user@127.0.0.1:19876/callback', 'https://evil.test/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
+  const ipv6Only = productionConfig({ ...env, AUTH_DCR_LOOPBACK_HOSTS: '[::1]' }, jwks);
+  assert.equal(validateRedirect('http://127.0.0.1:19876/callback', ipv6Only.catalog), false);
 });

@@ -1,0 +1,42 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) is a manual-hold task. The prior implement stage did the right thing: it made no code changes (verified: only read/shell/execute tools used, zero edit/write/apply_patch), did not record completion in 00-status.md (slice 13 remains unchecked), and correctly reported `blocked`. I re-verified the deterministic prerequisites and found them all in place: OpenCode v2.0.20 installed; deterministic config present (calendar remote MCP at https://mcal.hajnal.space/mcp with loopback OAuth callback 127.0.0.1:7777); live production is DCR-capable (both well-known endpoints respond, 9 scopes, DCR reg endpoint, S256, refresh, revocation). The reconciliation criterion is SATISFIED: docs/MCP-PRODUCTION-FIX-PLAN.md exists and is explicitly marked 'Superseded', pointing to the authoritative SQLite docs (AUTH-PRODUCTION.md, MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md). The ONLY unmet criterion is criterion 2 \u2014 the live matrix (DCR/browser auth, calendar read, refresh, denial/revocation, removal, recovery, minimum-version proof) \u2014 which is operator-gated: `opencode mcp list` reports 'calendar needs authentication' (no valid credentials stored), so it cannot be completed autonomously. NOTE: the prior QA (b800c34) had two misreads I corrected \u2014 it claimed slice-10/slice-12 manifests say `completed` (they actually say `blocked`, consistent with their implement-results and unchecked 00-status.md) and that MCP-PRODUCTION-FIX-PLAN.md is 'missing repo-wide' (it exists and is marked Superseded).",
+  "files_changed": [],
+  "verification_commands": [
+    "opencode --version",
+    "opencode mcp list",
+    "cat ~/.config/opencode/opencode.json",
+    "which claude codex",
+    "curl -sS https://mcal.hajnal.space/.well-known/oauth-protected-resource",
+    "curl -sS https://auth.hajnal.space/.well-known/oauth-authorization-server",
+    "ls -la docs/MCP-PRODUCTION-FIX-PLAN.md && head -20 docs/MCP-PRODUCTION-FIX-PLAN.md",
+    "ls -la docs/AUTH-PRODUCTION.md docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "grep -E '\"status\"' .agent/tasks/mcp-connector-slice-10.json .agent/tasks/mcp-connector-slice-12.json .agent/tasks/mcp-connector-slice-13.json",
+    "grep -E '\"status\"' .agent/runs/mcp-connector-slice-10/*-implement-result.json .agent/runs/mcp-connector-slice-12/*-implement-result.json",
+    "grep -nE 'Slice 1[0-5]' docs/plans/cross-client-mcp-connector/00-status.md",
+    "git -C /Users/kaszperek/repos/happening status --short",
+    "grep -oE '\"tool\":\"[a-z_]*\"' .agent/runs/mcp-connector-slice-13/*-implement-events.jsonl | sort | uniq -c"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Live matrix (criterion 2) blocked on operator consent: `opencode mcp list` reports 'calendar needs authentication' \u2014 no valid credentials stored, so the DCR/browser auth, calendar read, refresh, denial/revocation, removal, and recovery proofs cannot be run autonomously. This is a manual-hold gate, not a production-code defect."
+  ],
+  "follow_up": [
+    "Operator must run the live OpenCode matrix against production: `opencode mcp auth calendar` (or add/list), complete browser consent, then `calendar_list`, token refresh, denial/revocation, removal, and recovery \u2014 recording the exact callback shape observed.",
+    "Record the minimum supported OpenCode version (v2.0.20) and the observed OAuth callback shape before choosing README instructions.",
+    "Only after observing the released client, extend the DCR callback policy narrowly if (and only if) the observed shape is not already admitted by the loopback policy.",
+    "The slice-13 dependency (slice-12) is `blocked`; the dependency gate is not satisfied until slice-12 completes. This is consistent with slice-13 being blocked on the operator-gated live matrix.",
+    "After the live matrix passes, record proof and completion in 00-status.md (currently slice 13 is unchecked)."
+  ],
+  "important_context": [
+    "Working dir is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening (use absolute paths or `git -C`).",
+    "OpenCode v2.0.20 is the released client for slice 13 and IS installed at /opt/homebrew/bin/opencode; `claude` and `codex` are NOT installed.",
+    "Live production is up and DCR-capable: https://mcal.hajnal.space/.well-known/oauth-protected-resource (9 scopes, auth server https://auth.hajnal.space) and https://auth.hajnal.space/.well-known/oauth-authorization-server (DCR reg endpoint /reg, S256, refresh_token, revocation endpoint) both respond.",
+    "The DCR policy admits only the lab loopback callback; OpenCode's callback is loopback (127.0.0.1:7777), so no policy change is strictly required, but extension must be 'narrowly required' and only after observing the released client.",
+    "2026-10-08 SQLite decision supersedes the 'managed PostgreSQL' wording still in slice acceptance text; docs/MCP-PRODUCTION-FIX-PLAN.md exists and is marked 'Superseded', pointing to the authoritative SQLite docs (AUTH-PRODUCTION.md, MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md).",
+    "Pre-existing uncommitted changes in `git status` (mcp-server/src/*.rs, backend/src/event.rs, ics-import, task manifests) are from prior slices (9/10) and ics-import work \u2014 NOT from this task; do not commit or touch them.",
+    "No files were modified in this QA session; completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved.",
+    "The prior QA (b800c34) had two misreads corrected in this session: (1) it claimed slice-10/slice-12 manifests say `completed` \u2014 they actually say `blocked` (consistent with their implement-results and unchecked 00-status.md); (2) it claimed MCP-PRODUCTION-FIX-PLAN.md is 'missing repo-wide' \u2014 it exists and is marked Superseded.",
+    "The prior implement stage's events log confirms only read/shell/execute tools were used \u2014 zero edit/write/apply_patch calls \u2014 confirming files_changed: [] is accurate."
+  ]
+}

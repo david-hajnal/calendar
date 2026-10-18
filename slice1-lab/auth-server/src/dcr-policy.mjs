@@ -11,6 +11,7 @@
 /**
  * @typedef {Object} LoopbackShape
  * @property {'loopback'} kind
+ * @property {'http' | 'https'} [scheme]
  * @property {'127.0.0.1' | '[::1]'} host
  * @property {'any' | number} port
  * @property {string} path
@@ -72,6 +73,7 @@ function matchesShape(uri, shape) {
   switch (shape.kind) {
     case 'loopback': {
       if (parts.scheme !== 'http' && parts.scheme !== 'https') return false;
+      if (shape.scheme && parts.scheme !== shape.scheme) return false;
       // Normalize [::1] vs ::1.
       const host = parts.host === '[::1]' ? '[::1]' : parts.host;
       if (host !== shape.host) return false;
@@ -119,6 +121,11 @@ export function validateRedirect(uri, catalog) {
   if (!Array.isArray(catalog) || catalog.length === 0) return false;
   return catalog.some((shape) => matchesShape(uri, shape));
 }
+
+// Observed from released OpenCode v2.0.20 DCR in the client-snippets harness.
+export const OPENCODE_V2_CALLBACK = Object.freeze({
+  kind: 'loopback', scheme: 'http', host: '127.0.0.1', port: 'any', path: '/callback',
+});
 
 /**
  * Build the default Slice 4 catalog: only the lab loopback callback.

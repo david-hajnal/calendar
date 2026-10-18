@@ -1,0 +1,146 @@
+ Image commoncal-auth-sqlite-proof:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 557B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile.auth
+#2 transferring dockerfile: 2.41kB done
+#2 DONE 0.0s
+
+#3 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#3 DONE 5.4s
+
+#4 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#4 resolve docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e 0.0s done
+#4 CACHED
+
+#5 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#5 DONE 0.7s
+
+#6 [internal] load .dockerignore
+#6 transferring context: 186B done
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 1.24kB done
+#7 DONE 0.0s
+
+#8 [build 1/4] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#8 resolve docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 0.0s done
+#8 DONE 0.0s
+
+#9 [build 2/4] WORKDIR /build
+#9 CACHED
+
+#10 [runtime 4/7] COPY --from=build /build/node_modules ./node_modules
+#10 CACHED
+
+#11 [runtime 2/7] RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates libpcre2-8-0 perl-base age     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpcre2-8-0)" ge '10.42-1+deb12u2'     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' perl-base)" ge '5.36.0-7+deb12u4'     && rm -rf /var/lib/apt/lists/*     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-*     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack         /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg     && groupadd --system commoncal     && useradd --system --gid commoncal --home-dir /app --shell /usr/sbin/nologin commoncal     && mkdir -p /app     && chown -R commoncal:commoncal /app
+#11 CACHED
+
+#12 [build 4/4] RUN node -e "if (Number(process.versions.node.split('.')[1]) < 16) process.exit(1)"     && corepack enable && pnpm install --frozen-lockfile --prod
+#12 CACHED
+
+#13 [runtime 6/7] COPY slice1-lab/auth-server/migrations ./migrations
+#13 CACHED
+
+#14 [build 3/4] COPY slice1-lab/auth-server/package.json slice1-lab/auth-server/pnpm-lock.yaml ./
+#14 CACHED
+
+#15 [runtime 3/7] WORKDIR /app
+#15 CACHED
+
+#16 [runtime 5/7] COPY slice1-lab/auth-server/src ./src
+#16 CACHED
+
+#17 [runtime 7/7] COPY slice1-lab/auth-server/package.json ./package.json
+#17 CACHED
+
+#18 exporting to image
+#18 exporting layers done
+#18 exporting manifest sha256:5aaffb0dd2e0a10a5237d173cc5ae7b8c255317bad6dfd844e04d2a421b60dbe done
+#18 exporting config sha256:9d55ad4db661a1a9c774056732249570a9cff61c814c5b10934e1140974fd961 done
+#18 exporting attestation manifest sha256:fcf90ef7107ff8d903806406fd685d31639784dfc6edf908d6f5eee4fef7e374 done
+#18 exporting manifest list sha256:135fb955148a8fc89def3d27f41b024a1a340f17d528e59898211b4ab00cd2e7 done
+#18 naming to docker.io/library/commoncal-auth-sqlite-proof:local done
+#18 unpacking to docker.io/library/commoncal-auth-sqlite-proof:local done
+#18 DONE 0.1s
+
+#19 resolving provenance for metadata file
+#19 DONE 0.0s
+ Image commoncal-auth-sqlite-proof:local Built 
+ Network happening-auth-sqlite-check_default Creating 
+ Network happening-auth-sqlite-check_default Created 
+ Container happening-auth-sqlite-check-proof-run-f56071221cd8 Creating 
+ Container happening-auth-sqlite-check-proof-run-f56071221cd8 Created 
+TAP version 13
+# Subtest: production rejects every missing required setting
+ok 1 - production rejects every missing required setting
+  ---
+  duration_ms: 4.95625
+  type: 'test'
+  ...
+# Subtest: production validates HTTPS origins, dedicated issuer and strong credentials
+ok 2 - production validates HTTPS origins, dedicated issuer and strong credentials
+  ---
+  duration_ms: 5.730208
+  type: 'test'
+  ...
+# Subtest: signing key must exist, be private and not a test key; overlap public keys accepted
+ok 3 - signing key must exist, be private and not a test key; overlap public keys accepted
+  ---
+  duration_ms: 1.689333
+  type: 'test'
+  ...
+# Subtest: configured loopback callback permits ephemeral ports and excludes other callback forms
+ok 4 - configured loopback callback permits ephemeral ports and excludes other callback forms
+  ---
+  duration_ms: 1.45475
+  type: 'test'
+  ...
+# Subtest: observed OpenCode v2 callback admits only HTTP IPv4 loopback and its exact path
+ok 5 - observed OpenCode v2 callback admits only HTTP IPv4 loopback and its exact path
+  ---
+  duration_ms: 2.480333
+  type: 'test'
+  ...
+# (node:15) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: SQLite durable state, expiry, canonical decisions and grant revocation
+ok 6 - SQLite durable state, expiry, canonical decisions and grant revocation
+  ---
+  duration_ms: 8.766291
+  type: 'test'
+  ...
+# Subtest: offline PostgreSQL importer refuses existing destination without changing it
+ok 7 - offline PostgreSQL importer refuses existing destination without changing it
+  ---
+  duration_ms: 42.837917
+  type: 'test'
+  ...
+# Subtest: independent SQLite connections share atomic decisions, consumption and durable audit
+ok 8 - independent SQLite connections share atomic decisions, consumption and durable audit
+  ---
+  duration_ms: 2.481
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 116.965792
+(node:43) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+DCR scope integration passed: known/unknown registration, client scope allowlist, PKCE resource JWT signature/issuer/audience/scope, resource-only grants, resource enforcement, undecided and denied consent
+(node:67) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:112) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+production integration passed: discovery, DCR policy, PKCE, bridge login/consent, tokens, online backup/restore refresh continuation, restart persistence, refresh rotation/reuse/revoke, JWKS rotation overlap, durable audit/rate limit, disabled lab endpoints
+(node:172) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+SQLite storage proof passed: atomic consume/revoke, expiry, canonical handoff retries, durable audit/rate, online encrypted backup, isolated restore, failure cleanup

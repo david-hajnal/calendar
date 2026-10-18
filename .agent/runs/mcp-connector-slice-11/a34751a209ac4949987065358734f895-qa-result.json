@@ -1,0 +1,50 @@
+{
+  "status": "blocked",
+  "summary": "The prior implement stage correctly preserved the manual hold, completed the reconciliation (2026-10-08 SQLite decision supersedes PostgreSQL hosting), and made no production code changes or completion record. The task is blocked on the core acceptance criterion: verifying the released Codex add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery paths requires a live released Codex CLI, which is not installed in this sandbox (codex not found; only OpenCode is present). The DCR policy extension and opt-in harness checks are gated on observing the released Codex client's callback shape and minimum version, which cannot be performed here. This mirrors the slice-10 QA precedent (blocked, verification_passed false, no defects in the prior stage's work).",
+  "files_changed": [],
+  "verification_commands": [
+    "command -v codex",
+    "command -v claude",
+    "command -v opencode",
+    "cat .agent/tasks/mcp-connector-slice-11.json",
+    "cat .agent/tasks/mcp-connector-slice-10.json",
+    "cat docs/plans/cross-client-mcp-connector/00-status.md",
+    "cat docs/plans/cross-client-mcp-connector/04-slices.md",
+    "cat docs/AUTH-PRODUCTION.md",
+    "cat docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "cat slice1-lab/auth-server/src/dcr-policy.mjs",
+    "cat .agent/runs/mcp-connector-slice-11/4b99fe13ca334be69ddcebc82f2f48cf-implement-result.json",
+    "cat .agent/runs/mcp-connector-slice-10/5f440404d50f4315b714588303c24e5c-qa-result.json",
+    "find . -name MCP-PRODUCTION-FIX-PLAN.md",
+    "ls docs/ | grep -iE 'mcp|production|auth'",
+    "ls .agent/tasks/ | grep -iE 'mcp'",
+    "grep -rl MCP-PRODUCTION-FIX-PLAN .agent/tasks/",
+    "grep -n 'authenticated MCP client' docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "grep -n 'Slice 10' docs/plans/cross-client-mcp-connector/00-status.md",
+    "grep -n 'Slice 11' docs/plans/cross-client-mcp-connector/00-status.md",
+    "git -C /Users/kaszperek/repos/happening status --short",
+    "git -C /Users/kaszperek/repos/happening diff --stat"
+  ],
+  "verification_passed": false,
+  "defects": [],
+  "follow_up": [
+    "Operator must run the live Codex matrix on a machine with the released Codex CLI: add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery, without copied tokens or client secrets, and record the observed callback shape and minimum supported version.",
+    "Only after observing the released Codex client may the DCR policy (slice1-lab/auth-server/src/dcr-policy.mjs) be extended with a narrowly-required shape (custom-scheme or exact-https); arbitrary HTTPS callbacks remain forbidden per slice discipline in 04-slices.md.",
+    "Add the non-secret checks to the opt-in harness (mcp-acceptance/) only after the callback shape is known, so the checks assert the real Codex flow rather than an assumed one.",
+    "Resolve the slice-10 contradiction: .agent/tasks/mcp-connector-slice-10.json says status=completed, but Slice 10 is still unchecked in 00-status.md (line 19); its outstanding condition (authenticated MCP client connection + read-only tool call + immediate grant revocation in production) has not been proven (MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md line 20).",
+    "Restore docs/MCP-PRODUCTION-FIX-PLAN.md or repoint the 12+ manifest references to docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Reconcile the 'managed PostgreSQL' wording in the slice 10/11 acceptance text with the 2026-10-08 SQLite decision (AUTH-PRODUCTION.md: 'No PostgreSQL server, database passwords or database TLS are needed').",
+    "Persist the verified production image tags/issuer/SMTP/TLS/suspension states in Git and resume root Flux only after Git matches production (per MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md outstanding work #2)."
+  ],
+  "important_context": [
+    "Working directory is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening. cd into happening is permission-rejected, but absolute-path cat/ls/find/grep and git -C work.",
+    "No Codex or Claude CLI is present in this environment (only OpenCode at /opt/homebrew/bin/opencode), so live released-client verification of the full OAuth flow is impossible here.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is missing repo-wide; it was not invented. The authoritative production docs are docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Slice 10 is a manual hold: production rollout is largely done (auth SQLite ready, core bridge wired, origin TLS validated, isolated backup restore passed, MCP issuer switched to https://auth.hajnal.space), but an authenticated MCP client connection + read-only tool call + grant revocation are NOT yet proven (MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md line 20).",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting (AUTH-PRODUCTION.md: 'Production auth uses SQLite for the small single-instance installation approved on 2026-10-08'); this contradicts the 'managed PostgreSQL' wording in the slice 10/11 acceptance text.",
+    "The DCR policy extension must be 'narrowly required' and only after observing the released Codex client; arbitrary HTTPS callbacks remain forbidden (slice discipline in 04-slices.md).",
+    "No files were modified in this session (files_changed is empty); the pre-existing uncommitted changes in git status are from prior slices (9, 10) and ics-import work, not from this task.",
+    "Completion was NOT recorded in 00-status.md; Slice 11 remains unchecked at line 20; the per-slice continuation gate is preserved.",
+    "This mirrors the slice-10 QA precedent: .agent/runs/mcp-connector-slice-10/ qa-result.json (status blocked, verification_passed false, defects empty) confirms the manual-hold handling with no production changes."
+  ]
+}

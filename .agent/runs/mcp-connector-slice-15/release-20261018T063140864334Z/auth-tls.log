@@ -1,0 +1,53 @@
+..FFEF...F.......
+======================================================================
+ERROR: test_expired (__main__.AuthTLS)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 144, in test_expired
+    subprocess.run(['openssl', 'x509', '-in', str(self.root/'cert.pem'), '-signkey',
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 528, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['openssl', 'x509', '-in', '/var/folders/_1/jbbj_03553x12s0_zjgnjcsc0000gn/T/tmpdg9khs6c/cert.pem', '-signkey', '/var/folders/_1/jbbj_03553x12s0_zjgnjcsc0000gn/T/tmpdg9khs6c/key.pem', '-days', '0', '-out', '/var/folders/_1/jbbj_03553x12s0_zjgnjcsc0000gn/T/tmpdg9khs6c/expired.pem']' returned non-zero exit status 1.
+
+======================================================================
+FAIL: test_creation_and_reuse (__main__.AuthTLS)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 87, in test_creation_and_reuse
+    self.run_helper()
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 73, in run_helper
+    self.assertEqual(result.returncode == 0, success, result.stdout+result.stderr)
+AssertionError: False != True : ERROR: auth TLS certificate does not cover auth.hajnal.space.
+
+
+======================================================================
+FAIL: test_dry_run (__main__.AuthTLS)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 166, in test_dry_run
+    self.run_helper(dry=True)
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 73, in run_helper
+    self.assertEqual(result.returncode == 0, success, result.stdout+result.stderr)
+AssertionError: False != True : ERROR: auth TLS certificate does not cover auth.hajnal.space.
+
+
+======================================================================
+FAIL: test_expiring (__main__.AuthTLS)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 140, in test_expiring
+    self.assertIn('30 days', self.run_helper(False).stderr)
+AssertionError: '30 days' not found in 'ERROR: auth TLS certificate does not cover auth.hajnal.space.\nExisting commoncal-auth-tls was not overwritten. See docs/AUTH-PRODUCTION.md, Origin TLS rotation: securely back up the Secret, explicitly delete it, then rerun deploy/provision-auth-tls.sh.\n'
+
+======================================================================
+FAIL: test_mismatched_key (__main__.AuthTLS)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/kaszperek/repos/happening/scripts/test-auth-tls.py", line 124, in test_mismatched_key
+    self.assertIn('do not match', self.run_helper(False).stderr)
+AssertionError: 'do not match' not found in 'ERROR: auth TLS certificate does not cover auth.hajnal.space.\nExisting commoncal-auth-tls was not overwritten. See docs/AUTH-PRODUCTION.md, Origin TLS rotation: securely back up the Secret, explicitly delete it, then rerun deploy/provision-auth-tls.sh.\n'
+
+----------------------------------------------------------------------
+Ran 17 tests in 4.963s
+
+FAILED (failures=4, errors=1)

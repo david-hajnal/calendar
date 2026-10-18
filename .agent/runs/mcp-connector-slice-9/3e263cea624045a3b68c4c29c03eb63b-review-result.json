@@ -1,0 +1,30 @@
+{
+  "status": "completed",
+  "summary": "Reviewed the uncommitted slice-9 diff (9 files, +431/-25) for MCP/OAuth resource-server hardening. No actionable defects found. Rate limiting is correctly wired to all 9 tools via a shared fixed-window limiter keyed on user_id:client_id; the limit=0 footgun is unreachable because config validation enforces rate_limit_max >= 1 and rate_limit_window_secs >= 1 in all environments and requires MCP_RATE_LIMIT_ENABLED=1 in production. Same-origin enforcement via with_allowed_origins([origin]) is correct, and provider-outage token errors are mapped to sanitized static strings. The legacy Gateway::handle_authorized_tool_call path is test-only and not a rate-limit gap.",
+  "files_changed": [],
+  "verification_commands": [
+    "git -C /Users/kaszperek/repos/happening diff --stat",
+    "cat /Users/kaszperek/repos/happening/mcp-server/src/rate_limiter.rs",
+    "grep -n 'rate_limit_max|rate_limit_window_secs|RATE_LIMIT' /Users/kaszperek/repos/happening/mcp-server/src/config.rs",
+    "grep -n 'enforce_rate_limit|ErrorCode|-2004|rate_limiter|RateLimiter' /Users/kaszperek/repos/happening/mcp-server/src/mcp_service.rs",
+    "grep -n 'allowed_origins|with_allowed_origins|origin' /Users/kaszperek/repos/happening/mcp-server/src/transport.rs",
+    "Read slice-9 acceptance criteria in docs/plans/cross-client-mcp-connector/04-slices.md (line 13)",
+    "Read rmcp 3.1.4 streamable_http_server/tower.rs origin/host validation semantics",
+    "Cross-checked identity.rs (user_id: i64), auth.rs token_error_params, gateway.rs, main.rs, error.rs/oauth.rs InvalidToken paths"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "rate_limiter.rs check_at `_ =>` branch allows one call even when limit=0 (inserts (1, now)); currently unreachable because config validation enforces rate_limit_max >= 1, but a defensive guard or debug_assert would harden it.",
+    "rmcp 3.1.4 allowed-origin matching is lenient on the port (a_port.is_none() || a_port == o_port) and passes when the Origin header is absent; acceptable for the same-origin intent but worth noting.",
+    "JSON-RPC error code -2004 is outside the MCP-recommended -32000..-32099 server error range; consider a code in that range for rate-limit responses.",
+    "The rate limiter is in-memory and single-instance only; a multi-replica deployment would not share the window. Acceptable for the current single-process deployment but a constraint to document."
+  ],
+  "important_context": [
+    "The project under review is /Users/kaszperek/repos/happening, not the cwd /Users/kaszperek/repos/plan-orchestrator.",
+    "cargo test is permission-rejected in this non-interactive run; QA verified via pre-built test binaries in mcp-server/target/debug/deps/ (newer than sources).",
+    "00-status.md already records Slice 9 complete (2026-10-15, 291/291 Rust tests + 4/4 black-box verify scripts); no status change expected from this review stage.",
+    "All changes are uncommitted on branch main in the happening repo (9 modified files + untracked .agent/runs/mcp-connector-slice-9/ artifacts).",
+    "DPoP is advertised as optional; SQLite supersedes PostgreSQL per the 2026-10-08 decision."
+  ]
+}

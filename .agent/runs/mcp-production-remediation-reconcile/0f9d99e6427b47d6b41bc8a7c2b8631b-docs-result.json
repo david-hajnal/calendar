@@ -1,0 +1,25 @@
+{
+  "status": "completed",
+  "summary": "Reconciled mcp-production-remediation docs with the completed implementation: fixed stale line references in 02 (config.rs is now 1101 lines; updated AppEnv::from_env L13, parse_env L83, validate L169, from_env L333, tests L407-1101) and 07 (backend key read is backend/src/main.rs:260, not mcp_internal.rs:217; removed the claim that mcp-server/k8s/deployment.yaml still contains CHANGE_ME - the file no longer exists). 00-status.md verified accurate and unchanged; findings 01 and 03-06 had no stale specifics. No production code or tests modified.",
+  "files_changed": [
+    "docs/plans/mcp-production-remediation/02-fail-closed-production-configuration.md",
+    "docs/plans/mcp-production-remediation/07-inject-kubernetes-secrets-safely.md"
+  ],
+  "verification_commands": [
+    "wc -l mcp-server/src/config.rs",
+    "sed -n '13p;83p;169p;333p' mcp-server/src/config.rs",
+    "sed -n '260p' backend/src/main.rs",
+    "ls mcp-server/k8s/",
+    "grep -n '1101' docs/plans/mcp-production-remediation/02-fail-closed-production-configuration.md",
+    "grep -n 'main.rs:260\\|mcp_internal.rs:217\\|CHANGE_ME' docs/plans/mcp-production-remediation/07-inject-kubernetes-secrets-safely.md"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "All 7 findings in 00-status.md are classified implemented; no new orchestrator-factory packets were created (manual hold respected).",
+    "00-status.md line references were verified accurate against current source and left unchanged.",
+    "docs/plans/ is gitignored, so the doc edits do not appear in git status; no commits were made per task constraints.",
+    "mcp-server/k8s/ now contains only namespace.yaml, network-policy.yaml, secret.yaml.example, service.yaml - the Helm chart is the sole deployment path."
+  ]
+}

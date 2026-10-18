@@ -1,0 +1,35 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) live matrix is a manual-hold gate, not a production-code defect: it requires operator consent, a live environment, and valid stored credentials (a completed DCR/browser OAuth consent flow) that cannot be supplied autonomously. I independently re-verified the evidence and made no code changes, as none are warranted within the remediation boundary.",
+  "files_changed": [],
+  "verification_commands": [
+    "cd /Users/kaszperek/repos/happening && opencode --version",
+    "cd /Users/kaszperek/repos/happening && opencode mcp list",
+    "cd /Users/kaszperek/repos/happening && which claude codex",
+    "cd /Users/kaszperek/repos/happening && head -20 docs/MCP-PRODUCTION-FIX-PLAN.md",
+    "cd /Users/kaszperek/repos/happening && ls -la docs/AUTH-PRODUCTION.md docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "cd /Users/kaszperek/repos/happening && grep -H '\"status\"' .agent/tasks/mcp-connector-slice-10.json .agent/tasks/mcp-connector-slice-12.json .agent/tasks/mcp-connector-slice-13.json",
+    "cd /Users/kaszperek/repos/happening && grep -nE 'Slice 1[0-5]' docs/plans/cross-client-mcp-connector/00-status.md"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Live matrix (criterion 2) blocked on operator consent: `opencode mcp list` reports 'calendar needs authentication' (no valid credentials stored) and 'calendar-local failed: Unable to connect'. DCR/browser authorization, calendar read, refresh, denial/revocation, removal, and recovery proofs cannot run without operator consent, a live environment, and valid stored credentials. This is a manual-hold gate, not a production-code defect; it cannot be fixed autonomously within this boundary."
+  ],
+  "follow_up": [
+    "Obtain operator consent to run the live OpenCode matrix against production.",
+    "Complete DCR/browser authorization to store valid calendar credentials (e.g. `opencode mcp auth calendar`), then re-run `opencode mcp list` to confirm 'calendar connected'.",
+    "Execute the full slice-13 proof sequence: clean configuration, DCR/browser authorization, schema discovery, calendar read, refresh, denial/revocation, removal, recovery, and minimum-version proof (OpenCode v2.0.20).",
+    "Record the observed OAuth callback shape and minimum supported version before choosing README instructions; extend the DCR callback policy only if (and only if) the observed shape is not already admitted by the loopback policy.",
+    "Slice-13 dependency (slice-12) is `blocked`; the dependency gate is not satisfied until slice-12 completes.",
+    "Only after the live matrix passes, record proof and completion in docs/plans/cross-client-mcp-connector/00-status.md (slice 13 is currently unchecked)."
+  ],
+  "important_context": [
+    "Working dir is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening (use absolute paths or `git -C`).",
+    "OpenCode v2.0.20 is the released client for slice 13 and IS installed at /opt/homebrew/bin/opencode; `claude` and `codex` are NOT installed.",
+    "`opencode mcp list` currently reports: 'calendar needs authentication', 'calendar-local failed: Unable to connect', 'playwright connected' \u2014 no valid calendar credentials are stored.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting; authoritative docs are docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md. docs/MCP-PRODUCTION-FIX-PLAN.md is marked 'Superseded'.",
+    "Manifest/status are consistent: slice 10 blocked, slice 12 blocked, slice 13 ready (unchecked in 00-status.md). Completion was NOT recorded; the per-slice continuation gate is preserved.",
+    "Pre-existing uncommitted changes in `git status` (mcp-server/src/*.rs, backend/src/event.rs, ics-import, task manifests) are from prior slices (9/10) and ics-import work \u2014 NOT from this task; do not commit or touch them.",
+    "No files were modified in this remediation session; no commit/push/rebase was performed; no other agents were dispatched."
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "status": "blocked",
+  "summary": "Slice 12 (Claude Code compatibility) is a manual-hold task whose core acceptance criterion requires a live released Claude Code client plus operator consent/login input; the claude CLI is not installed in this sandbox, the slice-10 dependency is still unchecked in 00-status.md, and the DCR policy extension is gated on first observing the released client. I completed the reconciliation (gates, completed mcp-* manifests, SQLite-supersedes-PostgreSQL) and preserved the hold with no code changes and no completion recorded.",
+  "files_changed": [],
+  "verification_commands": [
+    "command -v claude",
+    "ls /opt/homebrew/bin | grep -i claude",
+    "ls ~/.npm-global/bin | grep -i claude",
+    "grep -n 'Slice 1[012]' docs/plans/cross-client-mcp-connector/00-status.md",
+    "find . -name MCP-PRODUCTION-FIX-PLAN.md -not -path '*/node_modules/*'",
+    "ls docs/MCP-PRODUCTION-FIX-PLAN.md",
+    "grep -n 'kind' slice1-lab/auth-server/src/dcr-policy.mjs",
+    "python3 -c \"import json;print(json.load(open('.agent/runs/mcp-connector-slice-11/c03496fffa5b44c0836d5857f5d48f1b-remediate-result.json'))['status'])\"",
+    "for f in .agent/tasks/mcp-*.json; do python3 -c \"import json;d=json.load(open('$f'));print(d.get('status'),d.get('title'))\"; done"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "The claude CLI is not installed in this sandbox (claude NOT FOUND; absent from /opt/homebrew/bin, ~/.npm-global/bin, and PATH); the released-client verification that is the core of slice 12 cannot be executed here, so the DCR policy extension and redirect-policy negative rerun (both gated on observing the released client) cannot be performed.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is referenced by this task and 10+ completed mcp-* manifests but does not exist in the repository; the authoritative production docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Slice 12 depends on slice 10, which is still unchecked in 00-status.md (line 19); its outstanding condition (authenticated MCP client connection + read-only tool call + immediate grant revocation in production) has not been proven, so the dependency gate is not satisfied.",
+    "The slice 12 acceptance text still names 'managed PostgreSQL' hosting, which is superseded by the 2026-10-08 SQLite decision (AUTH-PRODUCTION.md)."
+  ],
+  "follow_up": [
+    "Operator must run the live Claude Code matrix on a machine with the released claude CLI: clean user-scoped HTTP registration, browser authorization, calendar read, refresh, denial/revocation, removal, callback recovery, and the minimum-version matrix, without copied tokens or client secrets, and record the observed callback shape and minimum supported version.",
+    "Only after observing the released Claude Code client may the DCR policy (slice1-lab/auth-server/src/dcr-policy.mjs) be extended with a narrowly-required shape (custom-scheme or exact-https); arbitrary HTTPS callbacks remain forbidden per slice discipline. Rerun the redirect-policy negatives after any such addition.",
+    "Add the non-secret checks to the opt-in harness (mcp-acceptance/) only after the callback shape is known, so the checks assert the real Claude Code flow rather than an assumed one.",
+    "Resolve the missing docs/MCP-PRODUCTION-FIX-PLAN.md: restore it or repoint the 10+ manifest references to AUTH-PRODUCTION.md / MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Record completion in 00-status.md (line 21) only after every slice-12 condition passes; the per-slice continuation gate is preserved.",
+    "Reconcile the 'managed PostgreSQL' wording in the slice acceptance text with the 2026-10-08 SQLite decision before release."
+  ],
+  "important_context": [
+    "Working directory is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening. Use absolute paths or git -C for the happening repo.",
+    "No claude or codex CLI is present in this environment (only OpenCode at /opt/homebrew/bin/opencode), so live released-client verification of the full OAuth flow is impossible here.",
+    "The live auth host auth.hajnal.space is reachable, but that does not remove the need for a real Claude Code client and operator consent/login input.",
+    "The DCR policy (slice1-lab/auth-server/src/dcr-policy.mjs) currently admits only the lab loopback callback; client slices 11-13 may add narrowly-proven shapes (custom-scheme, exact-https) only after observing the released client, and arbitrary HTTPS callbacks remain forbidden.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting; this contradicts the 'managed PostgreSQL' wording still present in the slice acceptance text.",
+    "No files were modified in this session (files_changed is empty); the pre-existing uncommitted changes in git status are from prior slices (9, 10) and ics-import work, not from this task.",
+    "Completion was NOT recorded in 00-status.md; Slice 12 remains unchecked at line 21; the per-slice continuation gate is preserved.",
+    "This mirrors the slice-10 and slice-11 precedent: both implement/QA/remediate results (status blocked) confirm the manual-hold handling with no production changes."
+  ]
+}

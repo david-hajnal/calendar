@@ -1,0 +1,189 @@
+{
+  "harness": "commoncal-mcp-acceptance",
+  "harnessVersion": "0.2.0",
+  "issuer": "https://auth.hajnal.space",
+  "phase": "0.2-discovery",
+  "record": {
+    "assertions": {
+      "A1": {
+        "pass": true,
+        "violations": []
+      },
+      "A2": {
+        "pass": true,
+        "violations": []
+      },
+      "A3": {
+        "pass": true,
+        "violations": []
+      },
+      "A4": {
+        "pass": true,
+        "violations": []
+      }
+    },
+    "authorizationServerMetadata": {
+      "attempts": [
+        {
+          "bodyJson": {
+            "authorization_endpoint": "https://auth.hajnal.space/auth",
+            "authorization_response_iss_parameter_supported": true,
+            "claim_types_supported": [
+              "normal"
+            ],
+            "claims_parameter_supported": false,
+            "claims_supported": [
+              "sub",
+              "sid",
+              "auth_time",
+              "iss",
+              "amr"
+            ],
+            "code_challenge_methods_supported": [
+              "S256"
+            ],
+            "dpop_signing_alg_values_supported": [
+              "ES256",
+              "Ed25519",
+              "EdDSA"
+            ],
+            "end_session_endpoint": "https://auth.hajnal.space/session/end",
+            "grant_types_supported": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "id_token_signing_alg_values_supported": [
+              "RS256"
+            ],
+            "issuer": "https://auth.hajnal.space",
+            "jwks_uri": "https://auth.hajnal.space/jwks",
+            "pushed_authorization_request_endpoint": "https://auth.hajnal.space/request",
+            "registration_endpoint": "https://auth.hajnal.space/reg",
+            "request_uri_parameter_supported": false,
+            "response_modes_supported": [
+              "form_post",
+              "fragment",
+              "query"
+            ],
+            "response_types_supported": [
+              "code"
+            ],
+            "revocation_endpoint": "https://auth.hajnal.space/token/revocation",
+            "scopes_supported": [
+              "openid",
+              "offline_access",
+              "commoncal.calendar.metadata.read",
+              "commoncal.availability.read",
+              "commoncal.event.read.basic",
+              "commoncal.event.read.details",
+              "commoncal.event.create",
+              "commoncal.event.update",
+              "commoncal.event.delete",
+              "commoncal.reminder.read",
+              "commoncal.reminder.write"
+            ],
+            "subject_types_supported": [
+              "public"
+            ],
+            "token_endpoint": "https://auth.hajnal.space/token",
+            "token_endpoint_auth_methods_supported": [
+              "none"
+            ]
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"authorization_endpoint\":\"https://auth.hajnal.space/auth\",\"claims_parameter_supported\":false,\"claims_supported\":[\"sub\",\"sid\",\"auth_time\",\"iss\",\"amr\"],\"code_challenge_methods_supported\":[\"S256\"],\"end_session_endpoint\":\"https://auth.hajnal.space/session/end\",\"grant_types_supported\":[\"authorization_code\",\"refresh_token\"],\"issuer\":\"https://auth.hajnal.space\",\"jwks_uri\":\"https://auth.hajnal.space/jwks\",\"registration_endpoint\":\"https://auth.hajnal.space/reg\",\"authorization_response_iss_parameter_supported\":true,\"response_modes_supported\":[\"form_post\",\"fragment\",\"query\"],\"response_types_supported\":[\"code\"],\"scopes_supported\":[\"openid\",\"offline_access\",\"commoncal.calendar.metadata.read\",\"commoncal.availability.read\",\"commoncal.event.read.basic\",\"commoncal.event.read.details\",\"commoncal.event.create\",\"commoncal.event.update\",\"commoncal.event.delete\",\"commoncal.reminder.read\",\"commoncal.reminder.write\"],\"subject_types_supported\":[\"public\"],\"token_endpoint_auth_methods_supported\":[\"none\"],\"token_endpoint\":\"https://auth.hajnal.space/token\",\"id_token_signing_alg_values_supported\":[\"RS256\"],\"pushed_authorization_request_endpoint\":\"https://auth.hajnal.space/request\",\"request_uri_parameter_supported\":false,\"dpop_signing_alg_values_supported\":[\"ES256\",\"Ed25519\",\"EdDSA\"],\"revocation_endpoint\":\"https://auth.hajnal.space/token/revocation\",\"claim_types_supported\":[\"normal\"]}",
+          "headers": {
+            "access-control-allow-origin": "*",
+            "alt-svc": "h3=\":443\"; ma=86400",
+            "cf-cache-status": "DYNAMIC",
+            "cf-ray": "a4c582feade35e99-VIE",
+            "content-encoding": "zstd",
+            "content-type": "application/json; charset=utf-8",
+            "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+            "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=3GZp5c7Ts%2BSlHjLnNZzaYlJkNTUE3DRa%2F50WYgeEqzbAih9d8awV3%2BIna%2Ffpi%2FqWVzz%2BzK2z4kfHbcM86kP3Y%2BNi3n6eGOO6OF%2BIaMAZEzmaDvOZvJ4Ey%2B7cCBru6RiCyinWCQ%3D%3D\"}]}",
+            "server": "cloudflare",
+            "vary": "Origin"
+          },
+          "status": 200,
+          "url": "https://auth.hajnal.space/.well-known/oauth-authorization-server"
+        }
+      ],
+      "used": "https://auth.hajnal.space/.well-known/oauth-authorization-server"
+    },
+    "initialize": {
+      "request": {
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+          "capabilities": {},
+          "clientInfo": {
+            "name": "commoncal-mcp-acceptance",
+            "version": "0.2.0"
+          },
+          "protocolVersion": "2025-03-26"
+        }
+      },
+      "response": {
+        "bodyJson": {
+          "error": "invalid_request",
+          "error_description": "missing or malformed bearer token"
+        },
+        "bodyJsonParseError": null,
+        "bodyRaw": "{\"error\":\"invalid_request\",\"error_description\":\"missing or malformed bearer token\"}",
+        "headers": {
+          "alt-svc": "h3=\":443\"; ma=86400",
+          "cf-cache-status": "DYNAMIC",
+          "cf-ray": "a4c582fcbe6ec0d0-VIE",
+          "content-length": "83",
+          "content-type": "application/json",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=J5MogHXr4y0zYNIHNdzbF4ewAXgkMtdRzIuSw4EgnCI%2FHDSrFwWP%2BgVN2nMN7BiIWw35to%2FMIizB%2BgDzxNGWrSsZLc9hnU4Q4VCsk0yuFUmkv1sOtsCyaWn0NE%2BLwXF3fY%2BYcg%3D%3D\"}]}",
+          "server": "cloudflare",
+          "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"https://mcal.hajnal.space/.well-known/oauth-protected-resource\", error=\"invalid_request\""
+        },
+        "status": 401
+      }
+    },
+    "protectedResourceMetadata": {
+      "response": {
+        "bodyJson": {
+          "authorization_servers": [
+            "https://auth.hajnal.space"
+          ],
+          "dpop_bound_access_tokens": false,
+          "resource": "https://mcal.hajnal.space/mcp",
+          "resource_metadata": "https://mcal.hajnal.space/.well-known/oauth-protected-resource",
+          "scopes_supported": [
+            "commoncal.calendar.metadata.read",
+            "commoncal.availability.read",
+            "commoncal.event.read.basic",
+            "commoncal.event.read.details",
+            "commoncal.event.create",
+            "commoncal.event.update",
+            "commoncal.event.delete",
+            "commoncal.reminder.read",
+            "commoncal.reminder.write"
+          ]
+        },
+        "bodyJsonParseError": null,
+        "bodyRaw": "{\"resource_metadata\":\"https://mcal.hajnal.space/.well-known/oauth-protected-resource\",\"resource\":\"https://mcal.hajnal.space/mcp\",\"authorization_servers\":[\"https://auth.hajnal.space\"],\"scopes_supported\":[\"commoncal.calendar.metadata.read\",\"commoncal.availability.read\",\"commoncal.event.read.basic\",\"commoncal.event.read.details\",\"commoncal.event.create\",\"commoncal.event.update\",\"commoncal.event.delete\",\"commoncal.reminder.read\",\"commoncal.reminder.write\"],\"dpop_bound_access_tokens\":false}",
+        "headers": {
+          "alt-svc": "h3=\":443\"; ma=86400",
+          "cf-cache-status": "DYNAMIC",
+          "cf-ray": "a4c582fde864c0d0-VIE",
+          "content-encoding": "zstd",
+          "content-type": "application/json",
+          "nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+          "report-to": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=vTKA74RChCMjtnKQwVdjsczILBf5TZkgzIwcBI5bx7a7Qg1yH9poVueTU%2B1Lyp73rUIJeR2nY4QmWw58ZgLilln%2FiZnHw4fQkhc0qAfiaXomd3Cj25CKwXqwkDlQ0r19p3bPew%3D%3D\"}]}",
+          "server": "cloudflare"
+        },
+        "status": 200,
+        "url": "https://mcal.hajnal.space/.well-known/oauth-protected-resource"
+      },
+      "url": "https://mcal.hajnal.space/.well-known/oauth-protected-resource"
+    }
+  },
+  "recordedBy": "discovery-probe",
+  "target": "https://mcal.hajnal.space/mcp"
+}

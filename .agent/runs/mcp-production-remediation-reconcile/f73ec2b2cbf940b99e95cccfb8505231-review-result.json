@@ -1,0 +1,25 @@
+{
+  "status": "completed",
+  "summary": "Reconciliation of all 7 mcp-production-remediation findings verified: every file:line evidence claim in 00-status.md holds against current source, all 5 claimed verification commands re-run and passed with matching counts (29/17/3 tests, chart assertions, no chart hostname matches), the completion ledger is accurate, original findings are retained, and the manual hold was respected with no code changes or unapproved gates bypassed.",
+  "files_changed": [],
+  "verification_commands": [
+    "rg -n 'hajnal\\.space' deploy/helm/commoncal-mcp/values.yaml deploy/helm/commoncal-mcp/values.schema.json deploy/helm/commoncal-mcp/templates/ (no matches, exit 1 as expected)",
+    "sh deploy/helm/commoncal-mcp/tests/template_assertions.sh (passed)",
+    "cargo test --lib config:: in mcp-server/ (29 passed, 0 failed)",
+    "cargo test --lib internal_client:: in mcp-server/ (17 passed, 0 failed)",
+    "cargo test --lib transport:: in mcp-server/ (3 passed, 0 failed)",
+    "spot-checked all cited file:line evidence in values.yaml, config.rs, internal_client.rs, main.rs, deployment.yaml, ingress.yaml, values.schema.json, mcp-helmrelease.yaml, deploy-mcp-prod.sh, secret.yaml.example",
+    "verified task statuses in .agent/tasks/ (6 completed, mcp-production-rollout blocked)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "00-status.md finding-04 evidence line omits test-only commoncal.tld hits (config.rs L482/L856/L1014, internal_client.rs L727); all are test fixtures and the conclusion is unaffected",
+    "Production runtime verification (live discovery 200, WAF/Cloudflare header preservation, TLS behavior) remains outstanding under the blocked mcp-production-rollout task; the reconciliation correctly defers it rather than claiming it"
+  ],
+  "important_context": [
+    "All 7 findings in docs/plans/mcp-production-remediation are classified implemented on the code/config side; production runtime verification is tracked by mcp-production-rollout (status: blocked).",
+    "No orchestrator-factory packets were created because no findings were outstanding; the manual hold was respected and no stale recommendations were applied.",
+    "Task manifest .agent/tasks/mcp-production-remediation-reconcile.json was flipped blocked\u2192completed; the reconciliation artifact is docs/plans/mcp-production-remediation/00-status.md, which is untracked by repo convention (docs/plans/ is gitignored)."
+  ]
+}

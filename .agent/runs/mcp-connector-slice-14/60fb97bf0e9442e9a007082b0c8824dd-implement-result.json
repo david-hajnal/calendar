@@ -1,0 +1,39 @@
+{
+  "status": "blocked",
+  "summary": "Slice 14 (README delivery) requires 'only commands/configuration proven in slices 11-13' and running every non-interactive snippet through the compatibility harness, but no client-specific commands are proven: slice 11 (Codex) is blocked (Codex CLI absent, live matrix never run), slice 12 (Claude Code) is blocked (live matrix never run), and slice 13 (OpenCode) is 'completed' only via operator manual override 2026-10-17 with 'Live OAuth/calendar lifecycle proofs remain unverified' (opencode mcp list reports 'calendar needs authentication'). Slice discipline (04-slices.md line 28) states 'README.md is untouched until Codex, Claude Code, and OpenCode have each passed their own slice.' docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md records 'An authenticated MCP client connection and tool call were not yet reported.' The mcp-acceptance harness is a custom harness client, not a released Codex/Claude Code/OpenCode client, and no client-specific compatibility harness exists to run README snippets. I completed the required reconciliation (read slice 14, approved gates, all mcp-* manifests, and production docs) and preserved the per-slice continuation gate without modifying README.md, without modifying 00-status.md, and without recording completion.",
+  "files_changed": [],
+  "verification_commands": [
+    "python3 -c \"import json; d=json.load(open('.agent/tasks/mcp-connector-slice-14.json')); print(d['status'])\"",
+    "python3 -c \"import json; d=json.load(open('.agent/tasks/mcp-connector-slice-12.json')); print(d['status'])\"",
+    "python3 -c \"import json; d=json.load(open('.agent/tasks/mcp-connector-slice-13.json')); print(d['status'])\"",
+    "git show HEAD:.agent/tasks/mcp-connector-slice-11.json | python3 -c \"import json,sys; print(json.load(sys.stdin)['status'])\"",
+    "python3 -c \"import json; d=json.load(open('.agent/tasks/mcp-connector-slice-10.json')); print(d['status'])\"",
+    "grep -n 'README.md is untouched' docs/plans/cross-client-mcp-connector/04-slices.md",
+    "grep -rin 'codex\\|claude' mcp-acceptance/",
+    "sed -n '1,40p' docs/plans/cross-client-mcp-connector/00-status.md",
+    "git status --short"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Slice 14 acceptance criterion 2 requires 'only commands/configuration proven in slices 11-13', but no client-specific commands are proven: slice 11 (Codex) blocked, slice 12 (Claude Code) blocked, slice 13 (OpenCode) 'completed' only via operator manual override with 'Live OAuth/calendar lifecycle proofs remain unverified'.",
+    "Slice discipline (04-slices.md line 28): 'README.md is untouched until Codex, Claude Code, and OpenCode have each passed their own slice.' Gate not satisfied.",
+    "docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md records 'An authenticated MCP client connection and tool call were not yet reported' \u2014 the README cannot claim a working connection.",
+    "No client-specific compatibility harness exists: mcp-acceptance/ is a custom harness client (not a released Codex/Claude Code/OpenCode client), and slice 11's follow-up explicitly defers adding client checks to the opt-in harness until the callback shape is known.",
+    "docs/AUTH-PRODUCTION.md states live rollout is pending and 'successful registration alone does not prove a working MCP connection.'"
+  ],
+  "follow_up": [
+    "Operator must run the live Codex matrix (slice 11) on a machine with the released Codex CLI: add/list/login/consent/status/read/refresh/deny/revoke/remove and recovery, recording the observed callback shape and minimum supported version.",
+    "Operator must run the live Claude Code matrix (slice 12): clean user-scoped HTTP registration, browser authorization, calendar read, refresh, denial/revocation, removal, callback recovery, and minimum-version proof.",
+    "Operator must run the live OpenCode matrix (slice 13) with valid stored credentials: `opencode mcp list` must report 'calendar connected', then execute the full proof sequence (clean configuration, DCR/browser authorization, schema discovery, calendar read, refresh, denial/revocation, removal, recovery, minimum version).",
+    "Only after all three clients pass their own slice may the README 'Connect an AI assistant' section be written using only the proven commands/configuration, with every non-interactive snippet run through the client-specific compatibility harness.",
+    "Record completion in 00-status.md only when every slice condition passes."
+  ],
+  "important_context": [
+    "Working directory is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening.",
+    "No files were modified in this session (files_changed is empty); the pre-existing uncommitted changes in git status are from prior slices (9, 10) and ics-import work, not from this task.",
+    "Completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved.",
+    "The 2026-10-08 SQLite decision (AUTH-PRODUCTION.md) supersedes the 'managed PostgreSQL' wording still present in the slice 10/11 acceptance text.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is marked 'Superseded'; the authoritative production docs are docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "This mirrors the slice-11 and slice-13 precedent: implement-result blocked, no production changes, no completion recorded."
+  ]
+}

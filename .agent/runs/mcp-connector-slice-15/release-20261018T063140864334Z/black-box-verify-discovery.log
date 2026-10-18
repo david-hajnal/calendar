@@ -1,0 +1,16 @@
+[verify-discovery] starting mock server (MCP host http://127.0.0.1:3998, issuer host http://127.0.0.1:3999)
+[verify-discovery] mock server is ready
+[verify-discovery] FAIL path: harness vs current-production behavior (expect exit 1)
+[verify-discovery]   harness exit code: 1 (expected 1) -> OK
+[verify-discovery]   violation A1 (401 challenge) present -> OK
+[verify-discovery]   violation A2 (public resource_metadata) present -> OK
+[verify-discovery]   violation A4 (authorization-server metadata) present -> OK
+[verify-discovery]   A3 (protected-resource metadata issuer) passes -> OK
+[verify-discovery] PASS path: harness vs compliant discovery server (expect exit 0)
+[verify-discovery]   harness exit code: 0 (expected 0) -> OK
+[verify-discovery]   A1 passes -> OK
+[verify-discovery]   A2 passes -> OK
+[verify-discovery]   A3 passes -> OK
+[verify-discovery]   A4 passes -> OK
+[verify-discovery] 
+[verify-discovery] VERIFY PASS: discovery harness exits 1 on current-production behavior (A1/A2/A4 red, A3 green) and 0 on compliant behavior.

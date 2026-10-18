@@ -1,0 +1,36 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) is a manual-hold task. All deterministic prerequisites are verified and in place (OpenCode v2.0.20 installed; deterministic config present; live production DCR-capable), but the required live browser authorization / operator consent cannot be completed autonomously. Per the per-slice continuation gate, completion is NOT recorded in 00-status.md. No files were modified.",
+  "files_changed": [],
+  "verification_commands": [
+    "opencode --version",
+    "opencode mcp list",
+    "curl -sS https://mcal.hajnal.space/.well-known/oauth-protected-resource",
+    "curl -sS https://auth.hajnal.space/.well-known/oauth-authorization-server",
+    "cat ~/.config/opencode/opencode.json"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Browser authorization / operator consent not completed (manual-hold gate): `opencode mcp list` reports 'calendar needs authentication' \u2014 no valid credentials stored, so the DCR/browser auth, calendar read, refresh, denial/revocation, removal, and recovery proofs cannot be run autonomously.",
+    "Slice 10/12 dependency contradiction: mcp-connector-slice-10.json and slice-12.json manifests say `completed`, but their implement-result.json files say `blocked`, and 00-status.md shows both unchecked \u2014 the dependency gate for slice 13 is not satisfied in the canonical status file.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is missing repo-wide but is referenced by the task acceptance and 10+ manifests; the authoritative docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "PostgreSQL-vs-SQLite wording drift: the 2026-10-08 SQLite decision supersedes the 'managed PostgreSQL' hosting wording still present in slice acceptance text."
+  ],
+  "follow_up": [
+    "Operator must run the live OpenCode matrix against production: `opencode mcp add/list/auth calendar`, complete browser consent, then `calendar_list`, token refresh, denial/revocation, removal, and recovery \u2014 recording the exact callback shape observed.",
+    "Record the minimum supported OpenCode version (v2.0.20) and the observed OAuth callback shape before choosing README instructions.",
+    "Only after observing the released client, extend the DCR callback policy narrowly if (and only if) the observed shape is not already admitted by the loopback policy.",
+    "Reconcile the slice 10/12 status contradiction (manifest `completed` vs implement-result `blocked` vs unchecked 00-status.md) before the slice 13 dependency gate can be considered satisfied.",
+    "Restore or re-point docs/MCP-PRODUCTION-FIX-PLAN.md (or update the task/manifest references to the authoritative docs)."
+  ],
+  "important_context": [
+    "Working dir is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening (use absolute paths or `git -C`).",
+    "OpenCode v2.0.20 is the released client for slice 13 and IS installed at /opt/homebrew/bin/opencode; `claude` and `codex` are NOT installed.",
+    "Live production is up and DCR-capable: https://mcal.hajnal.space/.well-known/oauth-protected-resource (9 scopes, auth server https://auth.hajnal.space) and https://auth.hajnal.space/.well-known/oauth-authorization-server (DCR reg endpoint, S256, refresh, revocation) both respond.",
+    "The DCR policy admits only the lab loopback callback; OpenCode's callback is loopback (127.0.0.1:7777), so no policy change is strictly required, but extension must be 'narrowly required' and only after observing the released client.",
+    "2026-10-08 SQLite decision supersedes the 'managed PostgreSQL' wording still in slice acceptance text.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md is missing repo-wide; authoritative docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Pre-existing uncommitted changes in `git status` are from prior slices (9,10) and ics-import work \u2014 NOT from this task; do not commit or touch them.",
+    "No files were modified in this session; completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved."
+  ]
+}

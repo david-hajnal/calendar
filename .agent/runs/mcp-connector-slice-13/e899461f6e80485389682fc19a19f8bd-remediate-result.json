@@ -1,0 +1,21 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) live matrix is a manual-hold gate, not a production-code defect: it requires operator consent, a live environment, and valid stored credentials that cannot be supplied autonomously. No production-code change is warranted within the remediation boundary.",
+  "files_changed": [],
+  "verification_commands": [
+    "cd /Users/kaszperek/repos/happening && opencode mcp list"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Live matrix (criterion 2) blocked on operator consent: `opencode mcp list` reports 'calendar needs authentication' (no valid credentials stored) and 'calendar-local failed: Unable to connect'. DCR/browser authorization, calendar read, refresh, denial/revocation, removal, and recovery proofs cannot run without a live environment and valid stored credentials. This is a manual-hold gate, not a production-code defect."
+  ],
+  "follow_up": [
+    "Obtain operator consent to run the live matrix.",
+    "Provide a live environment with valid stored calendar credentials (complete DCR/browser authorization).",
+    "Re-run `opencode mcp list` to confirm 'calendar connected', then execute the full slice-13 proof sequence (clean configuration, DCR/browser authorization, schema discovery, calendar read, refresh, denial/revocation, removal, recovery, minimum-version proof).",
+    "Record proof and completion in docs/plans/cross-client-mcp-connector/00-status.md only when every slice condition passes."
+  ],
+  "important_context": [
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting; authoritative docs are docs/AUTH-PRODUCTION.md and docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md. Migration does not authorize production changes. No commit/push/rebase was performed; no other agents dispatched."
+  ]
+}

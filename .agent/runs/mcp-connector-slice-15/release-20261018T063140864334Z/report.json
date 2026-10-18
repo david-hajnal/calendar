@@ -1,0 +1,267 @@
+{
+  "slice": 15,
+  "started_at": "2026-10-18T06:31:40.864334+00:00",
+  "revision": "226b528247b71dfb69f698881475a375e1d0e56e",
+  "dirty_worktree": true,
+  "deployment_performed": false,
+  "checks": [
+    {
+      "name": "live-production-recovery",
+      "status": "blocked",
+      "reason": "Operator proof of live restart, clean-target backup restore, key rotation and rollback required"
+    },
+    {
+      "name": "live-codex-matrix",
+      "status": "blocked",
+      "reason": "Released-client browser consent, real calendar read, refresh, deny/revoke/remove and recovery proof required"
+    },
+    {
+      "name": "live-claude-matrix",
+      "status": "blocked",
+      "reason": "Released-client browser consent, real calendar read, refresh, deny/revoke/remove and recovery proof required"
+    },
+    {
+      "name": "live-opencode-matrix",
+      "status": "blocked",
+      "reason": "Released-client browser consent, real calendar read, refresh, deny/revoke/remove and recovery proof required"
+    },
+    {
+      "name": "auth-unit",
+      "command": "node --test test/production-config.test.mjs test/sqlite-storage.test.mjs",
+      "cwd": "slice1-lab/auth-server",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "auth-unit.log",
+      "seconds": 0.24
+    },
+    {
+      "name": "auth-contract-restart-restore",
+      "command": "./scripts/dev.sh auth-check",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "auth-contract-restart-restore.log",
+      "seconds": 4.43
+    },
+    {
+      "name": "auth-encrypted-storage",
+      "command": "node tests/sqlite-storage-proof.mjs",
+      "cwd": "slice1-lab/auth-server",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "auth-encrypted-storage.log",
+      "seconds": 0.13
+    },
+    {
+      "name": "backend-login-consent-grants",
+      "command": "cargo test --manifest-path backend/Cargo.toml --locked",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "backend-login-consent-grants.log",
+      "seconds": 36.43
+    },
+    {
+      "name": "authorization-coverage",
+      "command": "make validate-authorization-coverage",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "authorization-coverage.log",
+      "seconds": 0.08
+    },
+    {
+      "name": "mcp-protocol-e2e",
+      "command": "cargo test --manifest-path mcp-server/Cargo.toml --locked",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "mcp-protocol-e2e.log",
+      "seconds": 18.74
+    },
+    {
+      "name": "black-box-verify",
+      "command": "node mcp-acceptance/verify.js",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "black-box-verify.log",
+      "seconds": 0.35
+    },
+    {
+      "name": "black-box-verify-discovery",
+      "command": "node mcp-acceptance/verify-discovery.js",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "black-box-verify-discovery.log",
+      "seconds": 0.4
+    },
+    {
+      "name": "black-box-verify-oauth-lifecycle",
+      "command": "node mcp-acceptance/verify-oauth-lifecycle.js",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "black-box-verify-oauth-lifecycle.log",
+      "seconds": 0.99
+    },
+    {
+      "name": "black-box-verify-security-isolation",
+      "command": "node mcp-acceptance/verify-security-isolation.js",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "black-box-verify-security-isolation.log",
+      "seconds": 0.89
+    },
+    {
+      "name": "helm-flux",
+      "command": "bash scripts/validate-deploy.sh",
+      "cwd": ".",
+      "environment": {},
+      "status": "failed",
+      "exit_code": 1,
+      "log": "helm-flux.log",
+      "seconds": 20.31
+    },
+    {
+      "name": "cutover-manifests",
+      "command": "python3 scripts/test-auth-cutover-manifests.py",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "cutover-manifests.log",
+      "seconds": 0.4
+    },
+    {
+      "name": "auth-tls",
+      "command": "python3 scripts/test-auth-tls.py",
+      "cwd": ".",
+      "environment": {},
+      "status": "failed",
+      "exit_code": 1,
+      "log": "auth-tls.log",
+      "seconds": 5.06
+    },
+    {
+      "name": "immutable-production-tags",
+      "command": "make check-prod-tags",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "immutable-production-tags.log",
+      "seconds": 0.07
+    },
+    {
+      "name": "deploy-contract",
+      "command": "make deploy-script-test",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "deploy-contract.log",
+      "seconds": 4.79
+    },
+    {
+      "name": "core-sqlite-recovery",
+      "command": "make sqlite-prod-test",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "core-sqlite-recovery.log",
+      "seconds": 0.34
+    },
+    {
+      "name": "mcp-sqlite-recovery",
+      "command": "sh scripts/test-mcp-backup-restore.sh",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "mcp-sqlite-recovery.log",
+      "seconds": 0.12
+    },
+    {
+      "name": "public-host-checker",
+      "command": "python3 scripts/test-check-mcp-public-host.py",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "public-host-checker.log",
+      "seconds": 0.13
+    },
+    {
+      "name": "install-codex",
+      "command": "node mcp-acceptance/client-snippets.js codex",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "install-codex.log",
+      "seconds": 0.19
+    },
+    {
+      "name": "install-claude",
+      "command": "node mcp-acceptance/client-snippets.js claude",
+      "cwd": ".",
+      "environment": {},
+      "status": "blocked",
+      "reason": "Missing tools: claude"
+    },
+    {
+      "name": "install-opencode",
+      "command": "node mcp-acceptance/client-snippets.js opencode",
+      "cwd": ".",
+      "environment": {},
+      "status": "failed",
+      "exit_code": 1,
+      "log": "install-opencode.log",
+      "seconds": 1.86
+    },
+    {
+      "name": "auth-node22-image-storage",
+      "command": "./scripts/dev.sh auth-storage-check",
+      "cwd": ".",
+      "environment": {},
+      "status": "passed",
+      "exit_code": 0,
+      "log": "auth-node22-image-storage.log",
+      "seconds": 10.61
+    },
+    {
+      "name": "production-discovery",
+      "command": "node mcp-acceptance/discovery.js",
+      "cwd": ".",
+      "environment": {
+        "MCP_URL": "https://mcal.hajnal.space/mcp",
+        "MCP_OAUTH_ISSUER": "https://auth.hajnal.space"
+      },
+      "status": "passed",
+      "exit_code": 0,
+      "log": "production-discovery.log",
+      "seconds": 0.79
+    }
+  ],
+  "counts": {
+    "blocked": 5,
+    "passed": 19,
+    "failed": 3
+  },
+  "status": "failed",
+  "finished_at": "2026-10-18T06:33:28.305885+00:00"
+}

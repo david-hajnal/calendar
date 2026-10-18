@@ -1,0 +1,10 @@
+[mcp-acceptance] target: https://mcal.hajnal.space/mcp
+[mcp-acceptance] issuer: https://auth.hajnal.space
+[mcp-acceptance] expected resource_metadata: https://mcal.hajnal.space/.well-known/oauth-protected-resource
+[mcp-acceptance] A1: PASS
+[mcp-acceptance] A2: PASS
+[mcp-acceptance] A3: PASS
+[mcp-acceptance] A4: PASS
+
+[mcp-acceptance] PASS: public challenge and OAuth discovery are compliant
+[mcp-acceptance] deterministic record: /Users/kaszperek/repos/happening/.agent/runs/mcp-connector-slice-15/release-20261018T063140864334Z/mcp-acceptance-discovery.json

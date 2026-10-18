@@ -1,0 +1,19 @@
+[verify-security-isolation] FAIL path: harness vs current-production behavior (expect exit 1)
+[verify-security-isolation]   harness exit code: 1 (expected 1) -> OK
+[verify-security-isolation]   violation S0 (OAuth flow) present -> OK
+[verify-security-isolation]   production-fix phase map reported -> OK
+[verify-security-isolation]   phase map names S1 -> OK
+[verify-security-isolation]   phase map names S9 -> OK
+[verify-security-isolation] PASS path: harness vs compliant security/isolation server (expect exit 0)
+[verify-security-isolation]   harness exit code: 0 (expected 0) -> OK
+[verify-security-isolation]   S1 passes -> OK
+[verify-security-isolation]   S2 passes -> OK
+[verify-security-isolation]   S3 passes -> OK
+[verify-security-isolation]   S4 passes -> OK
+[verify-security-isolation]   S5 passes -> OK
+[verify-security-isolation]   S6 passes -> OK
+[verify-security-isolation]   S7 passes -> OK
+[verify-security-isolation]   S8 passes -> OK
+[verify-security-isolation]   S9 passes -> OK
+[verify-security-isolation] 
+[verify-security-isolation] VERIFY PASS: security-isolation harness exits 1 on current-production behavior and 0 on compliant behavior.

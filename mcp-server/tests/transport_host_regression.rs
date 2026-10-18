@@ -57,9 +57,73 @@ async fn unexpected_hostname_initialize_is_rejected() {
     );
 }
 
+async fn initialize_status_with_origin(host: &str, origin: Option<&str>) -> StatusCode {
+    let service = StreamableHttpService::new(
+        || Ok(ReadOnlyHandler),
+        LocalSessionManager::default().into(),
+        mcp_server::transport::server_config("https://mcal.hajnal.space/mcp").unwrap(),
+    );
+    let router = Router::new().nest_service("/mcp", service);
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("host", host)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream");
+    if let Some(origin) = origin {
+        builder = builder.header("origin", origin);
+    }
+    let response = router
+        .oneshot(
+            builder
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"host-regression","version":"1"}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response.status()
+}
+
+#[tokio::test]
+async fn same_origin_initialize_is_accepted() {
+    assert_eq!(
+        initialize_status_with_origin("mcal.hajnal.space", Some("https://mcal.hajnal.space"))
+            .await,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn cross_origin_initialize_is_rejected() {
+    assert_eq!(
+        initialize_status_with_origin("mcal.hajnal.space", Some("https://attacker.example")).await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn cross_scheme_origin_initialize_is_rejected() {
+    assert_eq!(
+        initialize_status_with_origin("mcal.hajnal.space", Some("http://mcal.hajnal.space")).await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn missing_origin_initialize_is_accepted() {
+    assert_eq!(
+        initialize_status_with_origin("mcal.hajnal.space", None).await,
+        StatusCode::OK
+    );
+}
+
 const RESOURCE: &str = "https://mcal.hajnal.space/mcp";
 
-async fn authenticated_router() -> (Router, String, String, wiremock::MockServer) {
+async fn authenticated_router(
+    limiter: mcp_server::rate_limiter::RateLimiter,
+) -> (Router, String, String, wiremock::MockServer) {
     use base64::Engine;
     use rsa::{pkcs8::EncodePrivateKey, traits::PublicKeyParts};
     let mock = wiremock::MockServer::start().await;
@@ -129,7 +193,7 @@ async fn authenticated_router() -> (Router, String, String, wiremock::MockServer
                 )
                 .unwrap(),
                 sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap(),
-                std::sync::Arc::new(mcp_server::rate_limiter::RateLimiter::disabled()),
+                std::sync::Arc::new(limiter),
             );
             move || Ok(server.clone())
         },
@@ -182,7 +246,8 @@ fn rpc_request(
 
 #[tokio::test]
 async fn authenticated_public_initialize_and_tools_list_and_rejections() {
-    let (router, token, _other_token, _issuer) = authenticated_router().await;
+    let (router, token, _other_token, _issuer) =
+        authenticated_router(mcp_server::rate_limiter::RateLimiter::disabled()).await;
     for host in ["mcal.hajnal.space", "mcal.hajnal.space:443"] {
         let initialized = router
             .clone()
@@ -272,7 +337,8 @@ async fn decoded_result(response: axum::response::Response) -> serde_json::Value
 
 #[tokio::test]
 async fn authenticated_tool_call_keeps_request_identity_across_rmcp_tasks() {
-    let (router, token, other_token, issuer) = authenticated_router().await;
+    let (router, token, other_token, issuer) =
+        authenticated_router(mcp_server::rate_limiter::RateLimiter::disabled()).await;
     let response = router
         .clone()
         .oneshot(rpc_request(
@@ -384,4 +450,88 @@ async fn authenticated_tool_call_keeps_request_identity_across_rmcp_tasks() {
             "an existing session must never bypass per-request authentication"
         );
     }
+}
+
+
+#[tokio::test]
+async fn rate_limited_tool_call_returns_safe_error() {
+    use std::time::Duration;
+    let limiter = mcp_server::rate_limiter::RateLimiter::new(2, Duration::from_secs(60));
+    let (router, token, _other_token, _issuer) = authenticated_router(limiter).await;
+    let initialized = router
+        .clone()
+        .oneshot(rpc_request(
+            "mcal.hajnal.space",
+            Some(&token),
+            None,
+            "initialize",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(initialized.status(), StatusCode::OK);
+    let session = initialized
+        .headers()
+        .get("mcp-session-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    decoded_result(initialized).await;
+    router
+        .clone()
+        .oneshot(rpc_request(
+            "mcal.hajnal.space",
+            Some(&token),
+            Some(&session),
+            "notifications/initialized",
+        ))
+        .await
+        .unwrap();
+    let call = |id: i64| {
+        let router = router.clone();
+        let token = token.clone();
+        let session = session.clone();
+        async move {
+            let mut request = rpc_request(
+                "mcal.hajnal.space",
+                Some(&token),
+                Some(&session),
+                "tools/call",
+            );
+            *request.body_mut() = Body::from(
+                serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"calendar_list","arguments":{}}}).to_string(),
+            );
+            let response = router.oneshot(request).await.unwrap();
+            use http_body_util::BodyExt;
+            std::str::from_utf8(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap()
+                .to_owned()
+        }
+    };
+    // The first two calls consume the budget and reach grant lookup.
+    for id in [1, 2] {
+        let text = call(id).await;
+        assert!(
+            text.contains("no active MCP grant"),
+            "call {id} must reach grant lookup: {text}"
+        );
+        assert!(
+            !text.contains("rate limit exceeded"),
+            "call {id} must not be rate limited: {text}"
+        );
+    }
+    // The third call is denied by the limiter before grant lookup.
+    let text = call(3).await;
+    assert!(
+        text.contains("rate limit exceeded"),
+        "third call must be rate limited: {text}"
+    );
+    assert!(
+        text.contains("-2004"),
+        "rate limit error must carry JSON-RPC code -2004: {text}"
+    );
+    assert!(
+        !text.contains("no active MCP grant"),
+        "rate limit must be enforced before grant lookup: {text}"
+    );
 }

@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "Reconciliation of all 7 mcp-production-remediation findings verified: every evidence claim in 00-status.md holds against current source, the completion ledger is accurate, original findings are retained, no packets were needed (no outstanding findings), and all 5 claimed verification commands were re-run and passed with matching counts.",
+  "files_changed": [],
+  "verification_commands": [
+    "rg -n 'hajnal\\.space' deploy/helm/commoncal-mcp/values.yaml deploy/helm/commoncal-mcp/values.schema.json deploy/helm/commoncal-mcp/templates/ (no matches, exit 1 as expected)",
+    "sh deploy/helm/commoncal-mcp/tests/template_assertions.sh",
+    "cargo test --lib config:: (in mcp-server/)",
+    "cargo test --lib internal_client:: (in mcp-server/)",
+    "cargo test --lib transport:: (in mcp-server/)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Production runtime verification (live discovery 200, WAF/Cloudflare header preservation, TLS behavior) remains outstanding under the blocked mcp-production-rollout task; the reconciliation correctly defers it rather than claiming it."
+  ],
+  "important_context": [
+    "All 7 findings in docs/plans/mcp-production-remediation are classified implemented on the code/config side; production runtime verification is tracked by mcp-production-rollout (status: blocked).",
+    "No orchestrator-factory packets were created because no findings were outstanding; the manual hold was respected and no stale recommendations were applied.",
+    "Task manifest .agent/tasks/mcp-production-remediation-reconcile.json is marked completed; the reconciliation artifact is docs/plans/mcp-production-remediation/00-status.md."
+  ]
+}

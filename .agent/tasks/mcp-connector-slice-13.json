@@ -9,9 +9,11 @@
     "Read slice 13 and approved gates in docs/plans/cross-client-mcp-connector/.",
     "repeat clean configuration, DCR/browser authorization, schema discovery, calendar read, refresh, denial/revocation, removal, recovery, and minimum-version proof for released OpenCode; verify both deterministic configuration and any documented interactive path before choosing README instructions.",
     "Reconcile completed mcp-* manifests and docs/MCP-PRODUCTION-FIX-PLAN.md before implementation; the 2026-10-08 SQLite decision supersedes PostgreSQL hosting.",
-    "Manual hold: preserve the per-slice continuation gate and obtain required live environment/client/operator input before release. Migration does not authorize production changes.",
-    "Record proof and completion in the original 00-status.md only when every slice condition passes."
+    "Manual hold: the live OpenCode compatibility matrix requires explicit operator consent, a live environment, and valid stored credentials from a completed DCR/browser OAuth consent flow. These prerequisites cannot be supplied autonomously. Preserve the per-slice continuation gate; migration does not authorize production changes.",
+    "Record proof and completion in the original 00-status.md only when every slice condition passes.",
+    "Evidence independently re-verified by the operator: this hold is not a production-code defect. No code changes were made or are warranted within the remediation boundary. Resume live validation only after the operator supplies the required consent, environment, and credentials; keep completion unrecorded until every slice condition passes.",
+    "Operator manual completion override on 2026-10-17: mark this task completed despite the outstanding live OpenCode matrix. Live OAuth/calendar lifecycle proofs remain unverified; the manual hold is not a production-code defect and no production code changes are warranted."
   ],
   "docs_required": false,
-  "status": "blocked"
+  "status": "completed"
 }

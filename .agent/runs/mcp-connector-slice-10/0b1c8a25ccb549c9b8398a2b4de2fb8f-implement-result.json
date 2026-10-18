@@ -1,0 +1,31 @@
+{
+  "status": "blocked",
+  "summary": "Slice 10 is a manual-hold task requiring operator-supplied infrastructure and live environment/client/operator input; I performed the reconciliation (read slice 10, gates, completed mcp-* manifests, and production docs) and preserved the hold without proceeding to production or recording completion in 00-status.md.",
+  "files_changed": [],
+  "verification_commands": [
+    "cat .agent/tasks/mcp-connector-slice-10.json",
+    "cat docs/plans/cross-client-mcp-connector/04-slices.md",
+    "cat docs/AUTH-PRODUCTION.md",
+    "cat docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "cat docs/plans/cross-client-mcp-connector/00-status.md",
+    "find . -name MCP-PRODUCTION-FIX-PLAN.md",
+    "grep -n Slice 10 docs/plans/cross-client-mcp-connector/00-status.md"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "MCP-PRODUCTION-FIX-PLAN.md is referenced by the task and 10+ other manifests but does not exist in the repository; the actual production docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Slice 10 acceptance criterion to provision operator-supplied managed PostgreSQL is superseded by the 2026-10-08 SQLite decision (AUTH-PRODUCTION.md: No PostgreSQL server, database passwords or database TLS are needed).",
+    "The production rollout is largely done (per MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md), but an authenticated MCP client connection and tool call were not yet reported - this is the outstanding condition for slice 10."
+  ],
+  "follow_up": [
+    "The operator needs to connect an actual MCP client, complete consent, and verify calendar listing (the outstanding condition for slice 10).",
+    "The MCP-PRODUCTION-FIX-PLAN.md file is missing; the task and 10+ manifests reference it. Either the file needs to be restored or the references need to be updated to point to AUTH-PRODUCTION.md / MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md."
+  ],
+  "important_context": [
+    "Slice 10 is a manual hold requiring operator-supplied infrastructure and live environment/client/operator input; Migration does not authorize production changes.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting (AUTH-PRODUCTION.md: No PostgreSQL server, database passwords or database TLS are needed), contradicting slice 10 provision operator-supplied managed PostgreSQL criterion.",
+    "MCP-PRODUCTION-FIX-PLAN.md does not exist in the repository; it is referenced by the task and 10+ manifests. The actual production docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "The production rollout is largely done (per MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md), but an authenticated MCP client connection and tool call were not yet reported - this is the outstanding condition for slice 10.",
+    "Slice 10 is still unchecked in 00-status.md (line 19); completion should only be recorded when every slice condition passes."
+  ]
+}

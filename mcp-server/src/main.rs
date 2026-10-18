@@ -188,6 +188,8 @@ mod tests {
             bind_address: "127.0.0.1:3001".parse().unwrap(),
             dpop_key_path: None,
             rate_limit_enabled: false,
+            rate_limit_max: 60,
+            rate_limit_window_secs: 60,
             tracing_level: "info".to_string(),
         }
     }

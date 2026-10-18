@@ -1,0 +1,1 @@
+SQLite storage proof passed: atomic consume/revoke, expiry, canonical handoff retries, durable audit/rate, online encrypted backup, isolated restore, failure cleanup

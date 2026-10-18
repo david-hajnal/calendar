@@ -8,8 +8,10 @@ All four gates approved 2026-09-27. Six packets in `docs/plans/ics-import/04-tas
 
 ## Held plans
 
-MCP connector slices 9–15, historical review/remediation reconciliation, Flux live rollout and SQLite auth production delivery are migrated as manually blocked entries. Read the migration inventory and original plans before releasing any hold. SQLite supersedes PostgreSQL hosting in the production auth plan.
+MCP connector slices 9–15, historical review reconciliation, Flux live rollout and SQLite auth production delivery are migrated as manually blocked entries. Read the migration inventory and original plans before releasing any hold. SQLite supersedes PostgreSQL hosting in the production auth plan.
 
 ## Completed plans
 
 Apple Calendar T01–T19 and existing mcp-* task manifests are complete and preserved. No completed task is recreated. Preserve pre-existing deleted deployment manifests.
+
+`mcp-production-remediation-reconcile` completed 2026-10-18: all 7 findings classified implemented; reconciliation artifact at `docs/plans/mcp-production-remediation/00-status.md`.

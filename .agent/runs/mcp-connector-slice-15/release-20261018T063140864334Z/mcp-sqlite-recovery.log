@@ -1,0 +1,5 @@
+PASS: mcp_image_contains_sqlite_cli
+PASS: backup_snapshot_passes_integrity_check
+PASS: deployment_docs_name_mcp_backup_restore_and_verification_steps
+
+Results: 3 passed, 0 failed

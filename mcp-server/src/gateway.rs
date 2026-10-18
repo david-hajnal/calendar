@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::StatusCode;
 use sqlx::SqlitePool;
@@ -32,7 +33,10 @@ impl Gateway {
         .map_err(|e| vec![e])?;
 
         let rate_limiter = if config.rate_limit_enabled {
-            Arc::new(RateLimiter::new())
+            Arc::new(RateLimiter::new(
+                config.rate_limit_max,
+                Duration::from_secs(config.rate_limit_window_secs as u64),
+            ))
         } else {
             Arc::new(RateLimiter::disabled())
         };

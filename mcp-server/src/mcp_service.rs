@@ -86,6 +86,23 @@ impl CommonCalServer {
             })
     }
 
+    /// Enforce the per-client rate limit, failing with a safe rate-limit error.
+    ///
+    /// The key is the validated user + OAuth client pair, so limits are applied
+    /// per client rather than per IP (which is unreliable behind proxies).
+    fn enforce_rate_limit(&self, identity: &identity::Identity) -> Result<(), ErrorData> {
+        let key = format!("{}:{}", identity.user_id, identity.client_id);
+        if self.rate_limiter.check(&key) {
+            Ok(())
+        } else {
+            Err(ErrorData::new(
+                ErrorCode(-2004),
+                "rate limit exceeded".to_string(),
+                None,
+            ))
+        }
+    }
+
     /// Resolve the authoritative grant for the current identity, failing closed
     /// when no grant exists or the lookup fails.
     async fn resolve_grant(&self, identity: &identity::Identity) -> Result<McpGrant, ErrorData> {
@@ -172,7 +189,7 @@ impl CommonCalServer {
             ToolError::NotFound => (ErrorCode::INTERNAL_ERROR, "not found".to_string()),
             ToolError::Conflict(msg) => (ErrorCode::INTERNAL_ERROR, format!("conflict: {msg}")),
             ToolError::RateLimited => {
-                (ErrorCode::INTERNAL_ERROR, "rate limit exceeded".to_string())
+                (ErrorCode(-2004), "rate limit exceeded".to_string())
             }
             ToolError::Internal(msg) => {
                 (ErrorCode::INTERNAL_ERROR, format!("internal error: {msg}"))
@@ -249,6 +266,7 @@ impl CommonCalServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -275,6 +293,7 @@ impl CommonCalServer {
         params: Parameters<AvailabilityFindParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -293,6 +312,7 @@ impl CommonCalServer {
         params: Parameters<EventGetParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -313,6 +333,7 @@ impl CommonCalServer {
         params: Parameters<EventSearchParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -331,6 +352,7 @@ impl CommonCalServer {
         params: Parameters<EventCreateParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -351,6 +373,7 @@ impl CommonCalServer {
         params: Parameters<EventUpdateParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -369,6 +392,7 @@ impl CommonCalServer {
         params: Parameters<ReminderSetParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -389,6 +413,7 @@ impl CommonCalServer {
         params: Parameters<EventDeletePrepareParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {
@@ -407,6 +432,7 @@ impl CommonCalServer {
         params: Parameters<EventDeleteCommitParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let identity = self.identity(&context)?;
+        self.enforce_rate_limit(&identity)?;
         let grant = self.resolve_grant(&identity).await?;
         let token = token_from_identity(&identity);
         let context = AuthorizedToolContext {

@@ -32,6 +32,8 @@ pub struct RawConfig {
     pub bind_address: String,
     pub dpop_key_path: Option<PathBuf>,
     pub rate_limit_enabled: bool,
+    pub rate_limit_max: u64,
+    pub rate_limit_window_secs: i64,
     pub tracing_level: String,
 }
 
@@ -49,6 +51,8 @@ pub struct Config {
     pub bind_address: SocketAddr,
     pub dpop_key_path: Option<PathBuf>,
     pub rate_limit_enabled: bool,
+    pub rate_limit_max: u64,
+    pub rate_limit_window_secs: i64,
     pub tracing_level: String,
 }
 
@@ -66,6 +70,8 @@ impl std::fmt::Debug for Config {
             .field("bind_address", &self.bind_address)
             .field("dpop_key_path", &self.dpop_key_path)
             .field("rate_limit_enabled", &self.rate_limit_enabled)
+            .field("rate_limit_max", &self.rate_limit_max)
+            .field("rate_limit_window_secs", &self.rate_limit_window_secs)
             .field("tracing_level", &self.tracing_level)
             .finish()
     }
@@ -129,6 +135,16 @@ impl Config {
 
         let rate_limit_enabled = env::var("MCP_RATE_LIMIT_ENABLED").ok().as_deref() == Some("1");
 
+        let rate_limit_max = env::var("MCP_RATE_LIMIT_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+
+        let rate_limit_window_secs = env::var("MCP_RATE_LIMIT_WINDOW_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60);
+
         let tracing_level = env::var("TRACING_LEVEL").unwrap_or_else(|_| "info".into());
 
         RawConfig {
@@ -143,6 +159,8 @@ impl Config {
             bind_address,
             dpop_key_path,
             rate_limit_enabled,
+            rate_limit_max,
+            rate_limit_window_secs,
             tracing_level,
         }
     }
@@ -264,6 +282,19 @@ impl Config {
             }
         }
 
+        // Validate rate limit numerics in all environments: a zero limit or
+        // window would make the limiter useless or deny everything.
+        if raw.rate_limit_max < 1 {
+            errors.push(ConfigError::new(
+                "MCP_RATE_LIMIT_MAX must be at least 1",
+            ));
+        }
+        if raw.rate_limit_window_secs < 1 {
+            errors.push(ConfigError::new(
+                "MCP_RATE_LIMIT_WINDOW_SECS must be at least 1",
+            ));
+        }
+
         // Validate bind address in all environments.
         let bind_addr = match raw.bind_address.parse::<SocketAddr>() {
             Ok(addr) => addr,
@@ -289,6 +320,8 @@ impl Config {
                 bind_address: bind_addr,
                 dpop_key_path: raw.dpop_key_path,
                 rate_limit_enabled: raw.rate_limit_enabled,
+                rate_limit_max: raw.rate_limit_max,
+                rate_limit_window_secs: raw.rate_limit_window_secs,
                 tracing_level: raw.tracing_level,
             })
         } else {

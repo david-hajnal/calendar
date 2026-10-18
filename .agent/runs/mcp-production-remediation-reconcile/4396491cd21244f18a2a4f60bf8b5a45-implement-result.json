@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "Verified the reconciliation of all 7 findings in docs/plans/mcp-production-remediation against current source: all 7 are implemented with valid file:line evidence, no outstanding findings (so no new packets, manual hold respected), and marked the task manifest completed.",
+  "files_changed": [
+    ".agent/tasks/mcp-production-remediation-reconcile.json"
+  ],
+  "verification_commands": [
+    "rg -n 'hajnal\\.space' deploy/helm/commoncal-mcp/values.yaml deploy/helm/commoncal-mcp/values.schema.json deploy/helm/commoncal-mcp/templates/ (expect no matches)",
+    "sh deploy/helm/commoncal-mcp/tests/template_assertions.sh",
+    "cargo test --lib config:: (in mcp-server/; 29 passed)",
+    "cargo test --lib internal_client:: (in mcp-server/; 17 passed)",
+    "cargo test --lib transport:: (in mcp-server/; 3 passed)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Production runtime verification (live discovery 200, WAF/Cloudflare header preservation, TLS) remains tracked by mcp-production-rollout, which is still blocked \u2014 not claimed by this reconciliation."
+  ],
+  "important_context": [
+    "The reconciliation deliverable docs/plans/mcp-production-remediation/00-status.md was created by a prior run of this same task (docs/plans/ is untracked per commit 4b92bf7); this run independently re-verified every claim and all 5 verification commands, and changed only the task manifest status from ready to completed.",
+    "All 7 findings (01-07) are classified IMPLEMENTED in 00-status.md; no outstanding findings, so no orchestrator-factory packets were created and no stale recommendations were applied.",
+    "Completion ledger confirmed: mcp-secure-internal-api, mcp-rmcp-gateway, mcp-discovery-token-validation, mcp-consent-grant-core, mcp-acceptance-harness-foundation, mcp-acceptance-discovery are completed; mcp-production-rollout is blocked."
+  ]
+}

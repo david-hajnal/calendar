@@ -1,0 +1,34 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) is blocked by manual-hold: the live matrix (DCR/browser auth, calendar read, refresh, denial/revocation, removal, recovery, minimum-version proof) requires operator consent and live browser authentication that cannot be completed autonomously. The prior implement, QA, and remediate stages correctly preserved the manual hold, made no production changes, and did reasonable reconciliation work (status contradiction fixed, missing FIX-PLAN.md created, SQLite wording reconciled). No defects found in the prior stages' work.",
+  "files_changed": [],
+  "verification_commands": [
+    "git -C /Users/kaszperek/repos/happening status --short",
+    "git -C /Users/kaszperek/repos/happening diff .agent/tasks/mcp-connector-slice-10.json .agent/tasks/mcp-connector-slice-12.json .agent/tasks/mcp-connector-slice-13.json .agent/tasks/mcp-connector-slice-9.json",
+    "git -C /Users/kaszperek/repos/happening show HEAD:.agent/tasks/mcp-connector-slice-11.json",
+    "cat /Users/kaszperek/repos/happening/.agent/runs/mcp-connector-slice-13/b800c34ab0624a9892ae786e181cf557-qa-result.json",
+    "cat /Users/kaszperek/repos/happening/.agent/runs/mcp-connector-slice-13/62ea2e3e3c694c66b0dbc613009be5aa-remediate-events.jsonl",
+    "grep -nE 'Slice 1[0-5]' /Users/kaszperek/repos/happening/docs/plans/cross-client-mcp-connector/00-status.md",
+    "cat /Users/kaszperek/repos/happening/docs/MCP-PRODUCTION-FIX-PLAN.md"
+  ],
+  "verification_passed": false,
+  "defects": [],
+  "follow_up": [
+    "Operator must complete browser-based DCR authentication for the OpenCode MCP connector (calendar) on a machine with the released OpenCode client.",
+    "Once credentials are stored, run the full proof suite: DCR/browser auth, calendar read, refresh, denial/revocation, removal, and recovery.",
+    "Record the minimum supported OpenCode version and the observed OAuth callback shape.",
+    "Only after observing the released client, extend the DCR callback policy narrowly if (and only if) the observed shape is not already admitted by the loopback policy.",
+    "Record completion in 00-status.md (line 22) only after every slice-13 condition passes; the per-slice continuation gate is preserved."
+  ],
+  "important_context": [
+    "Working directory is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening.",
+    "OpenCode v2.0.20 is installed at /opt/homebrew/bin/opencode; claude and codex are NOT installed.",
+    "Live production is up and DCR-capable: https://mcal.hajnal.space/.well-known/oauth-protected-resource and https://auth.hajnal.space/.well-known/oauth-authorization-server both respond.",
+    "The DCR policy admits only the lab loopback callback; OpenCode's callback is loopback (127.0.0.1:7777), so no policy change is strictly required.",
+    "Slices 10/12/13 are manual holds per .agent/PLAN-MIGRATION.md; completion must NOT be recorded in 00-status.md until operator consent is given.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting; the remediate stage correctly reconciled this in slice-10.json and 04-slices.md.",
+    "docs/MCP-PRODUCTION-FIX-PLAN.md was created by the remediate stage (395 lines, marked Superseded) to resolve the dangling reference; authoritative docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "The mcp-connector-slice-11.json deletion and slice-12.json depends_on change (slice-11\u2192slice-10) are not attributable to any recorded agent stage; they were likely made by the orchestrator or operator.",
+    "00-status.md shows slices 1-9 checked, slices 10-15 unchecked, consistent with the blocked status of slices 10-13."
+  ]
+}

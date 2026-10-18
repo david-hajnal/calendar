@@ -1,0 +1,43 @@
+{
+  "status": "blocked",
+  "summary": "Slice 15 (cross-client release proof) verification run completed. All runnable automated suites pass: auth unit 8/8, DCR/production integration, SQLite storage proof (host + in-image), backend-test, mcp-test (38+10), check-prod-tags, 4/4 mcp-acceptance self-tests, validate-deploy.sh, deploy-script-test, sqlite-prod-test 7/7, backup-restore 3/3, Docker SQLite proof exit 0. One suite (test-auth-tls.py) fails under macOS LibreSSL 3.3.6 but passes 17/17 under real OpenSSL 3.6.4 \u2014 classified environment limitation, not a code defect. Slice 15 is NOT checked off: prerequisite slices 10 and 12 are blocked, slice 11 manifest is deleted in worktree, and the live-environment smoke/recovery + manual clean-environment OAuth matrix for all three clients cannot be satisfied from this machine (Codex/Claude CLIs absent, OpenCode list/remove partial, no operator consent).",
+  "files_changed": [
+    "docs/plans/cross-client-mcp-connector/09-slice15-release-proof.md"
+  ],
+  "verification_commands": [
+    "node --test slice1-lab/auth-server/test/*.test.mjs",
+    "cd slice1-lab/auth-server && node tests/dcr-scopes-integration.mjs",
+    "cd slice1-lab/auth-server && node tests/production-integration.mjs",
+    "cd slice1-lab/auth-server && AUTH_TEST_ENCRYPTED_BACKUP=true AUTH_SECRET_HELPER=$PWD/deploy/auth-secret.sh node tests/sqlite-storage-proof.mjs",
+    "make backend-test",
+    "make mcp-test",
+    "make check-prod-tags",
+    "node mcp-acceptance/verify.js && node mcp-acceptance/verify-discovery.js && node mcp-acceptance/verify-oauth-lifecycle.js && node mcp-acceptance/verify-security-isolation.js",
+    "bash scripts/validate-deploy.sh",
+    "make deploy-script-test",
+    "make sqlite-prod-test",
+    "sh scripts/test-mcp-backup-restore.sh",
+    "docker compose -f docker-compose.auth-sqlite-test.yml up --build --abort-on-container-exit",
+    "PATH=/opt/homebrew/bin:$PATH python3 scripts/test-auth-tls.py"
+  ],
+  "verification_passed": false,
+  "defects": [],
+  "follow_up": [
+    "Slice 10 (issuer cutover + recovery) is blocked \u2014 unblock to enable production smoke/recovery against live mcal.hajnal.space / cal.hajnal.space",
+    "Slice 12 is blocked \u2014 unblock to complete the prerequisite chain",
+    "Reconcile deleted mcp-connector-slice-11.json manifest (Codex compatibility) \u2014 decide whether to restore or formally close",
+    "Run manual clean-environment OAuth matrix for all three clients (Codex, Claude Code, OpenCode) with browser, real credentials, and operator consent",
+    "Run install harness codex/claude on machines where those CLIs are installed",
+    "Investigate OpenCode harness list/remove failure ('No MCP servers configured', 'MCP server not found: commoncal')",
+    "Run restore-live-proof.mjs with private AUTH_RESTORE_INPUT_DIR (auth-secret.json, auth-config.json, proof.json, auth.sqlite) when available",
+    "Only after all prerequisite slices pass and live/operator conditions are met, check off slice 15 in 00-status.md"
+  ],
+  "important_context": [
+    "test-auth-tls.py failure is a classified environment limitation (macOS LibreSSL 3.3.6 lacks -verify_hostname), NOT a code defect \u2014 passes 17/17 under real OpenSSL 3.6.4 at /opt/homebrew/bin/openssl",
+    "sqlite-storage-proof.mjs passes on host when run from slice1-lab/auth-server/ with AUTH_TEST_ENCRYPTED_BACKUP=true and AUTH_SECRET_HELPER set; earlier host failure was a wrong-path invocation from repo root",
+    "docs/plans/ is gitignored (.gitignore:29), so 09-slice15-release-proof.md is untracked by design",
+    "SQLite remains the authoritative hosting decision (2026-10-08); MCP-PRODUCTION-FIX-PLAN.md is superseded",
+    "No production deployment, issuer change, real-account consent, or grant revocation was performed",
+    "Per acceptance criteria: do not claim support for any client whose complete path fails \u2014 complete path is not proven for any client on this machine"
+  ]
+}

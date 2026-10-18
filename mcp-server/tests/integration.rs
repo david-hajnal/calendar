@@ -385,6 +385,8 @@ fn gateway_config(mock_server: &MockServer, database_path: std::path::PathBuf) -
         bind_address: "127.0.0.1:3001".parse().unwrap(),
         dpop_key_path: None,
         rate_limit_enabled: false,
+        rate_limit_max: 60,
+        rate_limit_window_secs: 60,
         tracing_level: "info".to_string(),
     }
 }
@@ -639,9 +641,10 @@ async fn test_internal_client_creation() {
 #[tokio::test]
 async fn test_rate_limiter_disabled() {
     let limiter = mcp_server::rate_limiter::RateLimiter::disabled();
-    assert!(limiter.check("client-1", 10, 60));
-    assert!(limiter.check("client-1", 10, 60));
-    assert!(limiter.check("client-2", 10, 60));
+    assert!(!limiter.is_enabled());
+    assert!(limiter.check("client-1"));
+    assert!(limiter.check("client-1"));
+    assert!(limiter.check("client-2"));
 }
 
 /// Integration test: McpGrant model serializes correctly.
@@ -847,6 +850,8 @@ fn test_config_rejects_placeholder_in_resource_url() {
         bind_address: "127.0.0.1:3001".parse().unwrap(),
         dpop_key_path: None,
         rate_limit_enabled: true,
+        rate_limit_max: 60,
+        rate_limit_window_secs: 60,
         tracing_level: "info".into(),
     };
 
@@ -871,6 +876,8 @@ fn test_config_rejects_http_resource_url() {
         bind_address: "127.0.0.1:3001".parse().unwrap(),
         dpop_key_path: None,
         rate_limit_enabled: true,
+        rate_limit_max: 60,
+        rate_limit_window_secs: 60,
         tracing_level: "info".into(),
     };
 
@@ -895,6 +902,8 @@ fn test_config_rejects_credentials_in_resource_url() {
         bind_address: "127.0.0.1:3001".parse().unwrap(),
         dpop_key_path: None,
         rate_limit_enabled: true,
+        rate_limit_max: 60,
+        rate_limit_window_secs: 60,
         tracing_level: "info".into(),
     };
 

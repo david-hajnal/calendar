@@ -267,4 +267,21 @@ mod tests {
         let (code, _) = token_error_params(&TokenError::MissingToken);
         assert_eq!(code, "invalid_request");
     }
+
+    #[test]
+    fn token_error_params_maps_provider_outage_safely() {
+        // A provider outage surfaces as InvalidToken carrying internal detail
+        // (connection errors, upstream URLs, status codes). The 401 mapping
+        // must never leak that detail to the client.
+        let internal = TokenError::InvalidToken(
+            "discovery failed: error sending request for url (http://10.0.0.5:8443/.well-known/oauth-authorization-server): connection refused"
+                .to_string(),
+        );
+        let (code, desc) = token_error_params(&internal);
+        assert_eq!(code, "invalid_token");
+        assert_eq!(desc, "invalid authorization token");
+        assert!(!desc.contains("10.0.0.5"));
+        assert!(!desc.contains("connection refused"));
+        assert!(!desc.contains("discovery failed"));
+    }
 }

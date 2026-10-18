@@ -3,7 +3,7 @@
   "title": "Claude Code compatibility \u2014 docs/plans/cross-client-mcp-connector/04-slices.md",
   "priority": 1,
   "depends_on": [
-    "mcp-connector-slice-11"
+    "mcp-connector-slice-10"
   ],
   "acceptance": [
     "Read slice 12 and approved gates in docs/plans/cross-client-mcp-connector/.",

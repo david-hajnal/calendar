@@ -1,0 +1,86 @@
+=== Validating deployment manifests ===
+
+--- Helm lint (auth, core, mcp) ---
+--- Helm template (auth) ---
+--- Helm template (core) ---
+--- Helm template (MCP) ---
+
+--- Kustomize build ---
+
+--- Checking for mutable tags ---
+
+--- Checking immutable production tags ---
+OK: mcp-helmrelease.yaml uses an immutable source revision
+OK: mcp-helmrelease.yaml rebuilds its chart for each Git revision
+OK: auth-helmrelease.yaml uses an immutable source revision
+OK: auth-helmrelease.yaml rebuilds its chart for each Git revision
+OK: core-helmrelease.yaml uses an immutable source revision
+OK: core-helmrelease.yaml rebuilds its chart for each Git revision
+
+--- Checking Flux CRD conformance ---
+OK: 3 Flux CRD resources conform to installed schemas; expected resource set present
+
+--- Checking for retired version-release references ---
+OK: no semver promotion patterns in workflows
+OK: scripts/release.sh has been retired
+
+--- Checking for circular dependencies ---
+INFO: Found dependsOn references (verify manually):
+deploy/flux/overlays/production/flux-system/gotk-components.yaml:2809:              dependsOn:
+deploy/flux/overlays/production/flux-system/gotk-components.yaml:3832:              dependsOn:
+deploy/flux/overlays/production/charts/mcp-helmrelease.yaml:18:  dependsOn:
+deploy/flux/overlays/production/charts/core-helmrelease.yaml:100:  dependsOn:
+
+--- YAML syntax validation ---
+
+--- Chart template assertions ---
+commoncal-auth SQLite template assertions passed
+commoncal-auth production values assertions passed
+commoncal chart assertions passed
+commoncal mail assertions passed
+commoncal-mcp chart assertions passed
+
+--- Checking bridge isolation (no private ingress, no secret values) ---
+OK: private bridge service is not exposed via Ingress
+
+--- Checking Flux dependency topology (auth -> core -> mcp) ---
+OK: auth HelmRelease is included in production
+OK: core depends on commoncal-auth at spec.dependsOn (auth is active in production)
+OK: core authBridge.enabled is true (auth is active in production)
+OK: mcp depends on commoncal at spec.dependsOn
+OK: mcp does not require auth issuer hold key (cutover is dormant)
+
+--- Checking dependsOn is not nested inside spec.values ---
+OK: dependsOn is not nested inside spec.values in auth-helmrelease.yaml
+OK: dependsOn is not nested inside spec.values in core-helmrelease.yaml
+OK: dependsOn is not nested inside spec.values in mcp-helmrelease.yaml
+
+--- Checking issuer consistency (no cutover) ---
+OK: issuer source is env.MCP_OAUTH_ISSUER (oauthIssuerKeyName is empty)
+OK: env.MCP_OAUTH_ISSUER is set to https://auth.hajnal.space
+
+--- Checking for cert-manager annotations in production files ---
+--- Dormant auth cutover contracts ---
+dormant auth cutover manifest contracts passed
+
+--- Deploy script tests ---
+=== Testing deploy/sqlite-prod.sh ===
+PASS: missing kubeconfig exits non-zero
+PASS: kubeconfig without server field exits non-zero
+PASS: help flag exits 0
+PASS: unknown argument exits non-zero
+PASS: --write flag accepted
+PASS: --namespace flag accepted
+PASS: --namespace without value exits non-zero
+
+Results: 7 passed, 0 failed
+.................
+----------------------------------------------------------------------
+Ran 17 tests in 5.691s
+
+OK
+production stack deploy contract passed
+production stack deploy contract passed
+production ingress NetworkPolicy assertions passed
+
+PASSED: All validations passed

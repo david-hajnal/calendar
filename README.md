@@ -8,6 +8,168 @@ Admins manage invitations, resends, account access, and email changes under
 Settings → Users. Users can recover passwords and confirm email changes under
 Settings → Account. See the [account management guide](docs/ACCOUNT-MANAGEMENT.md).
 
+## Connect an AI assistant
+
+CommonCal exposes a remote MCP server at `https://mcal.hajnal.space/mcp`.
+The recipes below are under compatibility verification; see the version table
+for current results. You need a CommonCal account with access to a calendar, an installed assistant
+CLI, and a browser on the same machine to finish OAuth login. The deployment
+must have its authorization service enabled. Use the browser login and consent
+flow; **never paste access tokens, refresh tokens, client secrets, internal API
+keys, or session cookies into an assistant, config file, or issue**.
+
+Choose your client below. During consent, check the client and calendar names
+and approve only the capabilities you need. Calendar visibility and event
+titles/details are separate permissions; create, update, and delete require
+their own permissions. Denying a new authorization creates no grant. Removing a connection
+locally and revoking its CommonCal grant are separate actions.
+
+### OpenCode
+
+Add the server to your user configuration (available in every project):
+
+<!-- mcp-snippet: opencode add -->
+```sh
+opencode mcp add commoncal --global --url https://mcal.hajnal.space/mcp
+```
+
+This writes a remote `mcp.servers.commoncal` entry to `~/.config/opencode/opencode.json`. If you already
+have a server with that name, edit its URL instead of adding a duplicate. For
+a deterministic configuration, merge this entry into your existing file:
+
+<!-- mcp-config: opencode -->
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "commoncal": {
+        "type": "remote",
+        "url": "https://mcal.hajnal.space/mcp"
+      }
+    }
+  }
+}
+```
+
+Run `opencode mcp auth commoncal`, finish browser login, and review consent.
+Then check the connection:
+
+<!-- mcp-snippet: opencode list -->
+```sh
+opencode mcp list
+```
+
+It should report a connected server. In OpenCode, ask: “Use CommonCal's
+`calendar_list` tool to list my calendars.” A successful tool result is the
+connection check; a saved configuration alone does not prove calendar access.
+LM Studio or another model provider supplies the model; OpenCode manages MCP.
+
+To disconnect, clear the stored credentials:
+
+<!-- mcp-snippet: opencode remove -->
+```sh
+opencode mcp logout commoncal
+```
+
+Then remove `mcp.servers.commoncal` from `~/.config/opencode/opencode.json` (or set `disabled` to `true`
+to disable it temporarily). Restart OpenCode and confirm it is absent or disabled.
+
+### Codex
+
+<!-- mcp-snippet: codex add -->
+```sh
+codex mcp add commoncal --url https://mcal.hajnal.space/mcp
+```
+
+Complete browser authorization when prompted. If needed, run
+`codex mcp login commoncal --oauth-client-registration dcr --scopes commoncal.calendar.metadata.read`
+to retry with read-only calendar metadata access. Check the saved connection:
+
+<!-- mcp-snippet: codex list -->
+```sh
+codex mcp list
+```
+
+Start a new Codex session, inspect `/mcp`, and ask it to call CommonCal's
+`calendar_list`. To remove the connection:
+
+<!-- mcp-snippet: codex remove -->
+```sh
+codex mcp remove commoncal
+```
+
+### Claude Code
+
+Add an HTTP server in user scope:
+
+<!-- mcp-snippet: claude add -->
+```sh
+claude mcp add --transport http --scope user commoncal https://mcal.hajnal.space/mcp
+```
+
+Start Claude Code, open `/mcp`, select CommonCal, and finish browser
+authentication. Check the server:
+
+<!-- mcp-snippet: claude list -->
+```sh
+claude mcp list
+```
+
+Ask Claude Code to call CommonCal's `calendar_list`. To remove it:
+
+<!-- mcp-snippet: claude remove -->
+```sh
+claude mcp remove --scope user commoncal
+```
+
+### Revoke access in CommonCal
+
+Local logout or removal does not substitute for server-side revocation. While
+signed into CommonCal, use the authenticated grant-management API:
+`GET /api/v1/mcp-grants` lists your active grants with `grant_id` and
+`oauth_client_id`; `DELETE /api/v1/mcp-grants/{grant_id}` revokes the selected
+grant. Send the delete from the same CommonCal origin using the existing
+session and CSRF protection; do not copy session credentials into a CLI.
+There is currently no grant-management settings screen. See the
+[connection guide](docs/MCP-CONNECTION.md#server-side-revocation) for a browser
+procedure. After revocation, another `calendar_list` call must fail for that
+connection. Reconnect through browser consent to grant access again.
+
+### Versions and troubleshooting
+
+| Client | Local command verification | Full live support proof |
+| --- | --- | --- |
+| OpenCode | v2.0.20: add, JSON and DCR callback checked; isolated list/logout checks fail | Browser/calendar/refresh/revoke matrix still to be recorded |
+| Codex | 0.163.0-alpha.10.2 (bundled preview) | Released minimum version still to be established |
+| Claude Code | Official CLI syntax; CLI unavailable in this verification environment | Minimum version and live matrix still to be recorded |
+
+These are setup instructions, not a claim that all three clients have passed
+the release matrix. The [evidence and verification guide](docs/MCP-CONNECTION.md)
+records the remaining checks. Use a current client with remote HTTP MCP and
+OAuth support; a minimum supported release is published only after live proof.
+
+- **OpenCode v2 lists no servers after adding:** check `opencode debug config`
+  and the selected configuration scope. This occurs in the isolated v2.0.20
+  checks; do not treat a successful add as proof of connection.
+- **OpenCode registration rejects `/callback`:** the operator must deploy the
+  updated auth callback policy before retrying; do not supply a token instead.
+- **Needs authentication / 401:** retry the client's browser login. After a
+  revoked grant, re-approve consent rather than reusing old credentials.
+- **Browser cannot return to the CLI:** keep the CLI running and use a browser
+  on the same machine. Remote shells need an explicitly supported callback
+  setup; do not add an arbitrary redirect URL or disable callback checks.
+- **Consent denied or expired:** rerun login for a fresh authorization request.
+- **Connected but missing calendars:** check account, selected calendars,
+  current membership, and consent permissions. Ask for `calendar_list` first.
+- **Discovery, registration, or schema errors:** check the URL and client
+  version; the operator should follow [authorization operations](docs/AUTH-PRODUCTION.md).
+  Report the error and version with credentials and authorization URLs removed.
+
+Official references: [OpenCode MCP](https://opencode.ai/v2/docs/mcp-servers),
+[Codex MCP](https://developers.openai.com/codex/mcp/), and
+[Claude Code MCP](https://code.claude.com/docs/en/mcp).
+
 ## Tech stack
 
 - **Backend**: Rust (Axum, SQLite, sqlx, tokio)

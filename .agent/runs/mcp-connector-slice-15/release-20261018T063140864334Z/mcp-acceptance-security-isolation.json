@@ -1,0 +1,842 @@
+{
+  "harness": "commoncal-mcp-acceptance",
+  "harnessVersion": "0.4.0",
+  "issuer": "http://127.0.0.1:4004",
+  "phase": "0.4-security-isolation",
+  "productionFixPhaseMap": {
+    "S1": "Phase 3 — Align discovery and access-token validation (exact iss)",
+    "S2": "Phase 3 — Align discovery and access-token validation (exact aud)",
+    "S3": "Phase 3 — Align discovery and access-token validation (signature, kid, alg)",
+    "S4": "Phase 3 — Align discovery and access-token validation (exp, iat)",
+    "S5": "Phase 3 — Align discovery and access-token validation (standard client_id)",
+    "S6": "Phase 4 — Promote consent and grant integration into core (grant lookup)",
+    "S7": "Phase 4 — Promote consent and grant integration into core (revocation)",
+    "S8": "Phase 4 — Promote consent and grant integration into core (live membership)",
+    "S9": "Phase 2 — Replace the custom MCP gateway with rmcp (per-request identity)"
+  },
+  "record": {
+    "assertions": {
+      "S1": {
+        "pass": true,
+        "violations": []
+      },
+      "S2": {
+        "pass": true,
+        "violations": []
+      },
+      "S3": {
+        "pass": true,
+        "violations": []
+      },
+      "S4": {
+        "pass": true,
+        "violations": []
+      },
+      "S5": {
+        "pass": true,
+        "violations": []
+      },
+      "S6": {
+        "pass": true,
+        "violations": []
+      },
+      "S7": {
+        "pass": true,
+        "violations": []
+      },
+      "S8": {
+        "pass": true,
+        "violations": []
+      },
+      "S9": {
+        "pass": true,
+        "violations": []
+      }
+    },
+    "oauthFlow": {
+      "authorize": {
+        "code": "mcp-acceptance-code-318a173d7e6e2ab6b0c9a970",
+        "resp": {
+          "bodyJson": null,
+          "bodyJsonParseError": "Unexpected end of JSON input",
+          "bodyRaw": "",
+          "headers": {
+            "content-length": "0",
+            "location": "http://127.0.0.1:8765/callback?code=mcp-acceptance-code-318a173d7e6e2ab6b0c9a970&state=633cbc1cacb78d8bd02f6fcb9414ceda"
+          },
+          "status": 302
+        },
+        "state": "633cbc1cacb78d8bd02f6fcb9414ceda"
+      },
+      "dcr": {
+        "bodyJson": {
+          "client_id": "mcp-acceptance-client-1",
+          "client_name": "commoncal-mcp-acceptance",
+          "grant_types": [
+            "authorization_code",
+            "refresh_token"
+          ],
+          "redirect_uris": [
+            "http://127.0.0.1:8765/callback"
+          ],
+          "response_types": [
+            "code"
+          ],
+          "scope": "commoncal.calendar.metadata.read commoncal.availability.read commoncal.event.read.basic commoncal.event.read.details commoncal.event.create commoncal.event.update commoncal.event.delete commoncal.reminder.read commoncal.reminder.write",
+          "token_endpoint_auth_method": "none"
+        },
+        "bodyJsonParseError": null,
+        "bodyRaw": "{\"client_id\":\"mcp-acceptance-client-1\",\"client_name\":\"commoncal-mcp-acceptance\",\"redirect_uris\":[\"http://127.0.0.1:8765/callback\"],\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"response_types\":[\"code\"],\"token_endpoint_auth_method\":\"none\",\"scope\":\"commoncal.calendar.metadata.read commoncal.availability.read commoncal.event.read.basic commoncal.event.read.details commoncal.event.create commoncal.event.update commoncal.event.delete commoncal.reminder.read commoncal.reminder.write\"}",
+        "headers": {
+          "content-length": "491",
+          "content-type": "application/json"
+        },
+        "status": 201
+      },
+      "token": {
+        "bodyJson": {
+          "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Im1jcC1hY2NlcHRhbmNlLXJzMjU2In0.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjQwMDQiLCJzdWIiOiIxIiwiYXVkIjoiaHR0cDovLzEyNy4wLjAuMTo0MDAzL21jcCIsImV4cCI6MTc5MjMwNTQ2MywiaWF0IjoxNzkyMzA1MTYzLCJqdGkiOiJtY3AtYWNjZXB0YW5jZS1qdGktOWFjNDJhYzhhM2ZhNmZjZjllNzgzNjY0IiwiY2xpZW50X2lkIjoibWNwLWFjY2VwdGFuY2UtY2xpZW50LTEiLCJzY29wZSI6ImNvbW1vbmNhbC5jYWxlbmRhci5tZXRhZGF0YS5yZWFkIGNvbW1vbmNhbC5hdmFpbGFiaWxpdHkucmVhZCBjb21tb25jYWwuZXZlbnQucmVhZC5iYXNpYyBjb21tb25jYWwuZXZlbnQucmVhZC5kZXRhaWxzIGNvbW1vbmNhbC5ldmVudC5jcmVhdGUgY29tbW9uY2FsLmV2ZW50LnVwZGF0ZSBjb21tb25jYWwuZXZlbnQuZGVsZXRlIGNvbW1vbmNhbC5yZW1pbmRlci5yZWFkIGNvbW1vbmNhbC5yZW1pbmRlci53cml0ZSIsImFtciI6WyJwd2QiXX0.GkIHrYnOjBfqEmeEF8qrdWdHZTqfvLYhq_2We-pVef6o2hnlkv9KrZkf2taP65ceTRKW5CYqUiH9G5UJZVAdRdILUd5Cnk8BiiSSq0o7Yco3xNzjpvQu21kA_UtFPZfg4aX2ocSEMdkjt4j5vFOnydgbajbwXysBnT5ZQy-ycf-xlQ24PdBFXG4mqmFibjTlWHmdwkODReXXXVMws4pm2KLwbDoSVC4rIfTuQyz_yoTLVuRxOGkKR0YSkd2YNW21CBBP6DvzlpvjkFGBpfbNvgu_DqhMaOfsjZx7yHaKXseEdYt0pQgAeWg3DlssBFHwUvM0Kg7aHFF4b_b6xQrYMA",
+          "expires_in": 300,
+          "refresh_token": "mcp-acceptance-refresh-73c58db356a5bf7926074313",
+          "scope": "commoncal.calendar.metadata.read commoncal.availability.read commoncal.event.read.basic commoncal.event.read.details commoncal.event.create commoncal.event.update commoncal.event.delete commoncal.reminder.read commoncal.reminder.write",
+          "token_type": "Bearer"
+        },
+        "bodyJsonParseError": null,
+        "bodyRaw": "{\"access_token\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Im1jcC1hY2NlcHRhbmNlLXJzMjU2In0.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjQwMDQiLCJzdWIiOiIxIiwiYXVkIjoiaHR0cDovLzEyNy4wLjAuMTo0MDAzL21jcCIsImV4cCI6MTc5MjMwNTQ2MywiaWF0IjoxNzkyMzA1MTYzLCJqdGkiOiJtY3AtYWNjZXB0YW5jZS1qdGktOWFjNDJhYzhhM2ZhNmZjZjllNzgzNjY0IiwiY2xpZW50X2lkIjoibWNwLWFjY2VwdGFuY2UtY2xpZW50LTEiLCJzY29wZSI6ImNvbW1vbmNhbC5jYWxlbmRhci5tZXRhZGF0YS5yZWFkIGNvbW1vbmNhbC5hdmFpbGFiaWxpdHkucmVhZCBjb21tb25jYWwuZXZlbnQucmVhZC5iYXNpYyBjb21tb25jYWwuZXZlbnQucmVhZC5kZXRhaWxzIGNvbW1vbmNhbC5ldmVudC5jcmVhdGUgY29tbW9uY2FsLmV2ZW50LnVwZGF0ZSBjb21tb25jYWwuZXZlbnQuZGVsZXRlIGNvbW1vbmNhbC5yZW1pbmRlci5yZWFkIGNvbW1vbmNhbC5yZW1pbmRlci53cml0ZSIsImFtciI6WyJwd2QiXX0.GkIHrYnOjBfqEmeEF8qrdWdHZTqfvLYhq_2We-pVef6o2hnlkv9KrZkf2taP65ceTRKW5CYqUiH9G5UJZVAdRdILUd5Cnk8BiiSSq0o7Yco3xNzjpvQu21kA_UtFPZfg4aX2ocSEMdkjt4j5vFOnydgbajbwXysBnT5ZQy-ycf-xlQ24PdBFXG4mqmFibjTlWHmdwkODReXXXVMws4pm2KLwbDoSVC4rIfTuQyz_yoTLVuRxOGkKR0YSkd2YNW21CBBP6DvzlpvjkFGBpfbNvgu_DqhMaOfsjZx7yHaKXseEdYt0pQgAeWg3DlssBFHwUvM0Kg7aHFF4b_b6xQrYMA\",\"token_type\":\"Bearer\",\"expires_in\":300,\"refresh_token\":\"mcp-acceptance-refresh-73c58db356a5bf7926074313\",\"scope\":\"commoncal.calendar.metadata.read commoncal.availability.read commoncal.event.read.basic commoncal.event.read.details commoncal.event.create commoncal.event.update commoncal.event.delete commoncal.reminder.read commoncal.reminder.write\"}",
+        "headers": {
+          "content-length": "1399",
+          "content-type": "application/json"
+        },
+        "status": 200
+      }
+    },
+    "s1": {
+      "bodyJson": {
+        "error": {
+          "code": -2000,
+          "message": "authorization token is required"
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"error\":{\"code\":-2000,\"message\":\"authorization token is required\"}}",
+      "headers": {
+        "content-length": "68",
+        "content-type": "application/json",
+        "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://127.0.0.1:4003/.well-known/oauth-protected-resource\", error=\"invalid_issuer\""
+      },
+      "status": 401
+    },
+    "s2": {
+      "bodyJson": {
+        "error": {
+          "code": -2000,
+          "message": "authorization token is required"
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"error\":{\"code\":-2000,\"message\":\"authorization token is required\"}}",
+      "headers": {
+        "content-length": "68",
+        "content-type": "application/json",
+        "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://127.0.0.1:4003/.well-known/oauth-protected-resource\", error=\"invalid_audience\""
+      },
+      "status": 401
+    },
+    "s3": {
+      "bodyJson": {
+        "error": {
+          "code": -2000,
+          "message": "authorization token is required"
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"error\":{\"code\":-2000,\"message\":\"authorization token is required\"}}",
+      "headers": {
+        "content-length": "68",
+        "content-type": "application/json",
+        "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://127.0.0.1:4003/.well-known/oauth-protected-resource\", error=\"invalid_signature\""
+      },
+      "status": 401
+    },
+    "s4": {
+      "bodyJson": {
+        "error": {
+          "code": -2000,
+          "message": "authorization token is required"
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"error\":{\"code\":-2000,\"message\":\"authorization token is required\"}}",
+      "headers": {
+        "content-length": "68",
+        "content-type": "application/json",
+        "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://127.0.0.1:4003/.well-known/oauth-protected-resource\", error=\"token_expired\""
+      },
+      "status": 401
+    },
+    "s5": {
+      "bodyJson": {
+        "error": {
+          "code": -2000,
+          "message": "authorization token is required"
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"error\":{\"code\":-2000,\"message\":\"authorization token is required\"}}",
+      "headers": {
+        "content-length": "68",
+        "content-type": "application/json",
+        "www-authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://127.0.0.1:4003/.well-known/oauth-protected-resource\", error=\"unknown_client\""
+      },
+      "status": 401
+    },
+    "s6": {
+      "bodyJson": {
+        "error": {
+          "code": -2003,
+          "message": "no MCP grant found"
+        },
+        "id": 106,
+        "jsonrpc": "2.0"
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":106,\"error\":{\"code\":-2003,\"message\":\"no MCP grant found\"}}",
+      "headers": {
+        "content-length": "80",
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "s7": {
+      "bodyJson": {
+        "error": {
+          "code": -2003,
+          "message": "no MCP grant found"
+        },
+        "id": 107,
+        "jsonrpc": "2.0"
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":107,\"error\":{\"code\":-2003,\"message\":\"no MCP grant found\"}}",
+      "headers": {
+        "content-length": "80",
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "s8": {
+      "bodyJson": {
+        "id": 108,
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "text": "{\"calendars\":[{\"id\":101,\"name\":\"Alice Work\",\"color\":\"#ff0000\",\"access\":\"full\"},{\"id\":102,\"name\":\"Alice Personal\",\"color\":\"#00ff00\",\"access\":\"read\"}]}",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "bodyJsonParseError": null,
+      "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":108,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"calendars\\\":[{\\\"id\\\":101,\\\"name\\\":\\\"Alice Work\\\",\\\"color\\\":\\\"#ff0000\\\",\\\"access\\\":\\\"full\\\"},{\\\"id\\\":102,\\\"name\\\":\\\"Alice Personal\\\",\\\"color\\\":\\\"#00ff00\\\",\\\"access\\\":\\\"read\\\"}]}\"}]}}",
+      "headers": {
+        "content-length": "254",
+        "content-type": "application/json"
+      },
+      "status": 200
+    },
+    "s9": {
+      "clientA": {
+        "calendarList": {
+          "bodyJson": {
+            "id": 203,
+            "jsonrpc": "2.0",
+            "result": {
+              "content": [
+                {
+                  "text": "{\"calendars\":[{\"id\":101,\"name\":\"Alice Work\",\"color\":\"#ff0000\",\"access\":\"full\"},{\"id\":102,\"name\":\"Alice Personal\",\"color\":\"#00ff00\",\"access\":\"read\"}]}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":203,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"calendars\\\":[{\\\"id\\\":101,\\\"name\\\":\\\"Alice Work\\\",\\\"color\\\":\\\"#ff0000\\\",\\\"access\\\":\\\"full\\\"},{\\\"id\\\":102,\\\"name\\\":\\\"Alice Personal\\\",\\\"color\\\":\\\"#00ff00\\\",\\\"access\\\":\\\"read\\\"}]}\"}]}}",
+          "headers": {
+            "content-length": "254",
+            "content-type": "application/json"
+          },
+          "status": 200
+        },
+        "init": {
+          "bodyJson": {
+            "id": 201,
+            "jsonrpc": "2.0",
+            "result": {
+              "capabilities": {
+                "tools": {}
+              },
+              "protocolVersion": "2025-03-26",
+              "serverInfo": {
+                "name": "mock-standards-compliant",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":201,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-standards-compliant\",\"version\":\"1.0.0\"}}}",
+          "headers": {
+            "content-length": "163",
+            "content-type": "application/json"
+          },
+          "status": 200
+        },
+        "initialized": {
+          "bodyJson": null,
+          "bodyJsonParseError": "Unexpected end of JSON input",
+          "bodyRaw": "",
+          "headers": {
+            "content-length": "0"
+          },
+          "status": 202
+        },
+        "toolsList": {
+          "bodyJson": {
+            "id": 202,
+            "jsonrpc": "2.0",
+            "result": {
+              "tools": [
+                {
+                  "description": "Find availability slots for the specified calendars within a time range.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_ids": {
+                        "items": {
+                          "type": "integer"
+                        },
+                        "type": "array"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_ids",
+                      "from",
+                      "to"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "availability_find"
+                },
+                {
+                  "description": "List the calendars available to the authenticated user.",
+                  "inputSchema": {
+                    "properties": {
+                      "include_access": {
+                        "type": "boolean"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "name": "calendar_list"
+                },
+                {
+                  "description": "Get the details of a specific event by calendar and event ID.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_get"
+                },
+                {
+                  "description": "Search events in a calendar within a time range, optionally filtered by query.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "query": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "from",
+                      "to"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_search"
+                },
+                {
+                  "description": "Create a new event in the specified calendar.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "end_utc": {
+                        "type": "string"
+                      },
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "location": {
+                        "type": "string"
+                      },
+                      "start_utc": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "title",
+                      "start_utc",
+                      "end_utc"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_create"
+                },
+                {
+                  "description": "Update an existing event. Requires the expected_version for optimistic concurrency.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "end_utc": {
+                        "type": "string"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      },
+                      "expected_version": {
+                        "type": "integer"
+                      },
+                      "location": {
+                        "type": "string"
+                      },
+                      "start_utc": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "expected_version"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_update"
+                },
+                {
+                  "description": "Set a reminder on an event.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      },
+                      "offset_minutes": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "offset_minutes"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "reminder_set"
+                },
+                {
+                  "description": "Prepare to delete an event (two-phase deletion, step 1).",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_delete_prepare"
+                },
+                {
+                  "description": "Commit the deletion of an event (two-phase deletion, step 2).",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "confirmation_token": {
+                        "type": "string"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "confirmation_token"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_delete_commit"
+                }
+              ]
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":202,\"result\":{\"tools\":[{\"name\":\"availability_find\",\"description\":\"Find availability slots for the specified calendars within a time range.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_ids\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"from\":{\"type\":\"string\"},\"to\":{\"type\":\"string\"}},\"required\":[\"calendar_ids\",\"from\",\"to\"]}},{\"name\":\"calendar_list\",\"description\":\"List the calendars available to the authenticated user.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"include_access\":{\"type\":\"boolean\"}}}},{\"name\":\"event_get\",\"description\":\"Get the details of a specific event by calendar and event ID.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\"]}},{\"name\":\"event_search\",\"description\":\"Search events in a calendar within a time range, optionally filtered by query.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"from\":{\"type\":\"string\"},\"to\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"from\",\"to\"]}},{\"name\":\"event_create\",\"description\":\"Create a new event in the specified calendar.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"start_utc\":{\"type\":\"string\"},\"end_utc\":{\"type\":\"string\"},\"idempotency_key\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"title\",\"start_utc\",\"end_utc\"]}},{\"name\":\"event_update\",\"description\":\"Update an existing event. Requires the expected_version for optimistic concurrency.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"expected_version\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"start_utc\":{\"type\":\"string\"},\"end_utc\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"event_id\",\"expected_version\"]}},{\"name\":\"reminder_set\",\"description\":\"Set a reminder on an event.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"offset_minutes\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\",\"offset_minutes\"]}},{\"name\":\"event_delete_prepare\",\"description\":\"Prepare to delete an event (two-phase deletion, step 1).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\"]}},{\"name\":\"event_delete_commit\",\"description\":\"Commit the deletion of an event (two-phase deletion, step 2).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"confirmation_token\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"event_id\",\"confirmation_token\"]}}]}}",
+          "headers": {
+            "content-length": "2815",
+            "content-type": "application/json"
+          },
+          "status": 200
+        }
+      },
+      "clientB": {
+        "calendarList": {
+          "bodyJson": {
+            "id": 303,
+            "jsonrpc": "2.0",
+            "result": {
+              "content": [
+                {
+                  "text": "{\"calendars\":[{\"id\":201,\"name\":\"Bob Work\",\"color\":\"#0000ff\",\"access\":\"full\"},{\"id\":202,\"name\":\"Bob Personal\",\"color\":\"#ff00ff\",\"access\":\"read\"}]}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":303,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"calendars\\\":[{\\\"id\\\":201,\\\"name\\\":\\\"Bob Work\\\",\\\"color\\\":\\\"#0000ff\\\",\\\"access\\\":\\\"full\\\"},{\\\"id\\\":202,\\\"name\\\":\\\"Bob Personal\\\",\\\"color\\\":\\\"#ff00ff\\\",\\\"access\\\":\\\"read\\\"}]}\"}]}}",
+          "headers": {
+            "content-length": "250",
+            "content-type": "application/json"
+          },
+          "status": 200
+        },
+        "init": {
+          "bodyJson": {
+            "id": 301,
+            "jsonrpc": "2.0",
+            "result": {
+              "capabilities": {
+                "tools": {}
+              },
+              "protocolVersion": "2025-03-26",
+              "serverInfo": {
+                "name": "mock-standards-compliant",
+                "version": "1.0.0"
+              }
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":301,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"mock-standards-compliant\",\"version\":\"1.0.0\"}}}",
+          "headers": {
+            "content-length": "163",
+            "content-type": "application/json"
+          },
+          "status": 200
+        },
+        "initialized": {
+          "bodyJson": null,
+          "bodyJsonParseError": "Unexpected end of JSON input",
+          "bodyRaw": "",
+          "headers": {
+            "content-length": "0"
+          },
+          "status": 202
+        },
+        "toolsList": {
+          "bodyJson": {
+            "id": 302,
+            "jsonrpc": "2.0",
+            "result": {
+              "tools": [
+                {
+                  "description": "Find availability slots for the specified calendars within a time range.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_ids": {
+                        "items": {
+                          "type": "integer"
+                        },
+                        "type": "array"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_ids",
+                      "from",
+                      "to"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "availability_find"
+                },
+                {
+                  "description": "List the calendars available to the authenticated user.",
+                  "inputSchema": {
+                    "properties": {
+                      "include_access": {
+                        "type": "boolean"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "name": "calendar_list"
+                },
+                {
+                  "description": "Get the details of a specific event by calendar and event ID.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_get"
+                },
+                {
+                  "description": "Search events in a calendar within a time range, optionally filtered by query.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "query": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "from",
+                      "to"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_search"
+                },
+                {
+                  "description": "Create a new event in the specified calendar.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "end_utc": {
+                        "type": "string"
+                      },
+                      "idempotency_key": {
+                        "type": "string"
+                      },
+                      "location": {
+                        "type": "string"
+                      },
+                      "start_utc": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "title",
+                      "start_utc",
+                      "end_utc"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_create"
+                },
+                {
+                  "description": "Update an existing event. Requires the expected_version for optimistic concurrency.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "end_utc": {
+                        "type": "string"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      },
+                      "expected_version": {
+                        "type": "integer"
+                      },
+                      "location": {
+                        "type": "string"
+                      },
+                      "start_utc": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "expected_version"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_update"
+                },
+                {
+                  "description": "Set a reminder on an event.",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      },
+                      "offset_minutes": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "offset_minutes"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "reminder_set"
+                },
+                {
+                  "description": "Prepare to delete an event (two-phase deletion, step 1).",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_delete_prepare"
+                },
+                {
+                  "description": "Commit the deletion of an event (two-phase deletion, step 2).",
+                  "inputSchema": {
+                    "properties": {
+                      "calendar_id": {
+                        "type": "integer"
+                      },
+                      "confirmation_token": {
+                        "type": "string"
+                      },
+                      "event_id": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "calendar_id",
+                      "event_id",
+                      "confirmation_token"
+                    ],
+                    "type": "object"
+                  },
+                  "name": "event_delete_commit"
+                }
+              ]
+            }
+          },
+          "bodyJsonParseError": null,
+          "bodyRaw": "{\"jsonrpc\":\"2.0\",\"id\":302,\"result\":{\"tools\":[{\"name\":\"availability_find\",\"description\":\"Find availability slots for the specified calendars within a time range.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_ids\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"from\":{\"type\":\"string\"},\"to\":{\"type\":\"string\"}},\"required\":[\"calendar_ids\",\"from\",\"to\"]}},{\"name\":\"calendar_list\",\"description\":\"List the calendars available to the authenticated user.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"include_access\":{\"type\":\"boolean\"}}}},{\"name\":\"event_get\",\"description\":\"Get the details of a specific event by calendar and event ID.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\"]}},{\"name\":\"event_search\",\"description\":\"Search events in a calendar within a time range, optionally filtered by query.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"from\":{\"type\":\"string\"},\"to\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"from\",\"to\"]}},{\"name\":\"event_create\",\"description\":\"Create a new event in the specified calendar.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"start_utc\":{\"type\":\"string\"},\"end_utc\":{\"type\":\"string\"},\"idempotency_key\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"title\",\"start_utc\",\"end_utc\"]}},{\"name\":\"event_update\",\"description\":\"Update an existing event. Requires the expected_version for optimistic concurrency.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"expected_version\":{\"type\":\"integer\"},\"title\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"location\":{\"type\":\"string\"},\"start_utc\":{\"type\":\"string\"},\"end_utc\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"event_id\",\"expected_version\"]}},{\"name\":\"reminder_set\",\"description\":\"Set a reminder on an event.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"offset_minutes\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\",\"offset_minutes\"]}},{\"name\":\"event_delete_prepare\",\"description\":\"Prepare to delete an event (two-phase deletion, step 1).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"}},\"required\":[\"calendar_id\",\"event_id\"]}},{\"name\":\"event_delete_commit\",\"description\":\"Commit the deletion of an event (two-phase deletion, step 2).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"calendar_id\":{\"type\":\"integer\"},\"event_id\":{\"type\":\"integer\"},\"confirmation_token\":{\"type\":\"string\"}},\"required\":[\"calendar_id\",\"event_id\",\"confirmation_token\"]}}]}}",
+          "headers": {
+            "content-length": "2815",
+            "content-type": "application/json"
+          },
+          "status": 200
+        }
+      }
+    }
+  },
+  "recordedBy": "security-isolation-probe",
+  "redirect": "http://127.0.0.1:8765/callback",
+  "target": "http://127.0.0.1:4003/mcp"
+}

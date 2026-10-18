@@ -1,0 +1,35 @@
+{
+  "status": "blocked",
+  "summary": "Slice 13 (OpenCode compatibility) is a manual-hold task. The most recent review (4789ff) found `defects: []` \u2014 no fixable code defects remain. The prior remediate stage already resolved the QA's fixable defects: the slice 10/12 status contradiction is reconciled (manifests now read `blocked`, matching their `blocked` implement-results), docs/MCP-PRODUCTION-FIX-PLAN.md was created (19930 bytes), and the SQLite-vs-PostgreSQL wording was reconciled. The sole remaining blocker is criterion 2 \u2014 the live matrix (DCR/browser auth, calendar read, refresh, denial/revocation, removal, recovery, minimum-version proof) \u2014 which requires operator consent and live browser authentication that cannot be completed autonomously. `opencode mcp list` confirms `calendar needs authentication` (no valid credentials stored). No files were modified in this session; completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved.",
+  "files_changed": [],
+  "verification_commands": [
+    "opencode --version",
+    "opencode mcp list",
+    "grep -E '\"status\"' .agent/tasks/mcp-connector-slice-10.json .agent/tasks/mcp-connector-slice-12.json .agent/tasks/mcp-connector-slice-13.json",
+    "ls -la docs/MCP-PRODUCTION-FIX-PLAN.md",
+    "grep -nE 'Slice 1[0-5]' docs/plans/cross-client-mcp-connector/00-status.md",
+    "git -C /Users/kaszperek/repos/happening status --short",
+    "grep -E '\"status\"' .agent/runs/mcp-connector-slice-10/*-implement-result.json .agent/runs/mcp-connector-slice-12/*-implement-result.json"
+  ],
+  "verification_passed": false,
+  "defects": [
+    "Live matrix (criterion 2) blocked on operator consent: `opencode mcp list` reports 'calendar needs authentication' \u2014 no valid credentials stored, so the DCR/browser auth, calendar read, refresh, denial/revocation, removal, and recovery proofs cannot be run autonomously. This is a manual-hold blocker, not a fixable code defect."
+  ],
+  "follow_up": [
+    "Operator must run the live OpenCode matrix against production: `opencode mcp auth calendar`, complete browser consent, then `calendar_list`, token refresh, denial/revocation, removal, and recovery \u2014 recording the exact callback shape observed.",
+    "Record the minimum supported OpenCode version (v2.0.20) and the observed OAuth callback shape before choosing README instructions.",
+    "Only after observing the released client, extend the DCR callback policy narrowly if (and only if) the observed shape is not already admitted by the loopback policy.",
+    "Record completion in 00-status.md (line 22) only after every slice-13 condition passes; the per-slice continuation gate is preserved."
+  ],
+  "important_context": [
+    "Working dir is /Users/kaszperek/repos/plan-orchestrator; the target project is /Users/kaszperek/repos/happening (use absolute paths or `git -C`).",
+    "OpenCode v2.0.20 is the released client for slice 13 and IS installed at /opt/homebrew/bin/opencode; `claude` and `codex` are NOT installed.",
+    "The most recent review (4789ff) found `defects: []` \u2014 no fixable code defects remain for this remediation stage.",
+    "The prior remediate stage (62ea2e) already resolved the QA's fixable defects: slice 10/12 status contradiction reconciled (manifests now `blocked`, matching implement-results), docs/MCP-PRODUCTION-FIX-PLAN.md created (19930 bytes), SQLite wording reconciled.",
+    "Live production is up and DCR-capable: https://mcal.hajnal.space/.well-known/oauth-protected-resource and https://auth.hajnal.space/.well-known/oauth-authorization-server both respond.",
+    "The DCR policy admits only the lab loopback callback; OpenCode's callback is loopback (127.0.0.1:7777), so no policy change is strictly required.",
+    "2026-10-08 SQLite decision supersedes the 'managed PostgreSQL' wording still in slice acceptance text.",
+    "Pre-existing uncommitted changes in `git status` (mcp-server/, backend/, ics-import, task manifests) are from prior slices 9/10 and ics-import work \u2014 NOT from this task; do not commit or touch them.",
+    "No files were modified in this session; completion was NOT recorded in 00-status.md; the per-slice continuation gate is preserved."
+  ]
+}

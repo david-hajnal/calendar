@@ -1,0 +1,333 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running unittests src/lib.rs (mcp-server/target/debug/deps/mcp_server-714901ba5aff4567)
+
+running 227 tests
+test audit::tests::audit_error_is_error ... ok
+test audit::tests::audit_error_display ... ok
+test auth::tests::resource_metadata_url_derived_from_mcp_resource ... ok
+test auth::tests::resource_metadata_url_handles_nested_path ... ok
+test auth::tests::resource_metadata_url_handles_trailing_slash ... ok
+test auth::tests::extract_bearer_token_rejects_missing_header ... ok
+test audit::tests::audit_error_from_sqlx_error ... ok
+test auth::tests::token_error_params_maps_missing ... ok
+test auth::tests::token_error_params_maps_expired ... ok
+test auth::tests::extract_bearer_token_rejects_wrong_scheme ... ok
+test auth::tests::extract_bearer_token_parses_valid_header ... ok
+test auth::tests::extract_bearer_token_rejects_empty_token ... ok
+test auth::tests::token_error_params_maps_provider_outage_safely ... ok
+test config::tests::test_oauth_metadata_dpop_unsupported ... ok
+test config::tests::test_oauth_metadata_trailing_slash_resource ... ok
+test config::tests::test_oauth_metadata_generates_resource_metadata_url ... ok
+test config::tests::test_parse_env_default_app_env ... ok
+test config::tests::test_parse_env_production ... ok
+test config::tests::test_validate_development_accepts_defaults ... ok
+test config::tests::test_parse_bind_address_valid ... ok
+test config::tests::test_redacted_debug_excludes_secrets ... ok
+test config::tests::test_validate_production_missing_database_path ... ok
+test config::tests::test_validate_production_bind_address_malformed ... ok
+test config::tests::test_validate_production_missing_api_key ... ok
+test config::tests::test_validate_production_missing_bind_address ... ok
+test config::tests::test_validate_production_missing_oauth_issuer ... ok
+test config::tests::test_validate_production_missing_mcp_domain ... ok
+test config::tests::test_validate_production_api_base_http_rejected ... ok
+test config::tests::test_validate_production_missing_public_resource_url ... ok
+test config::tests::test_validate_production_oauth_issuer_http_rejected ... ok
+test config::tests::test_validate_production_placeholder_api_base ... ok
+test config::tests::test_validate_production_placeholder_api_key ... ok
+test config::tests::test_validate_production_placeholder_oauth_issuer ... ok
+test config::tests::test_validate_production_placeholder_secret ... ok
+test config::tests::test_validate_production_rate_limit_enabled_accepted ... ok
+test config::tests::test_validate_production_rate_limit_required ... ok
+test config::tests::test_validate_production_resource_url_credentials_rejected ... ok
+test config::tests::test_validate_production_resource_url_fragment_rejected ... ok
+test config::tests::test_validate_production_resource_url_http_rejected ... ok
+test config::tests::test_validate_production_resource_url_placeholder_domain_rejected ... ok
+test config::tests::test_validate_production_resource_url_query_rejected ... ok
+test config::tests::test_validate_production_resource_url_valid_accepted ... ok
+test auth::tests::auth_state_new_populates_metadata ... ok
+test auth::tests::challenge_uses_public_metadata_and_bearer_scheme ... ok
+test identity::tests::concurrent_tasks_do_not_share_identity ... ok
+test identity::tests::current_returns_identity_within_auth_scope ... ok
+test identity::tests::current_returns_none_outside_auth_scope ... ok
+test identity::tests::identity_from_token_validation_result ... ok
+test internal_client::tests::api_base_returns_correct_value ... ok
+test internal_client::tests::api_key_returns_correct_value ... ok
+test internal_client::tests::calendar_info_deserializes ... ok
+test internal_client::tests::calendar_info_deserializes_without_description ... ok
+test internal_client::tests::clone_does_not_share_http_client ... ok
+test internal_client::tests::delete_intent_deserializes ... ok
+test internal_client::tests::event_info_deserializes_with_all_fields ... ok
+test internal_client::tests::event_info_deserializes_with_null_fields ... ok
+test internal_client::tests::internal_error_display_connection ... ok
+test internal_client::tests::internal_error_display_deserialize ... ok
+test internal_client::tests::internal_error_display_http ... ok
+test internal_client::tests::mcp_grant_response_deserializes ... ok
+test internal_client::tests::new_client_has_expected_fields ... ok
+test internal_client::tests::search_events_response_deserializes ... ok
+test internal_client::tests::search_events_response_deserializes_empty ... ok
+test internal_client::tests::token_exchange_response_deserializes ... ok
+test internal_client::tests::user_status_response_deserializes ... ok
+test mcp_grant::tests::availability_denied_when_allow_availability_false ... ok
+test mcp_grant::tests::availability_find_permitted ... ok
+test mcp_grant::tests::availability_get_permitted ... ok
+test mcp_grant::tests::calendar_access_allowed_when_in_list ... ok
+test mcp_grant::tests::calendar_access_allowed_when_not_yet_expired ... ok
+test mcp_grant::tests::calendar_access_denied_when_expired ... ok
+test mcp_grant::tests::calendar_access_denied_when_no_calendars_allowed ... ok
+test mcp_grant::tests::calendar_access_denied_when_not_in_list ... ok
+test mcp_grant::tests::calendar_access_denied_when_revoked ... ok
+test mcp_grant::tests::calendar_access_denied_when_revoked_overrides_expiry ... ok
+test mcp_grant::tests::calendar_list_denied_when_availability_disallowed ... ok
+test mcp_grant::tests::calendar_list_permitted_when_availability_allowed ... ok
+test mcp_grant::tests::converts_authoritative_core_response_into_domain_grant ... ok
+test mcp_grant::tests::create_denied_when_allow_create_false ... ok
+test mcp_grant::tests::delete_denied_when_allow_delete_false ... ok
+test mcp_grant::tests::event_create_permitted ... ok
+test mcp_grant::tests::event_delete_commit_permitted ... ok
+test mcp_grant::tests::event_delete_prepare_permitted ... ok
+test mcp_grant::tests::event_get_permitted ... ok
+test mcp_grant::tests::event_read_denied_when_allow_event_titles_false ... ok
+test mcp_grant::tests::event_search_permitted ... ok
+test mcp_grant::tests::event_update_permitted ... ok
+test mcp_grant::tests::grant_clone_works ... ok
+test mcp_grant::tests::grant_error_calendar_not_in_grant_display ... ok
+test mcp_grant::tests::grant_error_grant_expired_display ... ok
+test mcp_grant::tests::grant_error_grant_revoked_display ... ok
+test mcp_grant::tests::grant_error_no_grant_display ... ok
+test mcp_grant::tests::grant_error_tool_permission_denied_display ... ok
+test mcp_grant::tests::grant_serializes_and_deserializes ... ok
+test mcp_grant::tests::grant_with_null_optional_fields_serializes ... ok
+test mcp_grant::tests::reminder_set_permitted ... ok
+test mcp_grant::tests::tool_permission_denied_when_expired ... ok
+test mcp_grant::tests::tool_permission_denied_when_revoked ... ok
+test mcp_grant::tests::unknown_tool_denied ... ok
+test mcp_grant::tests::update_denied_when_allow_update_false ... ok
+test oauth::tests::auth_strength_display_mfa ... ok
+test oauth::tests::auth_strength_display_passkey ... ok
+test oauth::tests::auth_strength_display_passwordless ... ok
+test oauth::tests::derive_auth_strength_mfa ... ok
+test oauth::tests::derive_auth_strength_none_defaults_to_passwordless ... ok
+test oauth::tests::derive_auth_strength_passkey ... ok
+test oauth::tests::derive_auth_strength_unknown_defaults_to_passwordless ... ok
+test oauth::tests::dpop_proof_accepts_valid_header_and_payload ... ok
+test oauth::tests::dpop_proof_rejects_dummy_key ... ok
+test db::tests::readiness_succeeds_for_open_database ... ok
+test db::tests::creates_and_migrates_a_new_database_file ... ok
+test oauth::tests::dpop_proof_rejects_invalid_base64_header ... ok
+test oauth::tests::dpop_proof_rejects_missing_jwk ... ok
+test oauth::tests::find_jwk_finds_matching_kid ... ok
+test oauth::tests::find_jwk_no_kid_returns_first ... ok
+test db::tests::readiness_fails_for_closed_pool ... ok
+test db::tests::migration_aborts_when_duplicate_tables_hold_rows ... ok
+test oauth::tests::dpop_proof_rejects_wrong_typ ... ok
+test oauth::tests::parse_jwt_header_rejects_invalid_base64 ... ok
+test oauth::tests::parse_jwt_header_rejects_invalid_json ... ok
+test oauth::tests::parse_jwt_header_rejects_too_few_parts ... ok
+test oauth::tests::parse_jwt_header_rejects_too_many_parts ... ok
+test db::tests::creates_database_with_required_pragmas ... ok
+test oauth::tests::token_error_display_expired ... ok
+test oauth::tests::token_error_display_invalid_audience ... ok
+test oauth::tests::token_error_display_invalid_dpop ... ok
+test oauth::tests::token_error_display_invalid_issuer ... ok
+test oauth::tests::token_error_display_invalid_token ... ok
+test oauth::tests::token_error_display_missing_dpop ... ok
+test oauth::tests::token_error_display_missing_token ... ok
+test oauth::tests::token_error_display_revoked ... ok
+test oauth::tests::token_validation_result_clone ... ok
+test oauth::tests::user_status_active ... ok
+test db::tests::migration_keeps_audit_and_drops_duplicate_tables ... ok
+test rate_limiter::tests::disabled_always_allows ... ok
+test oauth::tests::parse_jwt_header_accepts_valid_header ... ok
+test oauth::tests::token_claims_deserializes_standard_claims ... ok
+test oauth::tests::token_claims_scope_alias_scp ... ok
+test oauth::tests::jwks_document_deserializes ... ok
+test rate_limiter::tests::allows_under_limit_then_denies ... ok
+test rate_limiter::tests::shared_arc_state_is_consistent ... ok
+test rate_limiter::tests::keys_are_isolated ... ok
+test audit::tests::log_invocation_reports_failure_when_pool_is_closed ... ok
+test rate_limiter::tests::window_reset_allows_again ... ok
+test security::tests::check_anomalies_below_brute_force_threshold ... ok
+test security::tests::check_anomalies_brute_force ... ok
+test security::tests::check_anomalies_clean_request ... ok
+test security::tests::check_anomalies_off_hours_delete ... ok
+test security::tests::check_anomalies_off_hours_read_allowed ... ok
+test security::tests::check_anomalies_rate_limit ... ok
+test security::tests::check_auth_strength_tier0_passes_any ... ok
+test security::tests::check_auth_strength_tier1_passes_any ... ok
+test security::tests::check_auth_strength_tier2_requires_strong ... ok
+test security::tests::check_auth_strength_tier3_requires_passkey_or_mfa ... ok
+test security::tests::classify_risk_availability ... ok
+test security::tests::classify_risk_delete ... ok
+test security::tests::classify_risk_event_read ... ok
+test security::tests::classify_risk_event_write ... ok
+test security::tests::classify_risk_unknown_defaults_to_tier2 ... ok
+test tools::availability_find::tests::availability_output_serializes ... ok
+test tools::availability_find::tests::availability_output_serializes_empty ... ok
+test audit::tests::log_invocation_appends_a_row_with_integer_timestamp ... ok
+test tools::availability_find::tests::availability_slot_serializes ... ok
+test tools::availability_find::tests::parse_utc_timestamp_parses_iso8601 ... ok
+test tools::availability_find::tests::parse_utc_timestamp_parses_unix_epoch ... ok
+test tools::availability_find::tests::parse_utc_timestamp_rejects_invalid ... ok
+test tools::availability_find::tests::validate_time_range_accepts_31_days ... ok
+test tools::availability_find::tests::validate_time_range_accepts_same_day ... ok
+test tools::availability_find::tests::validate_time_range_accepts_unix_epochs ... ok
+test tools::availability_find::tests::validate_time_range_rejects_32_days ... ok
+test tools::availability_find::tests::validate_time_range_rejects_invalid_from ... ok
+test tools::availability_find::tests::validate_time_range_rejects_invalid_to ... ok
+test tools::availability_find::tests::validate_time_range_rejects_to_before_from ... ok
+test tools::availability_find::tests::validate_time_range_rejects_too_long_unix_range ... ok
+test tools::calendar_list::tests::calendar_list_output_serializes ... ok
+test tools::calendar_list::tests::calendar_list_output_serializes_empty ... ok
+test tools::calendar_list::tests::calendar_list_params_defaults ... ok
+test tools::calendar_list::tests::calendar_list_params_include_access_true ... ok
+test tools::calendar_list::tests::calendar_summary_serializes ... ok
+test tools::calendar_list::tests::content_block_image_serializes ... ok
+test tools::calendar_list::tests::content_block_text_serializes ... ok
+test tools::calendar_list::tests::tool_output_serializes ... ok
+test tools::event_create::tests::event_create_params_defaults ... ok
+test tools::event_create::tests::event_create_params_deserializes ... ok
+test tools::event_create::tests::validate_create_input_accepts_10000_char_description ... ok
+test tools::event_create::tests::validate_create_input_accepts_256_char_title ... ok
+test tools::event_create::tests::validate_create_input_rejects_empty_title ... ok
+test tools::event_create::tests::validate_create_input_rejects_long_description ... ok
+test tools::event_create::tests::validate_create_input_rejects_long_title ... ok
+test tools::event_create::tests::validate_create_input_rejects_missing_end_utc ... ok
+test tools::event_create::tests::validate_create_input_rejects_missing_start_utc ... ok
+test tools::event_delete_commit::tests::delete_commit_output_serializes ... ok
+test tools::event_delete_commit::tests::delete_commit_output_serializes_false ... ok
+test tools::event_delete_commit::tests::event_delete_commit_params_deserializes ... ok
+test tools::event_delete_prepare::tests::delete_intent_expiry_is_24_hours ... ok
+test tools::event_delete_prepare::tests::delete_prepare_output_serializes ... ok
+test tools::event_delete_prepare::tests::event_delete_prepare_params_deserializes ... ok
+test tools::event_get::tests::event_description_serializes ... ok
+test tools::event_get::tests::event_get_params_deserializes ... ok
+test tools::event_get::tests::event_output_serializes ... ok
+test tools::event_get::tests::event_summary_serializes_with_all_fields ... ok
+test tools::event_get::tests::event_summary_serializes_with_null_fields ... ok
+test tools::event_get::tests::event_summary_skips_null_optionals ... ok
+test tools::event_search::tests::event_search_output_serializes_with_next_page ... ok
+test tools::event_search::tests::event_search_output_serializes_without_next_page ... ok
+test tools::event_search::tests::event_search_params_deserializes_with_query ... ok
+test tools::event_search::tests::event_search_params_deserializes_without_query ... ok
+test tools::event_search::tests::max_events_constant_is_100 ... ok
+test tools::event_update::tests::event_update_params_clears_description ... ok
+test tools::event_update::tests::event_update_params_deserializes ... ok
+test tools::event_update::tests::validate_update_input_accepts_1024_char_location ... ok
+test tools::event_update::tests::validate_update_input_accepts_none_title ... ok
+test tools::event_update::tests::validate_update_input_accepts_valid_update ... ok
+test tools::event_update::tests::validate_update_input_rejects_empty_title ... ok
+test tools::event_update::tests::validate_update_input_rejects_long_location ... ok
+test tools::event_update::tests::validate_update_input_rejects_long_title ... ok
+test tools::reminder_set::tests::reminder_set_output_serializes ... ok
+test tools::reminder_set::tests::reminder_set_params_accepts_exactly_10080 ... ok
+test tools::reminder_set::tests::reminder_set_params_deserializes ... ok
+test tools::reminder_set::tests::reminder_set_params_rejects_max_exceeded ... ok
+test tools::reminder_set::tests::reminder_set_params_rejects_negative_minutes ... ok
+test tools::reminder_set::tests::reminder_set_params_rejects_zero_minutes ... ok
+test transport::tests::server_config_enforces_same_origin_and_host ... ok
+test transport::tests::malformed_or_wildcard_resource_fails_closed ... ok
+test transport::tests::server_config_preserves_non_default_port_in_origin ... ok
+test db::tests::connection_pool_tolerates_concurrent_audit_writes ... ok
+test oauth::tests::dpop_proof_rejects_forged_proof ... ok
+
+test result: ok. 227 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+
+     Running unittests src/main.rs (mcp-server/target/debug/deps/mcp_server-6d446798e796ac40)
+
+running 4 tests
+test tests::health_live_does_not_depend_on_storage ... ok
+test tests::health_ready_returns_503_when_database_is_unavailable ... ok
+test tests::health_ready_returns_200_when_database_is_queryable ... ok
+test tests::readiness_route_reports_ready_for_temporary_sqlite_database ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/e2e.rs (mcp-server/target/debug/deps/e2e-1a62ac81af98e817)
+
+running 12 tests
+test test_error_integration ... ok
+test test_security_integration ... ok
+test test_tool_output_serialization ... ok
+test test_mcp_grant_roundtrip ... ok
+test test_delete_commit_flow ... ok
+test test_availability_find_flow ... ok
+test test_event_search_flow ... ok
+test test_delete_prepare_flow ... ok
+test test_event_get_flow ... ok
+test test_calendar_list_flow ... ok
+test test_reminder_set_flow ... ok
+test test_internal_client_urls ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/integration.rs (mcp-server/target/debug/deps/integration-0c63c61cbba80116)
+
+running 38 tests
+test authoritative_grant_lookup_returns_none_for_empty_response ... ok
+test authoritative_grant_lookup_returns_one_matching_grant ... ok
+test authoritative_grant_lookup_rejects_multiple_responses ... ok
+test event_update_patches_core_event_route ... ok
+test event_create_forwards_timezone_to_core ... ok
+test event_search_extracts_events_from_core_envelope ... ok
+test calendar_list_uses_authorized_core_grant_to_filter_calendars ... ok
+test failed_authorization_appends_audit_row ... ok
+test audit_failure_does_not_turn_completed_mutation_into_retryable_failure ... ok
+oidc-provider WARNING: Unsupported runtime. Use Node.js v22.x LTS, or a later LTS release.
+callback server port 8321 in use; continuing without it
+auth issuer listening at http://127.0.0.1:4000
+CommonCal interaction host expected at http://127.0.0.1:4002 (separate process)
+authorization flow did not yield a code
+test phase3_real_auth_server_token_validates ... ok
+test phase3_missing_client_id_rejected ... ok
+test successful_tool_call_appends_audit_row ... ok
+test test_anomaly_detection ... ok
+test test_auth_strength_checks ... ok
+test test_config_current_time ... ok
+test test_config_rejects_credentials_in_resource_url ... ok
+test test_config_rejects_http_resource_url ... ok
+test test_config_rejects_placeholder_in_resource_url ... ok
+test test_dpop_proof_validation ... ok
+test test_error_display ... ok
+test test_grant_current_time ... ok
+test test_internal_client_creation ... ok
+test test_mcp_grant_serialization ... ok
+test test_oauth_extract_audience ... ok
+test test_output_schema_serialization ... ok
+test test_protected_resource_metadata_dpop_unsupported ... ok
+test test_protected_resource_metadata_resource_url ... ok
+test test_rate_limiter_disabled ... ok
+test test_risk_classification ... ok
+test phase3_future_iat_rejected ... ok
+test phase3_wrong_issuer_rejected ... ok
+test phase3_discovery_issuer_mismatch_rejected ... ok
+test phase3_expired_token_rejected ... ok
+test phase3_valid_token_with_standard_claims ... ok
+test phase3_non_numeric_sub_rejected ... ok
+test phase3_key_rotation_overlap_validates ... ok
+test phase3_wrong_audience_rejected ... ok
+test phase3_stale_key_rejected_after_refresh ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.06s
+
+     Running tests/transport_host_regression.rs (mcp-server/target/debug/deps/transport_host_regression-d1d6ccd4ef4b3d94)
+
+running 10 tests
+test cross_origin_initialize_is_rejected ... ok
+test cross_scheme_origin_initialize_is_rejected ... ok
+test unexpected_hostname_initialize_is_rejected ... ok
+test public_hostname_initialize_is_accepted ... ok
+test same_origin_initialize_is_accepted ... ok
+test public_hostname_with_https_port_initialize_is_accepted ... ok
+test missing_origin_initialize_is_accepted ... ok
+test rate_limited_tool_call_returns_safe_error ... ok
+test authenticated_tool_call_keeps_request_identity_across_rmcp_tasks ... ok
+test authenticated_public_initialize_and_tools_list_and_rejections ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.35s
+
+   Doc-tests mcp_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

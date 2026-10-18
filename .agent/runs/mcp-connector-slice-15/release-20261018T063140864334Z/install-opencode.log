@@ -1,0 +1,15 @@
+opencode v2.0.20
+PASS README opencode add
+PASS README OpenCode JSON matches CLI-generated config
+FAIL README opencode list
+PASS observed OpenCode callback http://127.0.0.1:58873/callback
+FAIL README opencode remove
+PASS removal; temporary profiles only. Live OAuth/calendar proof is separate.
+opencode list: No MCP servers configured
+opencode remove: Error: MCP server not found: commoncal
+    at <anonymous> (/$bunfs/root/opencode:4224:1051)
+    at cli.mcp.logout (/$bunfs/root/opencode:100:19791)
+    at cli.mcp.logout (definition) (/$bunfs/root/opencode:4224:1450)
+
+2 !== 0
+

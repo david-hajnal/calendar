@@ -1,0 +1,34 @@
+{
+  "status": "blocked",
+  "summary": "The implement stage correctly preserved the manual hold, completed the reconciliation (2026-10-08 SQLite decision supersedes PostgreSQL hosting), and made no production code changes or completion record. The task is blocked on operator-supplied live input: an authenticated MCP client connection, a read-only tool call, and immediate grant revocation have not been proven in production (MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md line 20).",
+  "files_changed": [],
+  "verification_commands": [
+    "cat .agent/tasks/mcp-connector-slice-10.json",
+    "cat docs/plans/cross-client-mcp-connector/04-slices.md",
+    "cat docs/plans/cross-client-mcp-connector/00-status.md",
+    "cat docs/AUTH-PRODUCTION.md",
+    "cat docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "ls docs/ | grep -iE 'mcp|production|auth'",
+    "ls .agent/tasks/ | grep -iE 'mcp'",
+    "grep -rl MCP-PRODUCTION-FIX-PLAN .agent/tasks/",
+    "grep -n 'authenticated MCP client' docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md",
+    "grep -n 'Slice 10' docs/plans/cross-client-mcp-connector/00-status.md",
+    "grep -rn 'slice.10|issuer cutover' mcp-server/src/"
+  ],
+  "verification_passed": false,
+  "defects": [],
+  "follow_up": [
+    "Operator must connect a real MCP client, complete consent, and verify a read-only calendar-listing tool call plus immediate grant revocation in production \u2014 the outstanding condition for Slice 10 criterion 2.",
+    "MCP-PRODUCTION-FIX-PLAN.md is referenced by 12 task manifests but does not exist; restore it or repoint references to AUTH-PRODUCTION.md / MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "Slice 10 acceptance criterion still names 'managed PostgreSQL'; reconcile it with the 2026-10-08 SQLite decision that supersedes PostgreSQL hosting.",
+    "Persist the verified production image tags/issuer/SMTP/TLS/suspension states in Git and resume root Flux only after Git matches production (per MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md outstanding work #2)."
+  ],
+  "important_context": [
+    "Slice 10 is a manual-hold task: Migration does not authorize production changes; the per-slice continuation gate must be preserved and live environment/client/operator input obtained before release.",
+    "The 2026-10-08 SQLite decision supersedes PostgreSQL hosting (AUTH-PRODUCTION.md: 'No PostgreSQL server, database passwords or database TLS are needed'); Slice 10's 'provision managed PostgreSQL' criterion is superseded.",
+    "Production rollout is largely done (auth SQLite ready, core bridge wired, origin TLS validated, isolated backup restore passed, MCP issuer switched to https://auth.hajnal.space), but an authenticated MCP client connection + read-only tool call + grant revocation are NOT yet proven (MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md line 20).",
+    "The implement stage made no production code changes (files_changed: []) and did not record completion; Slice 10 remains unchecked at 00-status.md line 19, which is correct because not every criterion passes.",
+    "MCP-PRODUCTION-FIX-PLAN.md does not exist in the repo but is referenced by 12 task manifests; the authoritative production docs are AUTH-PRODUCTION.md and MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md.",
+    "QA environment restricted build/test commands (cargo/git/find permission-rejected); verification was done by reading authoritative docs and confirming the hold was preserved, reconciliation completed, outstanding condition unmet, and no slice-10 production code changed."
+  ]
+}

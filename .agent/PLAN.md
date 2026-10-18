@@ -15,3 +15,5 @@ MCP connector slices 9–15, historical review reconciliation, Flux live rollout
 Apple Calendar T01–T19 and existing mcp-* task manifests are complete and preserved. No completed task is recreated. Preserve pre-existing deleted deployment manifests.
 
 `mcp-production-remediation-reconcile` completed 2026-10-18: all 7 findings classified implemented; reconciliation artifact at `docs/plans/mcp-production-remediation/00-status.md`.
+
+`code-quality-hardening-reconcile` completed 2026-10-18: 17 findings inventoried — 7 implemented (C1–C3, H1–H3, L1), 10 outstanding (H4, H5, H6, M1–M5, L2, L3) as bounded packets in `docs/plans/code-quality-hardening/04-task-slices.md`; reconciliation artifact at `docs/plans/code-quality-hardening/00-status.md`. Manual hold preserved: no fixes applied.

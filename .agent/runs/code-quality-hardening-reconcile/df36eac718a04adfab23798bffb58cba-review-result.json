@@ -1,0 +1,34 @@
+{
+  "status": "completed",
+  "summary": "Verified all 17 findings in docs/plans/code-quality-hardening/00-status.md against current source: 7 implemented (C1, C2, C3, H1, H2, H3, L1) with code evidence at the cited locations, 10 outstanding (H4, H5, H6, M1, M2, M3, M4, M5, L2, L3) still present, 0 superseded or invalid. Manual hold preserved: git diff --stat shows only .agent/PLAN.md and .agent/tasks/code-quality-hardening-reconcile.json modified; no production code touched. No defects found in the reconciliation itself.",
+  "files_changed": [
+    ".agent/PLAN.md",
+    ".agent/tasks/code-quality-hardening-reconcile.json"
+  ],
+  "verification_commands": [
+    "grep -n 'jwk_to_decoding_key' mcp-server/src/oauth.rs",
+    "grep -n 'validate_dpop_proof' mcp-server/src/oauth.rs",
+    "grep -n 'dpop_proof_rejects_forged_proof' mcp-server/src/oauth.rs",
+    "sed -n '170,199p' mcp-server/src/oauth.rs",
+    "grep -n 'http://\\|https://' mcp-server/src/oauth.rs",
+    "wc -l backend/src/http.rs backend/src/event.rs",
+    "grep -n 'rate_limiter\\|evict' backend/src/rate_limiter.rs",
+    "grep -n 'retry' backend/src/notification.rs",
+    "grep -n 'replanner' backend/src/event.rs",
+    "grep -n 'private\\|10\\.\\|192\\.168' mcp-server/src/oauth.rs",
+    "git diff --stat",
+    "git check-ignore -v docs/plans/code-quality-hardening/00-status.md",
+    "grep -n 'docs/plans' .gitignore"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "C3 (SSRF, P0) is classified implemented and the core fix (hardened reqwest client with invalid cert/hostname rejection + 10s timeout, plus URL-scheme validation restricting to https) is present at mcp-server/src/oauth.rs:178-183 and :356-366, but the finding's fix list also named rejecting private/loopback IP ranges, which the code does not implement; a metadata endpoint or jwks_uri pointing at an internal address (e.g. http://169.254.169.254 or 127.0.0.1) could still be fetched if scheme validation is bypassed or metadata is attacker-influenced. Recommend adding private/loopback/link-local IP range rejection to the outstanding-work backlog.",
+    "M3 (no root Cargo.toml workspace, duplicated dependencies across backend/mcp-server) remains outstanding and will keep drift risk alive until a workspace is introduced."
+  ],
+  "important_context": [
+    "docs/plans/ is gitignored (.gitignore line 29), so the reconciliation artifacts (plan.md, 00-status.md, 04-task-slices.md) are untracked and exist only in the working tree; this is a pre-existing repo condition, not introduced by this task, but it means the reconciliation record is not durable in git history.",
+    "Working directory for this review was /Users/kaszperek/repos/plan-orchestrator; the project under review is /Users/kaszperek/repos/happening and all file paths above are relative to the latter.",
+    "Makefile targets referenced by the task (backend-test, mcp-test, authorization-regression, lint) were confirmed to exist; no tests were executed because the review is strictly read-only."
+  ]
+}

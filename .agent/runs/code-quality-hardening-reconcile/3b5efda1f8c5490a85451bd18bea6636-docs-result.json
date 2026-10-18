@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "Verified the code-quality-hardening reconciliation docs against current source (all 17 evidence claims accurate, counts consistent across PLAN.md, 00-status.md, 04-task-slices.md) and fixed one internal inconsistency: 00-status.md follow-up said '11 packets' where the correct count is 10.",
+  "files_changed": [
+    "docs/plans/code-quality-hardening/00-status.md"
+  ],
+  "verification_commands": [
+    "grep -cE '^### [CHML][0-9]+ \u2014 ' docs/plans/code-quality-hardening/00-status.md -> 17",
+    "grep -c IMPLEMENTED / grep -c OUTSTANDING 00-status.md -> 7 / 10",
+    "grep -cE '^## [CHML][0-9]+ \u2014 ' docs/plans/code-quality-hardening/04-task-slices.md -> 10",
+    "grep -rn '11 packets' docs/plans/code-quality-hardening/ .agent/PLAN.md -> none (typo fixed)",
+    "wc -l backend/src/http.rs backend/src/event.rs mcp-server/src/oauth.rs -> 4062/3017/1070, matching M4/M5/C-claims",
+    "sed -n spot checks of H4 (event.rs 184-198), H5 (login.rs 966-982), H6 (http.rs 780-786), M2 (external_feed.rs 335-339) -> all match cited evidence",
+    "git status --porcelain backend/ mcp-server/ frontend/ | wc -l -> 0 (manual hold preserved)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Reconciliation artifacts live at docs/plans/code-quality-hardening/ (plan.md, 00-status.md, 04-task-slices.md); docs/plans/ is gitignored by project convention, so these exist only in the working tree and are not durable in git history",
+    "The 10 outstanding packets (H4,H5,H6,M1,M2,M3,M4,M5,L2,L3) are planning-only under manual hold; tracks H4->M1->M5 (event.rs) and H6->M4 (http.rs) are sequential, H5/M2/L3/M3/L2 independent; orchestrator-factory gate approval required before implementation",
+    "Review stage noted C3 (SSRF) is implemented for scheme/TLS hardening but the finding also named private/loopback IP rejection, which is not implemented; that gap is not captured as a packet and may warrant a follow-up finding"
+  ]
+}

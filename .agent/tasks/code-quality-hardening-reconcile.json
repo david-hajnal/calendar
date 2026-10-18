@@ -9,5 +9,5 @@
     "Manual hold: these historical proposals have no reliable completion ledger; do not apply stale recommendations or bypass unapproved planning gates."
   ],
   "docs_required": true,
-  "status": "blocked"
+  "status": "completed"
 }

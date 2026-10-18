@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "Reviewed the committed T2 implementation (backend/src/ics_import.rs, the lib.rs module export, and the three ics_import_service tests) against the T2 acceptance criteria and the approved ics-import design; found no concrete defects and the three service tests pass.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_service"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "00-status.md marks T3 'waiting' but the T3 HTTP endpoint (import_ics handler, /api/v1/calendars/:calendar_id/import-ics route, map_ics_import_error) is already committed in HEAD \u2014 reconcile the status doc.",
+    "max_components is set to max_events + 100 (1100) and counts ALL BEGIN components including VALARM, so a valid calendar with many alarms can trip LimitExceeded; document this as an intentional design choice.",
+    "Empty SUMMARY is parser-allowed but rejected by validate_mutation (non-empty title required), mapping to InvalidCalendar (400); defensible but worth documenting."
+  ],
+  "important_context": [
+    "T2 code is committed (f8c39b9); the only backend working-tree changes are T1's (event.rs record_caldav_change in create_batch + caldav test assertions), not T2's.",
+    "IcsImportService::import enforces MAX_ICS_IMPORT_BYTES (1 MiB) at the service level and uses MAX_ICS_IMPORT_EVENTS (1,000) with max_components 1,100; map_parse_error maps LimitExceeded->LimitExceeded and all other parser codes->InvalidCalendar; map_service_error maps NotFound->NotFound, Database->Database, else->InvalidCalendar.",
+    "convert_calendar rejects detached-on-non-recurring-master, duplicate exception keys per master, overrides carrying rrule/exdates, key-kind mismatch vs master timing, orphan detached instances, and empty calendars before delegating once to create_batch.",
+    "Parser status validation is case-sensitive (uppercase CONFIRMED/TENTATIVE/CANCELLED only) \u2014 a parser defect outside T2 scope, not reported as a T2 defect."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "T6 verified end-to-end: the desktop E2E journey imports one timed and one all-day event, proves both are native (no is_external/read_only) and writable via successful PATCH, and the README clearly distinguishes one-time ICS import from feed subscription. All six packet acceptance conditions pass together \u2014 focused E2E (1 passed), backend suite (719 passed/0 failed/4 ignored), frontend suite (255 passed), and clean formatting, linting, typechecking, and build.",
+  "files_changed": [],
+  "verification_commands": [
+    "pnpm --dir e2e test -- desktop-mvp.spec.ts --project=desktop",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "pnpm --dir frontend test",
+    "pnpm --dir frontend lint",
+    "pnpm --dir frontend typecheck",
+    "pnpm --dir frontend build",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "T6 deliverables (e2e/support/import.ics, e2e/tests/desktop-mvp.spec.ts, README.md) are committed in f8c39b9 and clean vs HEAD; docs/plans/ics-import/00-status.md already records T6 complete.",
+    "The E2E test runs against the pre-built backend binary backend/target/debug/commoncal-backend and frontend/dist; both must exist (and browsers installed) before running the desktop E2E project.",
+    "Pre-existing uncommitted modifications to backend/src/event.rs, backend/tests/ics_import.rs, and mcp-server/* are unrelated to T6 and were preserved untouched."
+  ]
+}

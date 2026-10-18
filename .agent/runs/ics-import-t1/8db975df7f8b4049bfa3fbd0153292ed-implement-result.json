@@ -1,0 +1,25 @@
+{
+  "status": "completed",
+  "summary": "T1 (atomic native event batch) was already implemented in the working tree from a prior run; this run verified all acceptance criteria: create_batch validates the whole batch, authorizes as CreateEvent, and commits events, exceptions, one create audit and one CalDAV change per top-level event in one transaction, with notification replanning only after commit; all 4 batch tests, the full ics_import file (9 tests), and the entire backend suite pass.",
+  "files_changed": [
+    "backend/src/event.rs",
+    "backend/tests/ics_import.rs"
+  ],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_batch",
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import",
+    "cargo test --manifest-path backend/Cargo.toml --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Task changes are uncommitted in the working tree (backend/src/event.rs, backend/tests/ics_import.rs); commit is left to the operator per stage contract."
+  ],
+  "important_context": [
+    "T1 was implemented by a prior run of this task (see .agent/runs/ics-import-t1/); this run only verified it and made no edits.",
+    "Exact handoff types in commoncal_backend::event: EventCreateBatch { events: Vec<EventCreateItem> }, EventCreateItem { event: EventMutation, recurrence_rule: Option<String>, exceptions: Vec<EventCreateException> }, EventCreateException { recurrence: EventRecurrenceKey, replacement: Option<EventMutation> }, EventRecurrenceKey::Timed(i64) | AllDay(String) (gained a Hash derive for batch uniqueness; approved meaning preserved), EventCreateBatchResult { event_ids: Vec<i64>, exception_count: usize }.",
+    "create_batch signature: EventService::create_batch(&self, actor_user_id: i64, is_superadmin: bool, calendar_id: i64, batch: EventCreateBatch) -> Result<EventCreateBatchResult, EventServiceError>; uses BEGIN IMMEDIATE, authorizes CalendarAction::CreateEvent in-transaction, audit actions event.create (single) / event.series.create (recurring), one caldav_event_changes 'created' row per top-level event, notification replanner invoked only after commit.",
+    "docs/plans/ics-import/00-status.md already records T1 complete (2026-10-15) with verification evidence; no status edit was needed.",
+    "The working tree also contains T2/T3-related code (IcsImportService in backend/src/ics_import.rs and ics_import_http_* tests) that compiles and passes, even though 00-status.md lists T2/T3 as waiting; T2/T3 were out of scope for this task and were not modified."
+  ]
+}

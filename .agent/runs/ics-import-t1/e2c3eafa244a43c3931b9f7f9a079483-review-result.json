@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T1 (atomic native event batch creation) reviewed read-only against the acceptance criteria in docs/plans/ics-import/04-task-slices.md. The bulk of T1 was already committed in f8c39b9; the working tree adds only a record_caldav_change(&mut transaction, calendar_id, event_id, \"created\", now, None) call in create_batch (backend/src/event.rs, ~line 935) and CalDAV-change assertions in the four ics_import_batch_* tests (backend/tests/ics_import.rs). The added call exactly matches the single-create path (event.rs line 506), so each top-level row in a batch now records exactly one CalDAV change, satisfying the audit/CalDAV acceptance criteria. Mixed batches commit all events+exceptions atomically; invalid input and DB failure commit nothing (single transaction, validation before insert, rollback on error). Authorization is CreateEvent via authorize_in_transaction; audit actions are event.create / event.series.create; notification replanning happens only after commit. No actionable defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_batch",
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import",
+    "cargo test --manifest-path backend/Cargo.toml --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "docs/plans/ics-import/00-status.md records '491 passed' for the full suite, but the actual full-suite count is higher (cosmetic drift, already noted by QA).",
+    ".agent/tasks/ics-import-t1.json still shows status 'ready' (changed from 'failed' in the working tree) \u2014 orchestrator should flip it to 'completed' once this review passes."
+  ],
+  "important_context": [
+    "T1 bulk was already committed in f8c39b9; the working tree only adds the record_caldav_change call in create_batch plus CalDAV test assertions.",
+    "T2/T3 code and tests already exist in the tree and pass even though 00-status.md lists them as waiting \u2014 orchestrator should reconcile before dispatching T2."
+  ]
+}

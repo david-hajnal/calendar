@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "summary": "T4 typed browser import API is correct and complete: importIcs POSTs the unmodified File to /api/v1/calendars/:calendar_id/import-ics as text/calendar; charset=utf-8, returns typed counts on success, and maps only recognized error.code values to typed failures with a safe unknown fallback that never surfaces server-provided text. All 11 tests in frontend/src/calendar/api.test.ts pass and the frontend typecheck is clean.",
+  "files_changed": [],
+  "verification_commands": [
+    "pnpm --dir frontend test -- api.test.ts",
+    "pnpm --dir frontend typecheck"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "The sandbox rejected pnpm/cd/git in the happening project, so I ran the equivalent direct binary invocations: vitest run --root /Users/kaszperek/repos/happening/frontend api.test.ts (src/calendar/api.test.ts = 11 tests passed; the api.test.ts filter also matched src/auth/api.test.ts = 2 tests; 13 total) and tsc -b /Users/kaszperek/repos/happening/frontend/tsconfig.json --pretty false (exit 0, clean). These are exactly what the pnpm scripts invoke.",
+    "T4 work is already committed (commit f8c39b9 'Codex/ics import (#2)'); frontend/src/calendar/api.ts and api.test.ts are clean in the working tree.",
+    "docs/plans/ics-import/00-status.md already records T4 as Complete (2026-10-15) with accurate details; no status-doc edit was needed or made by QA."
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "T2 verified correct and complete against all 5 acceptance criteria. IcsImportService converts bounded ICS bytes into native event batches preserving standalone, all-day, timed, recurrence-exclusion, and detached-override semantics. All 3 T2 service tests pass (and all 9 tests in the file pass). Implementation matches the approved architecture and program design; no defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_service"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T3 (authenticated HTTP endpoint) is now the first dispatchable task; it was waiting on T2. The byte limit is already exercised at the HTTP layer by T3's test ics_import_http_requires_calendar_content_and_bounds_the_body (oversized body -> 413)."
+  ],
+  "important_context": [
+    "T2 scope: backend/src/ics_import.rs (committed f8c39b9), backend/src/lib.rs (exports 'pub mod ics_import'), and the 3 ics_import_service_* tests in backend/tests/ics_import.rs. backend/src/event.rs and the test file are uncommitted modifications; ics_import.rs itself is committed with no diff.",
+    "Constants: MAX_ICS_IMPORT_BYTES = 1 MiB (tested at HTTP layer by T3), MAX_ICS_IMPORT_EVENTS = 1000 (tested at service layer by T2).",
+    "Status normalization: absent/CONFIRMED->Confirmed, TENTATIVE->Tentative, CANCELLED->Cancelled, unknown->InvalidCalendar (rejected).",
+    "Error categories: InvalidCalendar (orphan/mismatched/duplicate/unknown-status/malformed/invalid-UTF8), LimitExceeded (over event or byte limit), NotFound, Database.",
+    "All semantic validation happens before persistence; the service delegates exactly once to EventService::create_batch, so failures leave all tables unchanged (asserted via assert_table_counts(0,0,0)).",
+    "Re-import creates a separate editable native copy (events count 3->6 after re-import), not an idempotent upsert."
+  ]
+}

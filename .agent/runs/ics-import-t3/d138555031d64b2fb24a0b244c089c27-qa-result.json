@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "summary": "T3 (ics-import-t3) verified against acceptance criteria: POST /api/v1/calendars/:calendar_id/import-ics returns 201 for owner/manager/editor, non-enumerating 404 for viewer/free-busy-viewer/unrelated users, 400 with stable codes for wrong media type/empty/malformed/limit-exceeded input, 413 for oversized body (>1 MiB), Standard-tier rate limiting, and content-free structured logs. All 11 matching tests pass (10 integration + 1 rate-limiter classifier); command exited 0.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked ics_import"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "Route mounted at backend/src/http.rs:861-863; handler import_ics at http.rs:1883; is_calendar_media_type at http.rs:1945",
+    "Error mapping (map_ics_import_error, http.rs:2296): InvalidCalendar->400 invalid_calendar_file; LimitExceeded->400 calendar_import_limit_exceeded; NotFound->404 not_found; Database->500 internal_error",
+    "413 for oversized input comes from axum DefaultBodyLimit (MAX_REQUEST_BODY_BYTES=1 MiB, http.rs:73, applied via apply_shared_middleware http.rs:120), not the service byte check; the 1000-event limit maps to 400 calendar_import_limit_exceeded",
+    "Rate limiter classifies import-ics as Standard tier (backend/src/rate_limiter.rs:239-248), covered by test_write_endpoint_tier_standard_ics_import (rate_limiter.rs:428-443)",
+    "Structured logs are content-free: actor_user_id, calendar_id, error_code, byte_count, latency_ms, summary counts only \u2014 no calendar content/UID/filename/title/description/location",
+    "Test coverage in backend/tests/ics_import.rs: role matrix (337-371), media-type/empty/malformed/oversized (373-410), stable limit code (412-433), plus T1/T2 batch & service tests",
+    "No production code or test changes were made during this verification stage"
+  ]
+}

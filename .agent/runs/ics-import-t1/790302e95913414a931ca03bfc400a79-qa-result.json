@@ -1,0 +1,22 @@
+{
+  "status": "completed",
+  "summary": "T1 verified: all four ics_import_batch tests pass, the full ics_import suite (9) and full backend suite (718 passed, 0 failed) are green, and the implementation matches the approved program design's type names, CreateEvent authorization, per-row audit/CalDAV side effects, zero-write failure semantics, and post-commit notification replanning.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import ics_import_batch",
+    "cargo test --manifest-path backend/Cargo.toml --locked --test ics_import",
+    "cargo test --manifest-path backend/Cargo.toml --locked --lib event",
+    "cargo test --manifest-path backend/Cargo.toml --locked"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "00-status.md records the full backend suite as '491 passed'; an independent run shows 718 passed / 0 failed (suite grew with T2/T3 tests) \u2014 cosmetic count drift only",
+    ".agent/tasks/ics-import-t1.json still has status 'ready'; orchestrator should flip it after this QA pass"
+  ],
+  "important_context": [
+    "T1 batch types match the approved design exactly: EventCreateBatch, EventCreateItem, EventCreateException, EventRecurrenceKey (Timed(i64)/AllDay(String)), EventCreateBatchResult, EventService::create_batch; only adjustment was adding a Hash derive to EventRecurrenceKey (recorded in 00-status.md)",
+    "create_batch validates the whole batch before BEGIN IMMEDIATE, authorizes CreateEvent once in-transaction, writes events + exceptions + one event.create/event.series.create audit + one caldav_event_changes 'created' row per top-level event, commits once, then sends each event_id to the notification replanner; no external_event_mapping rows are written",
+    "T2/T3 code (backend/src/ics_import.rs, HTTP import route) already exists in the working tree and its tests pass, even though 00-status.md lists T2/T3 as waiting \u2014 the orchestrator should reconcile status before dispatching T2"
+  ]
+}

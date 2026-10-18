@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "T5 (ics-import-t5) verified: all 19 tests pass, all 9 acceptance criteria covered",
+  "files_changed": [],
+  "verification_commands": [
+    "pnpm --dir frontend test -- CalendarManagement.test.tsx"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "All 19 tests in CalendarManagement.test.tsx pass (402ms)",
+    "All 9 T5 acceptance criteria are covered by tests",
+    "Focus restoration works via useEffect cleanup on unmount (CalendarManagement.tsx:306-309), firing for all close paths: Escape, Close button, Cancel, Done",
+    "Error handling maps stable codes (invalid_calendar_file, calendar_import_limit_exceeded, unexpected) to safe user-facing messages without leaking backend text",
+    "Pending state disables file input, Close, Cancel, and Import buttons; re-clicking Importing adds no request"
+  ]
+}

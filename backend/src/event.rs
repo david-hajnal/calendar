@@ -932,6 +932,15 @@ impl EventService {
                 now,
             )
             .await?;
+            self.record_caldav_change(
+                &mut transaction,
+                calendar_id,
+                event_id,
+                "created",
+                now,
+                None,
+            )
+            .await?;
             event_ids.push(event_id);
         }
 

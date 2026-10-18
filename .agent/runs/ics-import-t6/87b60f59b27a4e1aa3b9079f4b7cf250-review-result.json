@@ -1,0 +1,23 @@
+{
+  "status": "completed",
+  "summary": "T6 deliverables (deterministic two-event ICS fixture, desktop E2E import journey, README one-time-import-vs-feed distinction) are committed in f8c39b9, clean vs HEAD, and meet all acceptance criteria. The E2E test meaningfully proves imported events are native (API omits is_external/read_only, confirmed against the serialization contract) and writable (successful PATCH), and contrasts them with external-feed events. No actionable defect found.",
+  "files_changed": [],
+  "verification_commands": [
+    "git status --short e2e/support/import.ics e2e/tests/desktop-mvp.spec.ts README.md (clean vs HEAD)",
+    "git show f8c39b9 -- e2e/support/import.ics e2e/tests/desktop-mvp.spec.ts README.md (reviewed committed T6 diff)",
+    "git show HEAD:e2e/tests/desktop-mvp.spec.ts | grep -n 'Import ICS to E2E Team|2 events imported|import.ics|not.toHaveProperty' (import journey present in HEAD)",
+    "grep -n 'Import ICS|2 events imported|role=\\\"status\\\"|ICS file' frontend/src/calendar/CalendarManagement.tsx (frontend selectors match test)",
+    "grep -rn 'is_external|read_only' backend/src/ + read backend/src/event.rs:2360-2440 (verified API serialization contract: native events omit is_external/read_only)"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "Uncommitted changes to backend/src/event.rs, backend/tests/ics_import.rs, and mcp-server/* are from other tasks (T1 follow-up / mcp-connector), outside T6 scope, and were preserved untouched; they are not T6 defects but should be tracked by their owning tasks."
+  ],
+  "important_context": [
+    "T6 deliverables (e2e/support/import.ics, e2e/tests/desktop-mvp.spec.ts import journey, README.md) are committed in f8c39b9 and clean vs HEAD; docs/plans/ics-import/00-status.md records T6 complete.",
+    "The E2E desktop project runs against pre-built artifacts: backend/target/debug/commoncal-backend and frontend/dist, plus installed browsers (via e2e/support/isolatedBackend.ts on an ephemeral port with a disposable SQLite DB); all must exist and be current before running.",
+    "The API contract in backend/src/event.rs (EventProjection, mark_external_projections) sets is_external/read_only to Some(true) only for events in external_event_mapping and omits them (skip_serializing_if) for native events \u2014 this is why the E2E test's not.toHaveProperty assertions are a valid proof of non-externality.",
+    "Uncommitted working-tree changes to backend/src/event.rs, backend/tests/ics_import.rs, and mcp-server/* belong to other tasks and were preserved untouched by the T6 stage."
+  ]
+}

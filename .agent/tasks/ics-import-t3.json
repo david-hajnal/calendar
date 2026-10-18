@@ -17,6 +17,6 @@
     "Record verification and completion in docs/plans/ics-import/00-status.md; preserve unrelated work."
   ],
   "docs_required": false,
-  "status": "blocked",
+  "status": "completed",
   "unblock_when_dependencies_complete": true
 }

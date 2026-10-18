@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "summary": "T4's typed browser import API (importIcs, IcsImportSummary, IcsImportApiError, error-code type) was already present in committed code and satisfies every acceptance criterion; verified it with the packet test command and typecheck, and recorded completion in the plan status file.",
+  "files_changed": [
+    "docs/plans/ics-import/00-status.md"
+  ],
+  "verification_commands": [
+    "pnpm --dir frontend test -- api.test.ts",
+    "pnpm --dir frontend typecheck"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T5 can consume importIcs(api, calendarId, file) which throws IcsImportApiError with status and code (invalid_calendar_file | calendar_import_limit_exceeded | unknown); isCalendarAccessChange already covers 401/403/404/409 for the access-denial refresh behavior."
+  ],
+  "important_context": [
+    "T4 implementation and tests pre-existed in commit f8c39b9 (Codex/ics import #2); this run verified them and recorded completion rather than writing new code.",
+    "importIcs sends the unmodified File as body with content-type text/calendar; charset=utf-8 to POST /api/v1/calendars/:calendar_id/import-ics, matching the approved architecture contract.",
+    "Unknown or malformed error envelopes map to IcsImportApiError with code 'unknown' and a client-owned message; server-provided text never surfaces to callers."
+  ]
+}

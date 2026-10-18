@@ -1,0 +1,26 @@
+{
+  "status": "completed",
+  "summary": "T6 deliverables (two-event ICS fixture, desktop E2E import journey, README one-time-import-vs-feed distinction, status record) already existed in the working tree from a prior session; this run re-verified every acceptance check and all passed, so no files were modified.",
+  "files_changed": [],
+  "verification_commands": [
+    "pnpm --dir e2e test -- desktop-mvp.spec.ts --project=desktop",
+    "cargo test --manifest-path backend/Cargo.toml --locked",
+    "pnpm --dir frontend test",
+    "cargo fmt --manifest-path backend/Cargo.toml --check",
+    "cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings",
+    "pnpm --dir frontend lint",
+    "pnpm --dir frontend typecheck",
+    "pnpm --dir frontend build"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "The T6 status record in docs/plans/ics-import/00-status.md was already present and its claimed evidence (719 backend / 255 frontend / 1 E2E passed, clean fmt/clippy/eslint/typecheck/build) was reproduced exactly on 2026-10-17; no update was needed."
+  ],
+  "important_context": [
+    "T6 artifacts (e2e/support/import.ics, the import journey in e2e/tests/desktop-mvp.spec.ts, README updates, 00-status.md record) pre-existed in the working tree; this run verified them without modifying any files.",
+    "E2E runs via e2e/support/isolatedBackend.ts, which spawns backend/target/debug/commoncal-backend on an ephemeral port with a disposable SQLite DB and serves frontend/dist; both build artifacts must exist and be current.",
+    "docs/plans/ is gitignored (line 29 of .gitignore), so 00-status.md records are local-only and never appear in git status.",
+    "The backend debug binary (Oct 15 19:04) is newer than all backend sources, so the E2E exercised current backend code; frontend dist was rebuilt during verification and the E2E re-passed against it."
+  ]
+}

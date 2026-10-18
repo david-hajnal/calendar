@@ -1,0 +1,24 @@
+{
+  "status": "completed",
+  "summary": "T3 (ics-import-t3) complete: the authenticated, rate-limited POST /api/v1/calendars/:calendar_id/import-ics endpoint is exposed with role-based access, stable error codes, media-type/size validation, Standard rate-limit tier, and content-free logs. All acceptance criteria are met by existing in-tree code plus one new HTTP-level test proving the stable calendar_import_limit_exceeded code end-to-end through the router.",
+  "files_changed": [
+    "backend/tests/ics_import.rs",
+    "docs/plans/ics-import/00-status.md"
+  ],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked ics_import"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [
+    "T6 (ics-import-t6): integrated end-to-end user journey + documentation \u2014 now the only remaining packet and unblocked (backend T1\u2013T3 and frontend T4\u2013T5 complete)."
+  ],
+  "important_context": [
+    "T3 implementation already existed in the tree (import_ics handler in backend/src/http.rs, route mounted in build_application_router, Standard-tier classifier in backend/src/rate_limiter.rs); the only acceptance gap was the HTTP-level calendar_import_limit_exceeded code, closed by the new additive test ics_import_http_exposes_stable_limit_code.",
+    "The new test sends a 1001-event ICS body (~88 KB, under the 1 MiB body limit) and asserts 400 with error.code == calendar_import_limit_exceeded, proving the limit failure end-to-end through the router.",
+    "Handler logs are content-free: only actor_user_id, calendar_id, error_code, byte_count, latency_ms, imported_events, imported_exceptions.",
+    "Verification: cargo test --manifest-path backend/Cargo.toml --locked ics_import \u2192 10 integration tests pass (including the new one) plus rate_limiter::tests::test_write_endpoint_tier_standard_ics_import; full backend suite 719 passed, 0 failed, 4 ignored.",
+    "Uncommitted worktree changes preserved and untouched: backend/src/event.rs (T1/T2 caldav change recording), .agent/tasks/*.json, mcp-server/* files, untracked .agent/runs/ artifacts. No commits made.",
+    "Frontend already consumes the endpoint contract (T4/T5 complete): route /api/v1/calendars/:calendar_id/import-ics, content type text/calendar; charset=utf-8, success body {imported_events, imported_exceptions}, error codes invalid_calendar_file / calendar_import_limit_exceeded / not_found."
+  ]
+}

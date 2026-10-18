@@ -1,0 +1,18 @@
+{
+  "status": "completed",
+  "summary": "T3 (expose authenticated, limited ICS import endpoint) meets all acceptance criteria. Role matrix (owner/manager/editor -> 201; viewer/free-busy/unrelated -> non-enumerating 404), stable error codes (invalid_calendar_file, calendar_import_limit_exceeded), 400 for wrong media type/empty body, 413 for oversized input, Standard rate-limit tier, and content-free logging are all verified against the code and the passing test suite. No concrete defects found.",
+  "files_changed": [],
+  "verification_commands": [
+    "cargo test --manifest-path backend/Cargo.toml --locked ics_import"
+  ],
+  "verification_passed": true,
+  "defects": [],
+  "follow_up": [],
+  "important_context": [
+    "413 for oversized input comes from axum DefaultBodyLimit (1 MiB) in apply_shared_middleware (wired at main.rs:319), not the service; the service's byte-size LimitExceeded branch (ics_import.rs:50-52) is unreachable via HTTP and serves only as defense-in-depth for direct service calls.",
+    "Non-enumerating 404 is produced by authorize_in_transaction (event.rs:1907) returning EventServiceError::NotFound for both missing ACL rows and insufficient roles, mapped to ApiError::not_found() (code 'not_found').",
+    "The write-rate-limit middleware is applied to the protected router only when state.write_rate_limiter is Some (http.rs:966-973); the import-ics route is classified as Standard tier (rate_limiter.rs:239-248).",
+    "Handler and access-log middleware log only metadata (actor_user_id, calendar_id, byte_count, latency_ms, error_code, summary counts, method, path, status); no calendar content, UID, filename, title, description, or location is logged.",
+    "ApiError serializes to {\"error\":{\"code\",\"message\",\"current_version\"}}, matching the test assertions on body[\"error\"][\"code\"]."
+  ]
+}

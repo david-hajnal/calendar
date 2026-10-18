@@ -71,10 +71,21 @@ async fn ics_import_batch_persists_mixed_events_exceptions_and_side_effects() {
         .fetch_one(&pool)
         .await
         .unwrap();
+    let caldav_changes: Vec<i64> = sqlx::query_scalar(
+        "SELECT event_id FROM caldav_event_changes WHERE change_type = 'created' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(event_count, 2);
     assert_eq!(exception_count, 3);
     assert_eq!(audits, vec!["event.series.create", "event.series.create"]);
     assert_eq!(external_count, 0);
+    let mut expected_changes = result.event_ids.clone();
+    expected_changes.sort_unstable();
+    let mut actual_changes = caldav_changes;
+    actual_changes.sort_unstable();
+    assert_eq!(actual_changes, expected_changes);
 
     let exceptions: Vec<ExceptionDateRow> = sqlx::query_as(
         "SELECT recurrence_id, recurrence_date, is_deleted, title
@@ -170,6 +181,11 @@ async fn ics_import_batch_rolls_back_everything_on_database_failure() {
         Err(EventServiceError::Database(_))
     ));
     assert_table_counts(&pool, 0, 0, 0).await;
+    let caldav_changes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM caldav_event_changes")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(caldav_changes, 0);
     assert!(replanned.lock().unwrap().is_empty());
 }
 
@@ -391,6 +407,29 @@ async fn ics_import_http_requires_calendar_content_and_bounds_the_body() {
         )
         .await;
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn ics_import_http_exposes_stable_limit_code() {
+    let app = HttpTestApplication::new().await;
+    let path = format!("/api/v1/calendars/{}/import-ics", app.calendar_id);
+    let mut input = String::from("BEGIN:VCALENDAR\n");
+    for number in 0..=MAX_ICS_IMPORT_EVENTS {
+        input.push_str(&format!(
+            "BEGIN:VEVENT\nUID:{number}\nDTSTART:20250616T090000Z\nDTEND:20250616T100000Z\nSUMMARY:E\nEND:VEVENT\n"
+        ));
+    }
+    input.push_str("END:VCALENDAR\n");
+
+    let response = app
+        .request(app.owner, &path, "text/calendar", input.into_bytes())
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"]["code"],
+        "calendar_import_limit_exceeded"
+    );
 }
 
 fn mixed_batch() -> EventCreateBatch {

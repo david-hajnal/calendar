@@ -265,7 +265,7 @@ authenticated unsafe requests must match it.
 ## Rate limiting
 
 Write endpoints on authenticated routes are rate-limited per-user (not per-calendar). Rate limiting is active
-when `APP_ENV=staging` or `APP_ENV=production`; it is disabled in development.
+when `APP_ENV=production`; it is disabled in development.
 
 | Tier | Limit | Examples |
 |------|-------|----------|

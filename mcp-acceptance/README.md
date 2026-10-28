@@ -39,7 +39,7 @@ fixture shapes (the `initialize` request shape from
 `slice1-lab/negative_tests.py` `fresh_dcr`, the standard access-token claim
 contract from `slice1-lab/src/jwt.rs`, the scope catalog from
 `slice1-lab/src/common.rs`, and the negative-token / fail-closed cases from
-`slice1-lab/negative_tests.py` cases 3-9 and `slice1-lab/PROOF.md` P7), and the
+`slice1-lab/negative_tests.py` cases 3-9), and the
 MCP/OAuth standards-compliance expectations. It owns its own production-facing
 configuration, lifecycle, reporting, and cleanup: it is a pure HTTP client,
 starts no servers, and leaves no processes behind.

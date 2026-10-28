@@ -1,9 +1,8 @@
 # Production MCP connection fix plan
 
 > **Superseded.** The 2026-10-08 SQLite decision supersedes the PostgreSQL
-> hosting described below. The authoritative production docs are
-> `docs/AUTH-PRODUCTION.md` and
-> `docs/MCP-PRODUCTION-SUCCESSFUL-COMMANDS-2026-10-09.md`.
+> hosting described below. The authoritative production doc is
+> `docs/AUTH-PRODUCTION.md`.
 
 Status: proposed  
 Prepared: 2026-09-17  
@@ -88,7 +87,7 @@ the production MCP server.
 The production Flux kustomization includes only core and MCP
 (`deploy/flux/overlays/production/kustomization.yaml:3-5`). The existing auth
 HelmRelease is excluded and was deliberately removed because PostgreSQL was not
-available (`deploy/PROBLEM-02-remove-auth.md`). Consequently, the advertised
+available. Consequently, the advertised
 issuer host is handled by core's `/` ingress and falls through to the SPA.
 
 The dormant auth values cannot simply be re-enabled:

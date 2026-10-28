@@ -19,9 +19,9 @@ Runtime: `/Users/kaszperek/repos/plan-orchestrator`. Target project: `/Users/kas
 | `mcp-connector-slice-13` | blocked | OpenCode compatibility — docs/plans/cross-client-mcp-connector/04-slices.md |
 | `mcp-connector-slice-14` | blocked | README delivery — docs/plans/cross-client-mcp-connector/04-slices.md |
 | `mcp-connector-slice-15` | blocked | Cross-client release proof — docs/plans/cross-client-mcp-connector/04-slices.md |
-| `code-quality-hardening-reconcile` | blocked | Reconcile historical findings — docs/plans/code-quality-hardening/plan.md |
-| `code-review-improvements-reconcile` | blocked | Reconcile historical findings — docs/plans/code-review-improvements.md |
-| `mcp-production-remediation-reconcile` | blocked | Reconcile historical findings — docs/plans/mcp-production-remediation |
+| `code-quality-hardening-reconcile` | blocked | Reconcile historical findings — docs/plans/archive/code-quality-hardening/plan.md |
+| `code-review-improvements-reconcile` | blocked | Reconcile historical findings — docs/plans/archive/code-review-improvements.md |
+| `mcp-production-remediation-reconcile` | blocked | Reconcile historical findings — docs/plans/archive/mcp-production-remediation |
 | `flux-version-production-proof` | blocked | Verify version-tagged Flux production rollout — docs/plans/flux-version-tag-deployments.md |
 | `mcp-production-rollout` | blocked | Complete SQLite authorization production rollout and deployment validation — docs/MCP-PRODUCTION-FIX-PLAN.md |
 

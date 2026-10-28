@@ -787,7 +787,7 @@ k -n commoncal rollout restart statefulset commoncal
 
 # Or via ConfigMap:
 kubectl -n commoncal patch configmap commoncal \
-  --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'}
+  --type merge -p '{"data":{"PASSWORD_LOGIN_ENABLED":"1"}}'
 kubectl -n commoncal rollout restart statefulset commoncal
 ```
 

@@ -1,5 +1,7 @@
 # Agent Rules
 
+See the root [AGENTS.md](../AGENTS.md) for the full repository map, conventions, commands, and working rules.
+
 ## Docker
 
 Use `scripts/dev.sh` for all local Docker operations. Never run raw `docker compose` commands.

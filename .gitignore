@@ -6,6 +6,9 @@ mcp-server/target/
 slice1-lab/target/
 node_modules/
 
+# Python venvs
+.venv-ics/
+
 # Local env files
 deploy/.env
 *.tsbuildinfo

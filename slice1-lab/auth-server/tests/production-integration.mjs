@@ -64,6 +64,11 @@ try {
   const client = await registration.json();
   assert.equal((await register('https://evil.test/callback')).status, 400);
   assert.equal((await register('http://localhost:19876/mcp/oauth/callback')).status, 400);
+  assert.equal((await register('http://localhost.evil.example:7777/callback')).status, 400);
+  const localhostRegistration = await register('http://localhost:7777/callback', { 'x-forwarded-for': '192.0.2.11' });
+  assert.equal(localhostRegistration.status, 201);
+  const localhostClient = await localhostRegistration.json();
+  assert.deepEqual(localhostClient.redirect_uris, ['http://localhost:7777/callback']);
   const openCodeRegistration = await register('http://127.0.0.1:55740/callback', { 'x-forwarded-for': '192.0.2.10' });
   assert.equal(openCodeRegistration.status, 201);
   const openCodeClient = await openCodeRegistration.json();
@@ -105,6 +110,31 @@ try {
   assert.equal(issued.status, 200, JSON.stringify(issued.body)); assert.ok(issued.body.refresh_token); assert.ok(issued.body.access_token);
   const claims = JSON.parse(Buffer.from(issued.body.access_token.split('.')[1], 'base64url'));
   assert.equal(claims.iss, issuer); assert.equal(claims.aud, resource); assert.equal(claims.sub, '42');
+  const localhostVerifier = randomBytes(32).toString('base64url');
+  const localhostChallenge = createHash('sha256').update(localhostVerifier).digest('base64url');
+  const localhostAuth = { prompt: 'consent', client_id: localhostClient.client_id, response_type: 'code', redirect_uri: 'http://localhost:7777/callback', scope: 'openid offline_access commoncal.event.read.basic', resource, code_challenge: localhostChallenge, code_challenge_method: 'S256', state: 'localhost-state' };
+  const localhostJar = new Map();
+  let localhostNext = `/auth?${new URLSearchParams(localhostAuth)}`;
+  let localhostCode;
+  for (let steps = 0; steps < 20; steps++) {
+    const response = await request(localhostNext, { headers: { cookie: [...localhostJar].map(([key, value]) => `${key}=${value}`).join('; ') } });
+    for (const cookie of response.headers.getSetCookie()) { const pair = cookie.split(';')[0]; const offset = pair.indexOf('='); localhostJar.set(pair.slice(0, offset), pair.slice(offset + 1)); }
+    const location = response.headers.get('location');
+    assert.ok(location, `localhost authorization must redirect (status ${response.status})`);
+    const url = new URL(location, issuer);
+    if (url.origin === 'http://localhost:7777') { assert.equal(url.searchParams.get('state'), 'localhost-state'); localhostCode = url.searchParams.get('code'); assert.ok(localhostCode); break; }
+    if (url.origin === commoncal) {
+      const handoff = url.searchParams.get('handoff');
+      const view = await (await privateRequest(`/internal/interactions/${handoff}`)).json();
+      const decision = { kind: view.prompt === 'login' ? 'login' : 'consent', subject: '42' };
+      const approved = await privateRequest(`/internal/interactions/${handoff}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(decision) });
+      assert.equal(approved.status, 200);
+      localhostNext = new URL((await approved.json()).resumeUrl).pathname + `?handoff=${handoff}`;
+    } else localhostNext = url.pathname + url.search;
+  }
+  assert.ok(localhostCode, 'localhost authorization code issued');
+  const localhostIssued = await token({ grant_type: 'authorization_code', client_id: localhostClient.client_id, code: localhostCode, code_verifier: localhostVerifier, redirect_uri: 'http://localhost:7777/callback', resource });
+  assert.equal(localhostIssued.status, 200, JSON.stringify(localhostIssued.body)); assert.ok(localhostIssued.body.access_token);
   // Take an online snapshot while OAuth state is live, then restore it offline.
   const backupPath=resolve(directory,'recovery.sqlite');
   if (process.env.AUTH_TEST_ENCRYPTED_BACKUP === 'true') {
@@ -154,7 +184,7 @@ try {
   const reused = await token({ grant_type: 'refresh_token', client_id: client.client_id, refresh_token: issued.body.refresh_token, resource });
   assert.equal(reused.status, 400);
   // DCR counter persists across restart and is shared by every provider process.
-  assert.equal((await register()).status, 201); assert.equal((await register()).status, 201); assert.equal((await register()).status, 429);
+  assert.equal((await register()).status, 201); assert.equal((await register()).status, 429); assert.equal((await register()).status, 429);
   const audit = await pool.query('SELECT event, detail FROM authorization_audit');
   assert.ok(audit.rows.some((row) => row.event === 'dcr_rate_limited'));
   assert.ok(audit.rows.some((row) => row.event === 'interaction_login'));

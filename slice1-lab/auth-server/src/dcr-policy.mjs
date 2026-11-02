@@ -127,6 +127,10 @@ export const OPENCODE_V2_CALLBACK = Object.freeze({
   kind: 'loopback', scheme: 'http', host: '127.0.0.1', port: 'any', path: '/callback',
 });
 
+export const LOCALHOST_CALLBACK = Object.freeze({
+  kind: 'loopback', scheme: 'http', host: 'localhost', port: 'any', path: '/callback',
+});
+
 /**
  * Build the default Slice 4 catalog: only the lab loopback callback.
  * @param {string} loopbackUri

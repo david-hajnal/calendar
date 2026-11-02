@@ -27,7 +27,12 @@ test('configured loopback callback permits ephemeral ports and excludes other ca
 test('observed OpenCode v2 callback admits only HTTP IPv4 loopback and its exact path', () => {
   const { catalog } = productionConfig(env, jwks);
   for (const uri of ['http://127.0.0.1:19876/callback', 'http://127.0.0.1:55740/callback']) assert.ok(validateRedirect(uri, catalog), uri);
-  for (const uri of ['https://127.0.0.1:19876/callback', 'http://localhost:19876/callback', 'http://[::1]:19876/callback', 'http://127.0.0.1/callback', 'http://127.0.0.1:80/callback', 'http://127.0.0.1:19876/callback/', 'http://127.0.0.1:19876/callback?x=1', 'http://127.0.0.1:19876/callback#x', 'http://user@127.0.0.1:19876/callback', 'https://evil.test/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
+  for (const uri of ['https://127.0.0.1:19876/callback', 'http://[::1]:19876/callback', 'http://127.0.0.1/callback', 'http://127.0.0.1:80/callback', 'http://127.0.0.1:19876/callback/', 'http://127.0.0.1:19876/callback?x=1', 'http://127.0.0.1:19876/callback#x', 'http://user@127.0.0.1:19876/callback', 'https://evil.test/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
   const ipv6Only = productionConfig({ ...env, AUTH_DCR_LOOPBACK_HOSTS: '[::1]' }, jwks);
   assert.equal(validateRedirect('http://127.0.0.1:19876/callback', ipv6Only.catalog), false);
+});
+test('localhost loopback callback admits HTTP any-port /callback and excludes other forms', () => {
+  const { catalog } = productionConfig(env, jwks);
+  for (const uri of ['http://localhost:7777/callback', 'http://localhost:19876/callback', 'http://localhost:55740/callback']) assert.ok(validateRedirect(uri, catalog), uri);
+  for (const uri of ['https://localhost:7777/callback', 'http://localhost:7777/mcp/oauth/callback', 'http://localhost.evil.example:7777/callback', 'http://localhost/callback', 'http://localhost:80/callback', 'http://localhost:7777/callback/', 'http://localhost:7777/callback?x=1', 'http://localhost:7777/callback#x', 'http://user@localhost:7777/callback', 'http://[::1]:7777/callback']) assert.equal(validateRedirect(uri, catalog), false, uri);
 });

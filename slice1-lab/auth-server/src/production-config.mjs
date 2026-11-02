@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
-import { OPENCODE_V2_CALLBACK } from './dcr-policy.mjs';
+import { OPENCODE_V2_CALLBACK, LOCALHOST_CALLBACK } from './dcr-policy.mjs';
 
 export function productionConfig(env, jwks) {
   const required = (name) => {
@@ -50,5 +50,6 @@ export function productionConfig(env, jwks) {
   if (!Number.isInteger(cleanupInterval) || cleanupInterval < 1000 || cleanupInterval > 3_600_000) throw new Error('invalid retention cleanup interval');
   const catalog = hosts.map((host) => ({ kind: 'loopback', host, port: 'any', path }));
   if (hosts.includes(OPENCODE_V2_CALLBACK.host)) catalog.push(OPENCODE_V2_CALLBACK);
+  catalog.push(LOCALHOST_CALLBACK);
   return { sqlitePath, cleanupInterval, issuer, resource, commoncal, bridge, cookies, kid, rate, catalog };
 }

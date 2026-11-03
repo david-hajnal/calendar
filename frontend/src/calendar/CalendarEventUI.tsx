@@ -11,9 +11,11 @@ import { CalendarApiError, createEvent, deleteEvent, deleteEventOccurrence, list
 import { setReminder, removeReminder } from "./reminderApi";
 import type { Calendar } from "./CalendarManagement";
 import { layoutDay, dayGestureTimes, dayResizeTimes } from "./dayLayout";
+import { RepeatForm } from "./RepeatForm";
+import { buildRecurrenceRule, describeRecurrenceRule, parseRecurrenceRule, type RepeatSettings } from "./recurrenceRule";
 import "./CalendarEventUI.css";
 
-type Draft = { title: string; allDay: boolean; start: string; end: string; startDate: string; endDate: string; calendarId: number; recurrenceRule: string };
+type Draft = { title: string; allDay: boolean; start: string; end: string; startDate: string; endDate: string; calendarId: number; repeat: RepeatSettings };
 type CalendarAnchor = { date: Date; minuteOfDay: number };
 export type DragState = {
   event: EventProjection;
@@ -98,10 +100,11 @@ function currentTimeTop(): number {
 }
 
 function payload(draft: Draft): EventPayload {
+  const rule = buildRecurrenceRule(draft.repeat);
   if (draft.allDay) {
-    return { title: draft.title, description: null, location: null, status: "confirmed", start_date: draft.startDate, end_date: draft.endDate, ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
+    return { title: draft.title, description: null, location: null, status: "confirmed", start_date: draft.startDate, end_date: draft.endDate, ...(rule ? { recurrence_rule: rule } : {}) };
   }
-  return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(localToUtcMs(new Date(draft.start)) / 1000), end_utc: Math.floor(localToUtcMs(new Date(draft.end)) / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(draft.recurrenceRule ? { recurrence_rule: draft.recurrenceRule } : {}) };
+  return { title: draft.title, description: null, location: null, status: "confirmed", start_utc: Math.floor(localToUtcMs(new Date(draft.start)) / 1000), end_utc: Math.floor(localToUtcMs(new Date(draft.end)) / 1000), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", ...(rule ? { recurrence_rule: rule } : {}) };
 }
 
 function toggleAllDay(draft: Draft, allDay: boolean): Draft {
@@ -117,7 +120,7 @@ function draftAt(anchor: CalendarAnchor, calendarId: number): Draft {
   start.setMinutes(anchor.minuteOfDay);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   const startDate = dateKey(start);
-  return { title: "", allDay: false, start: inputTime(Math.floor(start.getTime() / 1000)), end: inputTime(Math.floor(end.getTime() / 1000)), startDate, endDate: moveDateKey(startDate, 1), calendarId, recurrenceRule: "" };
+  return { title: "", allDay: false, start: inputTime(Math.floor(start.getTime() / 1000)), end: inputTime(Math.floor(end.getTime() / 1000)), startDate, endDate: moveDateKey(startDate, 1), calendarId, repeat: { frequency: "none", interval: 1, end: { kind: "never" } } };
 }
 
 export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { api: ApiClient; calendars: Calendar[]; initialDate?: Date }) {
@@ -160,7 +163,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   const firstWritable = calendars.find(writable)?.id ?? 0;
   const [draft, setDraft] = useState<Draft>(() => {
     const startDate = dateKey(initialDate);
-    return { title: "", allDay: false, start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), startDate, endDate: moveDateKey(startDate, 1), calendarId: firstWritable, recurrenceRule: "" };
+    return { title: "", allDay: false, start: inputTime(Math.floor(initialDate.getTime() / 1000)), end: inputTime(Math.floor(initialDate.getTime() / 1000) + 3600), startDate, endDate: moveDateKey(startDate, 1), calendarId: firstWritable, repeat: { frequency: "none", interval: 1, end: { kind: "never" } } };
   });
   const range = useMemo(() => rangeFor(view, date), [view, date]);
   const visibleCalendarIds = useMemo(() => calendars.filter((calendar) => visible.has(calendar.id)).map((calendar) => calendar.id), [calendars, visible]);
@@ -481,14 +484,15 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
   }
   function openEdit(event: EventProjection) {
     if (!editable(event, calendarFor(event))) return;
+    const repeat = parseRecurrenceRule(event.recurrence_rule ?? "") ?? { frequency: "none" as const, interval: 1, end: { kind: "never" } as const };
     if (event.event_kind === "all_day" && event.start_date && event.end_date) {
-      setDraft({ title: title(event), allDay: true, start: "", end: "", startDate: event.start_date, endDate: event.end_date, calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" });
+      setDraft({ title: title(event), allDay: true, start: "", end: "", startDate: event.start_date, endDate: event.end_date, calendarId: event.calendar_id, repeat });
       setEditing(event); setError(null);
       return;
     }
     if (event.start_utc === undefined || event.end_utc === undefined) return;
     const startDate = dateKey(new Date(event.start_utc * 1000));
-    setDraft({ title: title(event), allDay: false, start: inputTime(event.start_utc), end: inputTime(event.end_utc), startDate, endDate: moveDateKey(startDate, 1), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" });
+    setDraft({ title: title(event), allDay: false, start: inputTime(event.start_utc), end: inputTime(event.end_utc), startDate, endDate: moveDateKey(startDate, 1), calendarId: event.calendar_id, repeat });
     setEditing(event); setError(null);
   }
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -513,7 +517,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
     }
     if (event.start_utc === undefined || event.end_utc === undefined) return;
     const changed = { ...event, start_utc: event.start_utc + direction * 3600, end_utc: event.end_utc + direction * 3600 };
-    try { const changedStart = dateKey(new Date(changed.start_utc * 1000)); const saved = await updateEvent(api, event.calendar_id, event.id, { ...payload({ title: title(changed), allDay: false, start: inputTime(changed.start_utc), end: inputTime(changed.end_utc), startDate: changedStart, endDate: moveDateKey(changedStart, 1), calendarId: event.calendar_id, recurrenceRule: event.recurrence_rule ?? "" }), calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
+    try { const changedStart = dateKey(new Date(changed.start_utc * 1000)); const saved = await updateEvent(api, event.calendar_id, event.id, { ...payload({ title: title(changed), allDay: false, start: inputTime(changed.start_utc), end: inputTime(changed.end_utc), startDate: changedStart, endDate: moveDateKey(changedStart, 1), calendarId: event.calendar_id, repeat: parseRecurrenceRule(event.recurrence_rule ?? "") ?? { frequency: "none", interval: 1, end: { kind: "never" } } }), calendar_id: event.calendar_id, version: event.version! }); setEvents((current) => current.map((item) => item.id === saved.id ? saved : item)); }
     catch (reason) { setError(reason instanceof CalendarApiError && reason.status === 409 ? "This event changed elsewhere. Reload it before saving again." : "We could not move this event."); }
   }
   async function handleDelete(event: EventProjection) {
@@ -815,6 +819,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
         {selected.event_kind === "all_day" && selected.start_date && selected.end_date && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{formatAllDayRange(selected.start_date, selected.end_date)}</p>}
         {selected.start_utc && selected.end_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>schedule</span>{new Date(selected.start_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(selected.end_utc * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>}
         {selected.start_utc && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>event</span>{new Date(selected.start_utc * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>}
+        {selected.recurrence_rule && describeRecurrenceRule(selected.recurrence_rule) && <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>repeat</span>{describeRecurrenceRule(selected.recurrence_rule)}</p>}
       </div>
       {selected.access === "details" && selected.location && <div className="event-ui__detail-location">
         <p className="typography-body-md"><span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle', marginRight: '0.375rem' }}>location_on</span>{selected.location}</p>
@@ -865,10 +870,7 @@ export function CalendarEventUI({ api, calendars, initialDate = new Date() }: { 
             </label>
           </>
         )}
-        <label className="event-ui__editor-field">
-          <span className="typography-label-md">Recurrence</span>
-          <input aria-label="Recurrence rule" placeholder="FREQ=WEEKLY" value={draft.recurrenceRule} onChange={(event) => setDraft({ ...draft, recurrenceRule: event.target.value })} />
-        </label>
+        <RepeatForm value={draft.repeat} onChange={(settings) => setDraft({ ...draft, repeat: settings })} />
         <label className="event-ui__editor-field">
           <span className="typography-label-md">Calendar</span>
           <select value={draft.calendarId} onChange={(event) => setDraft({ ...draft, calendarId: Number(event.target.value) })}>{calendars.filter(writable).map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select>

@@ -497,6 +497,96 @@ async fn recurring_mutations_trigger_the_notification_replanning_seam() {
     assert_eq!(exception_count, 0);
 }
 
+#[tokio::test]
+async fn accepts_supported_rrule_surface() {
+    let (_dir, pool, owner, calendar_id) = setup().await;
+    let service = EventService::new_at(pool, NOW);
+
+    // FREQ=WEEKLY;COUNT=3
+    let series = service
+        .create_recurring(
+            owner,
+            false,
+            calendar_id,
+            mutation("Weekly standup", 1_750_000_100, 1_750_000_700),
+            "FREQ=WEEKLY;COUNT=3".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        series.recurrence_rule.as_deref(),
+        Some("FREQ=WEEKLY;COUNT=3")
+    );
+
+    // FREQ=DAILY;INTERVAL=2
+    let series = service
+        .create_recurring(
+            owner,
+            false,
+            calendar_id,
+            mutation("Bi-daily check-in", 1_750_000_100, 1_750_000_700),
+            "FREQ=DAILY;INTERVAL=2".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        series.recurrence_rule.as_deref(),
+        Some("FREQ=DAILY;INTERVAL=2")
+    );
+
+    // FREQ=MONTHLY;UNTIL=...
+    let series = service
+        .create_recurring(
+            owner,
+            false,
+            calendar_id,
+            mutation("Monthly review", 1_750_000_100, 1_750_000_700),
+            "FREQ=MONTHLY;UNTIL=20251231T235959Z".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        series.recurrence_rule.as_deref(),
+        Some("FREQ=MONTHLY;UNTIL=20251231T235959Z")
+    );
+}
+
+#[tokio::test]
+async fn rejects_rrule_with_byday() {
+    let (_dir, pool, owner, calendar_id) = setup().await;
+    let service = EventService::new_at(pool, NOW);
+
+    let error = service
+        .create_recurring(
+            owner,
+            false,
+            calendar_id,
+            mutation("Rejected", 1_750_000_100, 1_750_000_700),
+            "FREQ=WEEKLY;BYDAY=MO,WE,FR".to_owned(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, EventServiceError::InvalidInput));
+}
+
+#[tokio::test]
+async fn rejects_rrule_with_unsupported_frequency() {
+    let (_dir, pool, owner, calendar_id) = setup().await;
+    let service = EventService::new_at(pool, NOW);
+
+    let error = service
+        .create_recurring(
+            owner,
+            false,
+            calendar_id,
+            mutation("Rejected", 1_750_000_100, 1_750_000_700),
+            "FREQ=HOURLY;COUNT=3".to_owned(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, EventServiceError::InvalidInput));
+}
+
 async fn setup() -> (TempDir, sqlx::SqlitePool, i64, i64) {
     let dir = TempDir::new().unwrap();
     let config = AppConfig::with_database_path(

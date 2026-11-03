@@ -194,7 +194,9 @@ describe("CalendarEventUI", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "New event" }));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Recurring standup" } });
-    fireEvent.change(screen.getByLabelText("Recurrence"), { target: { value: "FREQ=WEEKLY;COUNT=3" } });
+    fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "weekly" } });
+    fireEvent.change(screen.getByLabelText("End", { selector: "select" }), { target: { value: "after" } });
+    fireEvent.change(screen.getByLabelText("Occurrences"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Save event" }));
 
     await waitFor(() => expect(api.request).toHaveBeenCalledWith("/api/v1/calendars/1/events", expect.objectContaining({
@@ -306,6 +308,28 @@ describe("CalendarEventUI", () => {
     const detail = screen.getByRole("complementary", { name: "Event details" });
     expect(detail).toHaveTextContent(/Jun 16/);
     expect(detail).toHaveTextContent(/Jun 17/);
+  });
+
+  it("shows a human-readable recurrence label in the detail panel for a recurring event", async () => {
+    const recurring = { ...events[0], recurrence_rule: "FREQ=WEEKLY;COUNT=3" };
+    const api = apiWithEvents();
+    vi.mocked(api.request).mockImplementation((path: RequestInfo | URL) => {
+      if (String(path).includes("/events?")) return Promise.resolve(new Response(JSON.stringify([recurring]), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+    render(<CalendarEventUI api={api} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    const detail = screen.getByRole("complementary", { name: "Event details" });
+    expect(detail).toHaveTextContent("Weekly, ends after 3 events");
+  });
+
+  it("does not show a recurrence label in the detail panel for a non-recurring event", async () => {
+    render(<CalendarEventUI api={apiWithEvents()} calendars={calendars} initialDate={new Date("2025-06-16T12:00:00Z")} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Planning" }));
+    const detail = screen.getByRole("complementary", { name: "Event details" });
+    expect(detail).not.toHaveTextContent(/(Daily|Weekly|Monthly|Yearly|Every \d+ (days|weeks|months|years))/);
   });
 
   it("moves an all-day event later by one day preserving span", async () => {

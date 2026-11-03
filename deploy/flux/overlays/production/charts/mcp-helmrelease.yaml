@@ -33,7 +33,7 @@ spec:
     bindAddress: "0.0.0.0:3001"
     image:
       repository: ghcr.io/david-hajnal/calendar-mcp
-      tag: "sha-3aaa738dc5586d9382781b45d0b52e8f73595b14"
+      tag: "sha-5b8a9c8e3328de1a1c8f2c8c6e77dbf6a2b94704"
       pullPolicy: IfNotPresent
     ingress:
       enabled: true

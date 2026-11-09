@@ -35,6 +35,7 @@ pub mod sessions;
 pub mod shared_view;
 pub mod user_invitation;
 pub mod user_invitation_rate_limit;
+pub mod work_life_balance;
 pub mod write_rate_limit;
 
 pub mod runtime_email;

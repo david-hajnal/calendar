@@ -65,6 +65,8 @@ pub struct CaldavCalendar {
     pub description: Option<String>,
     pub color: String,
     pub role: String,
+    pub default_timezone: String,
+    pub work_life_balance_enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -400,3 +400,180 @@ async fn authenticated_user_can_create_a_calendar_with_an_owner_acl_and_audit() 
     .unwrap();
     assert_eq!(audit_count, 1);
 }
+
+#[tokio::test]
+async fn work_life_balance_setting_round_trips_and_preserves_omitted_updates() {
+    let app = TestApplication::new().await;
+    let existing = app
+        .request(
+            Method::GET,
+            &format!("/api/v1/calendars/{}", app.calendar_id),
+            app.owner,
+            "",
+        )
+        .await;
+    let existing: serde_json::Value = serde_json::from_str(&body(existing).await).unwrap();
+    assert_eq!(existing["work_life_balance_enabled"], false);
+    let payload = serde_json::json!({
+        "name": "Work", "description": null, "color": "#123456",
+        "default_timezone": "Europe/Budapest", "default_event_visibility": "private",
+        "default_notification_rules_json": null, "work_life_balance_enabled": true
+    });
+    let created = app
+        .request(
+            Method::POST,
+            "/api/v1/calendars",
+            app.owner,
+            &payload.to_string(),
+        )
+        .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: serde_json::Value = serde_json::from_str(&body(created).await).unwrap();
+    let id = created["id"].as_i64().unwrap();
+    let path = format!("/api/v1/calendars/{id}");
+    assert_eq!(created["work_life_balance_enabled"], true);
+    let stored: bool =
+        sqlx::query_scalar("SELECT work_life_balance_enabled FROM calendars WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert!(stored);
+    let listed = app
+        .request(Method::GET, "/api/v1/calendars", app.owner, "")
+        .await;
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap()["work_life_balance_enabled"],
+        true
+    );
+    let mut update = payload.clone();
+    update
+        .as_object_mut()
+        .unwrap()
+        .remove("work_life_balance_enabled");
+    update["version"] = 1.into();
+    update["name"] = "Renamed".into();
+    let response = app
+        .request(Method::PATCH, &path, app.owner, &update.to_string())
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(response["work_life_balance_enabled"], true);
+    assert_eq!(response["version"], 2);
+    update["work_life_balance_enabled"] = false.into();
+    let stale = app
+        .request(Method::PATCH, &path, app.owner, &update.to_string())
+        .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    update["version"] = 2.into();
+    let denied = app
+        .request(Method::PATCH, &path, app.unrelated, &update.to_string())
+        .await;
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+    let response = app.request(Method::GET, &path, app.owner, "").await;
+    let response: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(response["work_life_balance_enabled"], true);
+    let response = app
+        .request(Method::PATCH, &path, app.owner, &update.to_string())
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let response: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(response["work_life_balance_enabled"], false);
+    let stored: bool =
+        sqlx::query_scalar("SELECT work_life_balance_enabled FROM calendars WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert!(!stored);
+    for explicit_false in [false, true] {
+        let mut legacy = payload.clone();
+        if explicit_false {
+            legacy["work_life_balance_enabled"] = false.into();
+        } else {
+            legacy
+                .as_object_mut()
+                .unwrap()
+                .remove("work_life_balance_enabled");
+        }
+        let response = app
+            .request(
+                Method::POST,
+                "/api/v1/calendars",
+                app.owner,
+                &legacy.to_string(),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+        assert_eq!(response["work_life_balance_enabled"], false);
+    }
+}
+
+#[tokio::test]
+async fn work_life_balance_flag_requires_calendar_management_permission() {
+    let app = TestApplication::new().await;
+    let path = format!("/api/v1/calendars/{}", app.calendar_id);
+    let update = serde_json::json!({
+        "name": "Work", "description": null, "color": "#123456",
+        "default_timezone": "Europe/Budapest", "default_event_visibility": "private",
+        "default_notification_rules_json": null, "work_life_balance_enabled": true,
+        "version": 1
+    })
+    .to_string();
+    let denied = app.request(Method::PATCH, &path, app.editor, &update).await;
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+    let allowed = app
+        .request(Method::PATCH, &path, app.manager, &update)
+        .await;
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body(allowed).await).unwrap();
+    assert_eq!(result["work_life_balance_enabled"], true);
+}
+
+#[tokio::test]
+async fn work_life_balance_migration_defaults_existing_rows_and_can_roll_back() {
+    use sqlx::{Connection, SqliteConnection};
+    let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    sqlx::raw_sql(
+        "CREATE TABLE calendars (id INTEGER PRIMARY KEY); INSERT INTO calendars (id) VALUES (1);",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!("../migrations/0032_work_life_balance.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id) VALUES (2)")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let flags: Vec<bool> =
+        sqlx::query_scalar("SELECT work_life_balance_enabled FROM calendars ORDER BY id")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(flags, vec![false, false]);
+    sqlx::raw_sql(include_str!("../migrations/rollbacks/0032_rollback.sql"))
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('calendars')")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap();
+    assert_eq!(columns, vec!["id"]);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendars")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+}

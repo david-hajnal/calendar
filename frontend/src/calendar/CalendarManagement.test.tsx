@@ -286,4 +286,138 @@ describe("CalendarManagement", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("region", { name: "Calendars" })).toHaveClass("calendar-management");
   });
+
+  it("renders the work-life balance checkbox unchecked by default in the create form", async () => {
+    renderManager([]);
+    await screen.findByText("No calendars yet.");
+    fireEvent.click(screen.getByRole("button", { name: /new calendar/i }));
+
+    const checkbox = screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i });
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it("sends work_life_balance_enabled true when the checkbox is checked on create", async () => {
+    const created = { ...owner, id: 3, name: "New calendar", work_life_balance_enabled: true };
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([manager]))
+      .mockResolvedValueOnce(response(created, 201));
+    renderManager([manager], request);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /new calendar/i }));
+    fireEvent.change(screen.getByLabelText("Calendar name"), { target: { value: "New calendar" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Create calendar" }));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/api/v1/calendars",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(String),
+        }),
+      ),
+    );
+    const settingsRequest = request.mock.calls.find(([url, init]) => url === "/api/v1/calendars" && init?.method === "POST");
+    expect(JSON.parse(settingsRequest?.[1]?.body ?? "{}")).toMatchObject({ work_life_balance_enabled: true });
+  });
+
+  it("sends work_life_balance_enabled false when the checkbox is unchecked on create", async () => {
+    const created = { ...owner, id: 3, name: "New calendar", work_life_balance_enabled: false };
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([manager]))
+      .mockResolvedValueOnce(response(created, 201));
+    renderManager([manager], request);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /new calendar/i }));
+    fireEvent.change(screen.getByLabelText("Calendar name"), { target: { value: "New calendar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create calendar" }));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/api/v1/calendars",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(String),
+        }),
+      ),
+    );
+    const settingsRequest = request.mock.calls.find(([url, init]) => url === "/api/v1/calendars" && init?.method === "POST");
+    expect(JSON.parse(settingsRequest?.[1]?.body ?? "{}")).toMatchObject({ work_life_balance_enabled: false });
+  });
+
+  it("populates the work-life balance checkbox from a stored calendar with the field enabled", async () => {
+    const enabledCalendar = { ...manager, work_life_balance_enabled: true };
+    renderManager([enabledCalendar]);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /edit team/i }));
+    const checkbox = screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i });
+    expect(checkbox).toBeChecked();
+  });
+
+  it("renders the work-life balance checkbox unchecked for a calendar without the field", async () => {
+    // Simulate a historical calendar that does not include work_life_balance_enabled
+    const legacyCalendar = { ...manager, work_life_balance_enabled: undefined };
+    renderManager([legacyCalendar]);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /edit team/i }));
+    const checkbox = screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i });
+    expect(checkbox).not.toBeChecked();
+  });
+
+  it("sends work_life_balance_enabled true when the checkbox is checked on update", async () => {
+    const enabledCalendar = { ...manager, work_life_balance_enabled: false };
+    const updated = { ...enabledCalendar, work_life_balance_enabled: true, version: 2 };
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([enabledCalendar]))
+      .mockResolvedValueOnce(response(updated));
+    renderManager([enabledCalendar], request);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /edit team/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/api/v1/calendars/2",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.any(String),
+        }),
+      ),
+    );
+    const settingsRequest = request.mock.calls.find(([url, init]) => url === "/api/v1/calendars/2" && init?.method === "PATCH");
+    expect(JSON.parse(settingsRequest?.[1]?.body ?? "{}")).toMatchObject({ work_life_balance_enabled: true });
+  });
+
+  it("sends work_life_balance_enabled false when the checkbox is unchecked on update", async () => {
+    const enabledCalendar = { ...manager, work_life_balance_enabled: true };
+    const updated = { ...enabledCalendar, work_life_balance_enabled: false, version: 2 };
+    const request = vi.fn()
+      .mockResolvedValueOnce(response([enabledCalendar]))
+      .mockResolvedValueOnce(response(updated));
+    renderManager([enabledCalendar], request);
+    await screen.findByText("Team");
+
+    fireEvent.click(screen.getByRole("button", { name: /edit team/i }));
+    // The checkbox starts checked; uncheck it
+    fireEvent.click(screen.getByRole("checkbox", { name: /hide CalDAV events after 5 pm and on weekends/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/api/v1/calendars/2",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.any(String),
+        }),
+      ),
+    );
+    const settingsRequest = request.mock.calls.find(([url, init]) => url === "/api/v1/calendars/2" && init?.method === "PATCH");
+    expect(JSON.parse(settingsRequest?.[1]?.body ?? "{}")).toMatchObject({ work_life_balance_enabled: false });
+  });
 });

@@ -245,6 +245,7 @@ authenticated unsafe requests must match it.
 - **Multi-session** — inspect and revoke active sessions
 - **Rate limiting** — per-user write rate limiting on authenticated endpoints (enabled in staging/production)
 - **Apple Calendar sync** — two-way CalDAV account connection for macOS/iOS Calendar with revocable per-device passwords, incremental sync, and full CRUD
+- **Work-life balance** — opt-in calendar protection hides CalDAV events at and after 17:00 on weekdays and throughout weekends in the calendar timezone; [behavior and cached-client limits](docs/work-life-balance.md)
 
 ## API overview
 

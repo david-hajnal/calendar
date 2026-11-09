@@ -17,6 +17,7 @@ export interface CalendarSettingsPayload {
   default_timezone: string;
   default_event_visibility: string;
   default_notification_rules_json: string | null;
+  work_life_balance_enabled?: boolean;
 }
 
 export interface CalendarUpdatePayload extends CalendarSettingsPayload {

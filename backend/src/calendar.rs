@@ -69,7 +69,7 @@ impl CalendarService {
             "SELECT calendars.id, calendars.owner_user_id, calendars.name,
                     calendars.description, calendars.color, calendars.default_timezone,
                     calendars.default_event_visibility,
-                    calendars.default_notification_rules_json, calendars.archived,
+                    calendars.default_notification_rules_json, calendars.work_life_balance_enabled, calendars.archived,
                     calendars.version, calendars.created_at, calendars.updated_at,
                     calendar_acl.role
              FROM calendars
@@ -117,6 +117,28 @@ impl CalendarService {
         calendar: NewCalendar,
         dav: Option<(&str, Option<&str>)>,
     ) -> Result<CalendarProjection, CalendarServiceError> {
+        self.create_with_options(actor_user_id, calendar, dav, false)
+            .await
+    }
+
+    /// Keeps legacy creation entry points disabled by default.
+    pub(crate) async fn create_with_work_life_balance(
+        &self,
+        actor_user_id: i64,
+        calendar: NewCalendar,
+        work_life_balance_enabled: bool,
+    ) -> Result<CalendarProjection, CalendarServiceError> {
+        self.create_with_options(actor_user_id, calendar, None, work_life_balance_enabled)
+            .await
+    }
+
+    async fn create_with_options(
+        &self,
+        actor_user_id: i64,
+        calendar: NewCalendar,
+        dav: Option<(&str, Option<&str>)>,
+        work_life_balance_enabled: bool,
+    ) -> Result<CalendarProjection, CalendarServiceError> {
         validate_calendar_fields(
             &calendar.name,
             &calendar.color,
@@ -128,9 +150,9 @@ impl CalendarService {
         let result = sqlx::query(
             "INSERT INTO calendars (
                 owner_user_id, name, description, color, default_timezone,
-                default_event_visibility, default_notification_rules_json, archived,
+                default_event_visibility, default_notification_rules_json, work_life_balance_enabled, archived,
                 version, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)",
         )
         .bind(actor_user_id)
         .bind(&calendar.name)
@@ -139,6 +161,7 @@ impl CalendarService {
         .bind(&calendar.default_timezone)
         .bind(&calendar.default_event_visibility)
         .bind(&calendar.default_notification_rules_json)
+        .bind(work_life_balance_enabled)
         .bind(now)
         .bind(now)
         .execute(&mut *transaction)
@@ -179,6 +202,7 @@ impl CalendarService {
                 default_timezone: calendar.default_timezone,
                 default_event_visibility: calendar.default_event_visibility,
                 default_notification_rules_json: calendar.default_notification_rules_json,
+                work_life_balance_enabled,
                 archived: false,
                 version: 1,
                 created_at: now,
@@ -197,7 +221,28 @@ impl CalendarService {
         is_superadmin: bool,
         calendar_id: i64,
         expected_version: i64,
+        update: CalendarUpdate,
+    ) -> Result<CalendarProjection, CalendarServiceError> {
+        self.update_with_work_life_balance(
+            actor_user_id,
+            is_superadmin,
+            calendar_id,
+            expected_version,
+            update,
+            None,
+        )
+        .await
+    }
+
+    /// An omitted flag preserves the stored setting in the versioned update.
+    pub(crate) async fn update_with_work_life_balance(
+        &self,
+        actor_user_id: i64,
+        is_superadmin: bool,
+        calendar_id: i64,
+        expected_version: i64,
         mut update: CalendarUpdate,
+        work_life_balance_enabled: Option<bool>,
     ) -> Result<CalendarProjection, CalendarServiceError> {
         validate_calendar_fields(
             &update.name,
@@ -216,7 +261,12 @@ impl CalendarService {
         update.archived = current.archived;
         update.updated_at = (self.clock)();
         let result = CalendarRepository::new(self.pool.clone())
-            .update_calendar(calendar_id, expected_version, update)
+            .update_calendar_with_work_life_balance(
+                calendar_id,
+                expected_version,
+                update,
+                work_life_balance_enabled,
+            )
             .await;
         match result {
             Ok(_) => {}
@@ -608,7 +658,7 @@ impl CalendarService {
             "SELECT calendars.id, calendars.owner_user_id, calendars.name,
                     calendars.description, calendars.color, calendars.default_timezone,
                     calendars.default_event_visibility,
-                    calendars.default_notification_rules_json, calendars.archived,
+                    calendars.default_notification_rules_json, calendars.work_life_balance_enabled, calendars.archived,
                     calendars.version, calendars.created_at, calendars.updated_at,
                     calendar_acl.role
              FROM calendars
@@ -662,6 +712,7 @@ impl CalendarService {
                 default_timezone: Some(record.default_timezone),
                 default_event_visibility: Some(record.default_event_visibility),
                 default_notification_rules_json: record.default_notification_rules_json,
+                work_life_balance_enabled: Some(record.work_life_balance_enabled),
                 archived: Some(record.archived),
                 version: Some(record.version),
                 created_at: Some(record.created_at),
@@ -679,6 +730,7 @@ impl CalendarService {
                 default_timezone: None,
                 default_event_visibility: None,
                 default_notification_rules_json: None,
+                work_life_balance_enabled: None,
                 archived: None,
                 version: None,
                 created_at: None,
@@ -766,6 +818,7 @@ struct VisibleCalendarRecord {
     default_timezone: String,
     default_event_visibility: String,
     default_notification_rules_json: Option<String>,
+    work_life_balance_enabled: bool,
     archived: bool,
     version: i64,
     created_at: i64,
@@ -792,6 +845,8 @@ pub struct CalendarProjection {
     pub default_event_visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_notification_rules_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_life_balance_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -921,6 +976,7 @@ impl CalendarRepository {
             default_timezone: calendar.default_timezone,
             default_event_visibility: calendar.default_event_visibility,
             default_notification_rules_json: calendar.default_notification_rules_json,
+            work_life_balance_enabled: false,
             archived: false,
             version: 1,
             created_at: calendar.created_at,
@@ -934,7 +990,7 @@ impl CalendarRepository {
     ) -> Result<Option<Calendar>, CalendarRepositoryError> {
         sqlx::query_as(
             "SELECT id, owner_user_id, name, description, color, default_timezone,
-                    default_event_visibility, default_notification_rules_json, archived,
+                    default_event_visibility, default_notification_rules_json, work_life_balance_enabled, archived,
                     version, created_at, updated_at
              FROM calendars WHERE id = ?",
         )
@@ -1060,7 +1116,7 @@ impl CalendarRepository {
 
         let calendar = sqlx::query_as(
             "SELECT id, owner_user_id, name, description, color, default_timezone,
-                    default_event_visibility, default_notification_rules_json, archived,
+                    default_event_visibility, default_notification_rules_json, work_life_balance_enabled, archived,
                     version, created_at, updated_at
              FROM calendars WHERE id = ?",
         )
@@ -1077,10 +1133,22 @@ impl CalendarRepository {
         expected_version: i64,
         update: CalendarUpdate,
     ) -> Result<Calendar, CalendarRepositoryError> {
+        self.update_calendar_with_work_life_balance(calendar_id, expected_version, update, None)
+            .await
+    }
+
+    async fn update_calendar_with_work_life_balance(
+        &self,
+        calendar_id: i64,
+        expected_version: i64,
+        update: CalendarUpdate,
+        work_life_balance_enabled: Option<bool>,
+    ) -> Result<Calendar, CalendarRepositoryError> {
         let result = sqlx::query(
             "UPDATE calendars
              SET name = ?, description = ?, color = ?, default_timezone = ?,
                  default_event_visibility = ?, default_notification_rules_json = ?,
+                 work_life_balance_enabled = COALESCE(?, work_life_balance_enabled),
                  archived = ?, version = version + 1, updated_at = ?
              WHERE id = ? AND version = ?",
         )
@@ -1090,6 +1158,7 @@ impl CalendarRepository {
         .bind(&update.default_timezone)
         .bind(&update.default_event_visibility)
         .bind(&update.default_notification_rules_json)
+        .bind(work_life_balance_enabled)
         .bind(update.archived)
         .bind(update.updated_at)
         .bind(calendar_id)
@@ -1126,6 +1195,7 @@ pub struct Calendar {
     pub default_timezone: String,
     pub default_event_visibility: String,
     pub default_notification_rules_json: Option<String>,
+    pub work_life_balance_enabled: bool,
     pub archived: bool,
     pub version: i64,
     pub created_at: i64,

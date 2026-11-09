@@ -1259,7 +1259,7 @@ async fn create_calendar(
     let calendar = state
         .calendar_service
         .ok_or_else(ApiError::service_unavailable)?
-        .create(
+        .create_with_work_life_balance(
             session.user.id,
             NewCalendar {
                 name: request.name,
@@ -1270,6 +1270,7 @@ async fn create_calendar(
                 default_notification_rules_json: request.default_notification_rules_json,
                 created_at: 0,
             },
+            request.work_life_balance_enabled.unwrap_or(false),
         )
         .await
         .map_err(map_calendar_error)?;
@@ -1299,7 +1300,7 @@ async fn update_calendar(
     let calendar = state
         .calendar_service
         .ok_or_else(ApiError::service_unavailable)?
-        .update(
+        .update_with_work_life_balance(
             session.user.id,
             session.user.is_superadmin,
             calendar_id,
@@ -1314,6 +1315,7 @@ async fn update_calendar(
                 archived: false,
                 updated_at: 0,
             },
+            request.settings.work_life_balance_enabled,
         )
         .await
         .map_err(map_calendar_error)?;
@@ -3106,6 +3108,7 @@ struct CalendarMutationRequest {
     default_timezone: String,
     default_event_visibility: String,
     default_notification_rules_json: Option<String>,
+    work_life_balance_enabled: Option<bool>,
 }
 
 #[derive(Deserialize)]

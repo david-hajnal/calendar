@@ -481,11 +481,24 @@ fn mkcalendar_error(status: StatusCode, condition: &str) -> Response {
     (status, [(header::CONTENT_TYPE,"application/xml; charset=utf-8")], format!("<D:error xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><C:{condition}/></D:error>")).into_response()
 }
 
+fn calendar_is_masked(calendar: &CaldavCalendar, request_time: i64) -> bool {
+    chrono::DateTime::from_timestamp(request_time, 0)
+        .map(|instant| {
+            crate::work_life_balance::should_mask(
+                calendar.work_life_balance_enabled,
+                &calendar.default_timezone,
+                instant,
+            )
+        })
+        .unwrap_or(calendar.work_life_balance_enabled)
+}
+
 async fn dav_calendar(
     State(accounts): State<CaldavAccountService>,
     Path((principal_id, calendar_key)): Path<(String, String)>,
     request: Request,
 ) -> Response {
+    let request_time = accounts.now();
     match request.method().as_str() {
         "MKCALENDAR" => {
             let mut response = mkcalendar(&accounts, &principal_id, &calendar_key, request).await;
@@ -540,7 +553,8 @@ async fn dav_calendar(
             let Some(access) = read_access_for_role(&calendar.role) else {
                 return dav_calendar_not_found(accounts.metrics());
             };
-            if depth == DavDepth::Zero {
+            let masked = calendar_is_masked(&calendar, request_time);
+            if depth == DavDepth::Zero || masked {
                 return render_calendar(
                     &accounts,
                     &principal_id,
@@ -549,6 +563,7 @@ async fn dav_calendar(
                     depth,
                     &[],
                     &session.principal_id,
+                    masked,
                 )
                 .await;
             }
@@ -558,7 +573,7 @@ async fn dav_calendar(
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
             let events = EventRepository::new(accounts.pool().clone());
-            let now = accounts.now();
+            let now = request_time;
             let mut listed = Vec::new();
             for event_id in event_ids {
                 let resource = match repository.ensure_resource(calendar_id, event_id, now).await {
@@ -588,6 +603,7 @@ async fn dav_calendar(
                 depth,
                 &listed,
                 &session.principal_id,
+                masked,
             )
             .await
         }
@@ -643,6 +659,7 @@ async fn dav_calendar(
             if !valid_depth {
                 return dav_bad_depth(accounts.metrics());
             }
+            let masked = calendar_is_masked(&calendar, request_time);
             match report {
                 query::CalendarReport::Query(cal_query) => {
                     // RFC 4791 section 7.8: query Depth defaults to zero. A
@@ -653,8 +670,15 @@ async fn dav_calendar(
                     {
                         return render_propfind_response(&[], &PropfindMode::AllProp);
                     }
-                    handle_calendar_query(&accounts, &principal_id, &calendar, &cal_query, &session)
-                        .await
+                    handle_calendar_query(
+                        &accounts,
+                        &principal_id,
+                        &calendar,
+                        &cal_query,
+                        &session,
+                        masked,
+                    )
+                    .await
                 }
                 query::CalendarReport::Multiget(multiget) => {
                     handle_calendar_multiget(
@@ -663,12 +687,20 @@ async fn dav_calendar(
                         &calendar,
                         &multiget,
                         &session,
+                        masked,
                     )
                     .await
                 }
                 query::CalendarReport::SyncCollection(sync) => {
-                    handle_sync_collection(&accounts, &principal_id, &calendar, &sync, &session)
-                        .await
+                    handle_sync_collection(
+                        &accounts,
+                        &principal_id,
+                        &calendar,
+                        &sync,
+                        &session,
+                        masked,
+                    )
+                    .await
                 }
             }
         }
@@ -688,6 +720,7 @@ async fn dav_event_resource(
     Path((principal_id, calendar_key, resource_name)): Path<(String, String, String)>,
     request: Request,
 ) -> Response {
+    let request_time = accounts.now();
     if resource_name.is_empty()
         || resource_name.contains(['/', '\\'])
         || resource_name.chars().any(char::is_control)
@@ -733,6 +766,9 @@ async fn dav_event_resource(
             let Some(access) = read_access_for_role(&calendar.role) else {
                 return dav_resource_not_found(accounts.metrics());
             };
+            if calendar_is_masked(&calendar, request_time) {
+                return dav_resource_not_found(accounts.metrics());
+            }
             let Some(resource_name) = resource_name.strip_suffix(".ics") else {
                 return dav_resource_not_found(accounts.metrics());
             };
@@ -2062,11 +2098,15 @@ async fn handle_calendar_query(
     calendar: &CaldavCalendar,
     cal_query: &CalendarQuery,
     session: &DavSession,
+    masked: bool,
 ) -> Response {
     let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
         return dav_calendar_not_found(accounts.metrics());
     };
+    if masked {
+        return render_propfind_response(&[], &PropfindMode::AllProp);
+    }
     let repository = CaldavRepository::new(accounts.pool().clone());
     let event_ids = if cal_query.has_time_range {
         match repository
@@ -2207,6 +2247,7 @@ async fn handle_calendar_multiget(
     calendar: &CaldavCalendar,
     multiget: &CalendarMultiget,
     session: &DavSession,
+    masked: bool,
 ) -> Response {
     let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
@@ -2216,6 +2257,10 @@ async fn handle_calendar_multiget(
     let events = EventRepository::new(accounts.pool().clone());
     let mut responses = Vec::with_capacity(multiget.hrefs.len());
     for href in &multiget.hrefs {
+        if masked {
+            responses.push(sync_deleted_response_xml(href));
+            continue;
+        }
         let resource_name = match normalized_multiget_name(
             accounts,
             href,
@@ -2300,6 +2345,7 @@ async fn handle_sync_collection(
     calendar: &CaldavCalendar,
     sync: &query::SyncCollection,
     session: &DavSession,
+    masked: bool,
 ) -> Response {
     let _ = session;
     let Some(access) = read_access_for_role(&calendar.role) else {
@@ -2309,7 +2355,7 @@ async fn handle_sync_collection(
     let events = EventRepository::new(accounts.pool().clone());
     let now = accounts.now();
 
-    let context = match sync_context(accounts, calendar, session.user_id).await {
+    let context = match sync_context(accounts, calendar, session.user_id, masked).await {
         Ok(value) => value,
         Err(_) => return dav_server_error(accounts.metrics()),
     };
@@ -2330,6 +2376,23 @@ async fn handle_sync_collection(
         },
         None => None,
     };
+    if masked {
+        // Masked and visible tokens have separate signed contexts. A transition
+        // forces a standard full resync, so hidden changes are not lost forever.
+        let token = xml_escape(&accounts.collection_sync_token(&context, high_water));
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="utf-8" ?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<D:sync-token>{token}</D:sync-token>
+</D:multistatus>"#
+        );
+        return (
+            StatusCode::MULTI_STATUS,
+            [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+            xml,
+        )
+            .into_response();
+    }
     let new_revision;
     match state {
         Some((revision, None)) => {
@@ -2478,7 +2541,7 @@ async fn handle_sync_collection(
         }
     }
     if repository.latest_revision(calendar.calendar_id).await.ok() != Some(high_water)
-        || sync_context(accounts, calendar, session.user_id)
+        || sync_context(accounts, calendar, session.user_id, masked)
             .await
             .ok()
             .as_ref()
@@ -2673,12 +2736,18 @@ async fn sync_context(
     accounts: &CaldavAccountService,
     calendar: &CaldavCalendar,
     user_id: i64,
+    masked: bool,
 ) -> Result<String, CaldavAuthError> {
     let row: (i64, i64, i64) = sqlx::query_as("SELECT c.version, a.created_at, v.epoch FROM calendars c JOIN calendar_acl a ON a.calendar_id = c.id JOIN caldav_visibility_epochs v ON v.calendar_id = a.calendar_id AND v.user_id = a.user_id WHERE c.id = ? AND a.user_id = ?")
         .bind(calendar.calendar_id).bind(user_id).fetch_one(accounts.pool()).await.map_err(|_| CaldavAuthError::Persistence)?;
     Ok(format!(
-        "{}:{user_id}:{}:{}:{}:{}",
-        calendar.calendar_id, calendar.role, row.0, row.1, row.2
+        "{}:{user_id}:{}:{}:{}:{}{}",
+        calendar.calendar_id,
+        calendar.role,
+        row.0,
+        row.1,
+        row.2,
+        if masked { ":work-life-masked" } else { "" }
     ))
 }
 
@@ -2832,12 +2901,13 @@ async fn live_calendar_props(
     accounts: &CaldavAccountService,
     calendar: &CaldavCalendar,
     principal_id: &str,
+    masked: bool,
 ) -> Result<Vec<DavProp>, CaldavAuthError> {
     let principal = accounts
         .resolve_principal(principal_id)
         .await?
         .ok_or(CaldavAuthError::Persistence)?;
-    let context = sync_context(accounts, calendar, principal.user_id).await?;
+    let context = sync_context(accounts, calendar, principal.user_id, masked).await?;
     let revision = CaldavRepository::new(accounts.pool().clone())
         .latest_revision(calendar.calendar_id)
         .await?;
@@ -2925,6 +2995,7 @@ async fn render_calendar_home(
     mode: &PropfindMode,
     depth: DavDepth,
 ) -> Response {
+    let request_time = accounts.now();
     let href = format!("/dav/calendars/{principal_id}/");
     let displayname = xml_escape(&principal.display_name);
     let home_privileges = vec![
@@ -2960,7 +3031,14 @@ async fn render_calendar_home(
                 "/dav/calendars/{principal_id}/{}/",
                 collection_key(calendar, principal_id)
             );
-            let cal_props = match live_calendar_props(accounts, calendar, principal_id).await {
+            let cal_props = match live_calendar_props(
+                accounts,
+                calendar,
+                principal_id,
+                calendar_is_masked(calendar, request_time),
+            )
+            .await
+            {
                 Ok(props) => props,
                 Err(_) => return dav_server_error(accounts.metrics()),
             };
@@ -3214,6 +3292,7 @@ fn resource_props(etag: &str) -> Vec<DavProp> {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn render_calendar(
     accounts: &CaldavAccountService,
     principal_id: &str,
@@ -3222,16 +3301,17 @@ async fn render_calendar(
     depth: DavDepth,
     resources: &[(CaldavEventResource, String)],
     authenticated_principal_id: &str,
+    masked: bool,
 ) -> Response {
     let cal_href = format!(
         "/dav/calendars/{principal_id}/{}/",
         collection_key(calendar, principal_id)
     );
-    let cal_props = match live_calendar_props(accounts, calendar, authenticated_principal_id).await
-    {
-        Ok(props) => props,
-        Err(_) => return dav_server_error(accounts.metrics()),
-    };
+    let cal_props =
+        match live_calendar_props(accounts, calendar, authenticated_principal_id, masked).await {
+            Ok(props) => props,
+            Err(_) => return dav_server_error(accounts.metrics()),
+        };
     let mut all = vec![(cal_href, cal_props)];
     if depth == DavDepth::One {
         for (resource, etag) in resources {

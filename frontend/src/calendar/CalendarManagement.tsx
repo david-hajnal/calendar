@@ -17,6 +17,7 @@ export interface Calendar {
   default_timezone?: string;
   default_event_visibility?: string;
   default_notification_rules_json?: string | null;
+  work_life_balance_enabled?: boolean;
   archived?: boolean;
   version?: number;
 }
@@ -27,16 +28,18 @@ interface CalendarSettings {
   color: string;
   default_timezone: string;
   default_event_visibility: string;
+  work_life_balance_enabled: boolean;
 }
 
 const blankSettings: CalendarSettings = {
-  name: "", description: "", color: "#3b82f6", default_timezone: "UTC", default_event_visibility: "private",
+  name: "", description: "", color: "#3b82f6", default_timezone: "UTC", default_event_visibility: "private", work_life_balance_enabled: false,
 };
 
 function settingsFor(calendar?: Calendar): CalendarSettings {
   return calendar === undefined ? blankSettings : {
     name: calendar.name ?? "", description: calendar.description ?? "", color: calendar.color ?? "#3b82f6",
     default_timezone: calendar.default_timezone ?? "UTC", default_event_visibility: calendar.default_event_visibility ?? "private",
+    work_life_balance_enabled: calendar.work_life_balance_enabled ?? false,
   };
 }
 
@@ -278,6 +281,24 @@ function CalendarFormModal({ editing, settings, setSettings, onSave, onCancel, s
               </select>
             </label>
           </div>
+          <fieldset className="calendar-modal__work-life">
+            <legend className="calendar-modal__work-life-legend">Work-life balance</legend>
+            <label className="calendar-modal__work-life-label">
+              <input
+                type="checkbox"
+                className="calendar-modal__work-life-checkbox"
+                checked={settings.work_life_balance_enabled}
+                onChange={(event) => setSettings({ ...settings, work_life_balance_enabled: event.target.checked })}
+              />
+              <span className="calendar-modal__work-life-text">
+                <span className="calendar-modal__work-life-title">Hide CalDAV events after 5 pm and on weekends</span>
+                <span className="calendar-modal__work-life-hint">
+                  When enabled, event details are hidden from CalDAV clients after 17:00 ({settings.default_timezone}) on weekdays and all day on weekends.
+                  This is applied at request time; CalDAV clients may retain cached copies until they sync. The browser UI is not affected.
+                </span>
+              </span>
+            </label>
+          </fieldset>
         </div>
         <div className="calendar-modal__footer">
           <button className="btn-cancel" type="button" onClick={onCancel}>Cancel</button>

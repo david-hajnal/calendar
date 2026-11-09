@@ -34,6 +34,8 @@ type CalendarRow = (
     Option<String>,
     String,
     String,
+    String,
+    bool,
 );
 
 /// Maximum failed DAV auth attempts per client key before throttling.
@@ -502,7 +504,8 @@ impl CaldavAccountService {
         let rows: Vec<CalendarRow> = sqlx::query_as(
             "SELECT collection_accounts.principal_id, calendars.dav_collection_key, calendars.dav_timezone, calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
                     calendars.name, calendars.description, calendars.color,
-                    calendar_acl.role
+                    calendar_acl.role,
+                    calendars.default_timezone, calendars.work_life_balance_enabled
               FROM calendars
               JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
               LEFT JOIN caldav_accounts owner_accounts
@@ -531,6 +534,8 @@ impl CaldavAccountService {
                     description,
                     color,
                     role,
+                    default_timezone,
+                    work_life_balance_enabled,
                 )| CaldavCalendar {
                     collection_principal_id,
                     collection_key,
@@ -542,6 +547,8 @@ impl CaldavAccountService {
                     description,
                     color,
                     role,
+                    default_timezone,
+                    work_life_balance_enabled,
                 },
             )
             .collect())
@@ -555,7 +562,7 @@ impl CaldavAccountService {
         let row: Option<CalendarRow> = sqlx::query_as(
             "SELECT collection_accounts.principal_id, calendars.dav_collection_key, calendars.dav_timezone, calendars.id, calendars.owner_user_id, owner_accounts.principal_id,
                     calendars.name, calendars.description, calendars.color,
-                    calendar_acl.role
+                    calendar_acl.role, calendars.default_timezone, calendars.work_life_balance_enabled
              FROM calendars
              JOIN calendar_acl ON calendar_acl.calendar_id = calendars.id
              LEFT JOIN caldav_accounts owner_accounts
@@ -581,6 +588,8 @@ impl CaldavAccountService {
                 description,
                 color,
                 role,
+                default_timezone,
+                work_life_balance_enabled,
             )| {
                 CaldavCalendar {
                     collection_principal_id,
@@ -593,6 +602,8 @@ impl CaldavAccountService {
                     description,
                     color,
                     role,
+                    default_timezone,
+                    work_life_balance_enabled,
                 }
             },
         ))
